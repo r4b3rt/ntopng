@@ -32,12 +32,12 @@ class UnexpectedDHCPServerAlert : public UnexpectedServerAlert {
 
  public:
   static FlowAlertType getClassType() { return { flow_alert_unexpected_dhcp_server, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_ERROR; };
 
- UnexpectedDHCPServerAlert(FlowCallback *c, Flow *f) : UnexpectedServerAlert(c, f) {};
+ UnexpectedDHCPServerAlert(FlowCheck *c, Flow *f) : UnexpectedServerAlert(c, f) {};
   ~UnexpectedDHCPServerAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("unexpected_dhcp"); }
 };
 
 #endif /* _UNEXPECTED_DHCP_SERVER_ALERT_H_ */

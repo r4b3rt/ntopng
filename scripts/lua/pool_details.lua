@@ -55,19 +55,20 @@ page_utils.set_active_menu_entry(page_utils.menu_entries.host_pools)
 
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 
+if(pool_id == nil) then
+   print("<div class=\"alert alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "
+	    ..i18n("pool_details.pool_parameter_missing_message")
+	    .."</div>")
+   dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
+   return
+end
+
 local base_url = ntop.getHttpPrefix()..'/lua/pool_details.lua?pool='..pool_id
 local page_params = {}
 
 page_params["ifid"] = ifId
 page_params["pool"] = pool_id
 page_params["page"] = page
-
-if(pool_id == nil) then
-   print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "
-	    ..i18n("pool_details.pool_parameter_missing_message")
-	    .."</div>")
-    return
-end
 
 local title = i18n(ternary(have_nedge, "nedge.user", "pool_details.host_pool"))..": "..pool_name
 
@@ -111,7 +112,7 @@ if (ntop.isEnterpriseM() or ntop.isnEdge()) and pool_id ~= host_pools_instance.D
   host_pools_nedge.printQuotas(pool_id, nil, page_params)
 
   print[[
-  <button class="btn btn-secondary" data-toggle="modal" data-target="#reset_quotas_dialog" style="float:right;">]] print(i18n("host_pools.reset_quotas")) print[[</button>]]
+  <button class="btn btn-secondary" data-bs-toggle="modal" data-target="#reset_quotas_dialog" style="float:right;">]] print(i18n("host_pools.reset_quotas")) print[[</button>]]
   if ntop.isnEdge() then
     local username = host_pools_nedge.poolIdToUsername(pool_id)
     print[[<a href="]] print(ntop.getHttpPrefix()) print[[/lua/pro/nedge/admin/nf_edit_user.lua?page=categories&username=]] print(username)
@@ -121,7 +122,7 @@ if (ntop.isEnterpriseM() or ntop.isnEdge()) and pool_id ~= host_pools_instance.D
   
 elseif page == "historical" then
   if(not areHostPoolsTimeseriesEnabled(ifId)) then
-    print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "..i18n("pool_details.no_available_data_for_host_pool_message",{pool_name=pool_name}))
+    print("<div class=\"alert alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "..i18n("pool_details.no_available_data_for_host_pool_message",{pool_name=pool_name}))
     print(" "..i18n("pool_details.host_pool_timeseries_enable_message",{url=ntop.getHttpPrefix().."/lua/admin/prefs.lua?tab=on_disk_ts",icon_flask="<i class=\"fas fa-flask\"></i>"})..'</div>')
   else
     local schema = _GET["ts_schema"] or "host_pool:traffic"

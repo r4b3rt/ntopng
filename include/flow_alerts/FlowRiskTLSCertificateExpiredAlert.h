@@ -28,13 +28,16 @@ class FlowRiskTLSCertificateExpiredAlert : public FlowRiskTLSAlert {
  private:
 
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_TLS_CERTIFICATE_EXPIRED; }
   static FlowAlertType getClassType() { return { flow_alert_tls_certificate_expired, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskTLSCertificateExpiredAlert(FlowCallback *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
+ FlowRiskTLSCertificateExpiredAlert(FlowCheck *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
   ~FlowRiskTLSCertificateExpiredAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_tls_certificate_expired"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_TLS_CERTIFICATE_EXPIRED_ALERT_H_ */

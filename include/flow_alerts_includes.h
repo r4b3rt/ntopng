@@ -22,6 +22,7 @@
 #ifndef _FLOW_ALERTS_INCLUDES_H_
 #define _FLOW_ALERTS_INCLUDES_H_
 
+#include "flow_alerts/FlowRiskAlert.h"
 #include "flow_alerts/BlacklistedFlowAlert.h"
 #include "flow_alerts/BlacklistedCountryAlert.h"
 #include "flow_alerts/ExternalAlertCheckAlert.h"
@@ -70,9 +71,10 @@
 #include "flow_alerts/FlowRiskTLSOldProtocolVersionAlert.h"
 #include "flow_alerts/TLSMaliciousSignatureAlert.h"
 #include "flow_alerts/FlowRiskTLSCertificateSelfSignedAlert.h"
-#include "flow_alerts/PotentiallyDangerousAlert.h"
 #include "flow_alerts/DataExfiltrationAlert.h"
 #include "flow_alerts/ElephantFlowAlert.h"
+#include "flow_alerts/LateralMovementAlert.h"
+#include "flow_alerts/PeriodicityChangedAlert.h"
 #include "flow_alerts/LongLivedFlowAlert.h"
 #include "flow_alerts/DNSDataExfiltrationAlert.h"
 #include "flow_alerts/TCPConnectionRefusedAlert.h"

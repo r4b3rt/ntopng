@@ -8,6 +8,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/alert_store/?.lua;" .. p
 
 local rest_utils = require("rest_utils")
 local flow_alert_store = require "flow_alert_store".new()
+local auth = require "auth"
 
 --
 -- Read alerts data
@@ -23,6 +24,11 @@ local ifid = _GET["ifid"]
 local format = _GET["format"] or "json"
 local no_html = (format == "txt")
 
+if not auth.has_capability(auth.capabilities.alerts) then
+   rest_utils.answer(rest_utils.consts.err.not_granted)
+   return
+end
+
 if isEmptyString(ifid) then
    rc = rest_utils.consts.err.invalid_interface
    rest_utils.answer(rc)
@@ -32,15 +38,19 @@ end
 interface.select(ifid)
 
 -- Fetch the results
-local alerts, recordsFilter = flow_alert_store:select_request()
+local alerts, recordsFiltered = flow_alert_store:select_request(nil, "*, hex(alerts_map) alerts_map")
 
-for _key,_value in ipairs(alerts or {}) do
-   local record = flow_alert_store:format_record(_value, no_html)
-   res[#res + 1] = record
-end -- for
+for _, _value in ipairs(alerts or {}) do
+   res[#res + 1] = flow_alert_store:format_record(_value, no_html)
+end
 
-rest_utils.extended_answer(rc, {records = res}, {
-			      ["draw"] = tonumber(_GET["draw"]),
-			      ["recordsFiltered"] = recordsFilter,
-			      ["recordsTotal"] = #res
-}, format)
+if no_html then
+   res = flow_alert_store:to_csv(res)   
+   rest_utils.vanilla_payload_response(rc, res, "text/csv")
+else
+   rest_utils.extended_answer(rc, {records = res}, {
+      ["draw"] = tonumber(_GET["draw"]),
+      ["recordsFiltered"] = recordsFiltered,
+      ["recordsTotal"] = #res
+   }, format)
+end

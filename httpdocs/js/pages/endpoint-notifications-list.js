@@ -1,4 +1,4 @@
-$(document).ready(function () {
+$(function () {
 
     const MAX_ENDPOINTS_COUNT = 10;
     const COLUMN_INDEX_ENDPOINT_TYPE = 1;
@@ -95,7 +95,7 @@ $(document).ready(function () {
                         const isBuiltin = endpoint.endpoint_conf.builtin || false;
 
                         if (isBuiltin) {
-                            badge = ` <span class='badge badge-dark'>built-in</span>`;
+                            badge = ` <span class='badge bg-dark'>built-in</span>`;
                         }
 
                         return `${i18n.endpoint_types[key]}${badge}`;
@@ -304,7 +304,7 @@ $(document).ready(function () {
 
         try {
 
-            const response = await NtopUtils.fetchWithTimeout(`${http_prefix}/lua/rest/v1/delete/endpoints.lua`);
+            const response = await NtopUtils.fetchWithTimeout(`${http_prefix}/lua/rest/v2/delete/endpoints.lua`);
             const result = await response.json();
             if (result.rc == 0) {
                 $endpointsTable.ajax.reload();

@@ -1,8 +1,8 @@
-$(document).ready(function() {
+$(function() {
 
     const MAX_RECIPIENTS = 3;
     const DEFAULT_MEASUREMENT = "cicmp";
-    const INFRASTRUCTURE_ENDPOINT = "/lua/rest/v1/get/system/data.lua";
+    const INFRASTRUCTURE_ENDPOINT = "/lua/rest/v2/get/system/data.lua";
 
     const getMeasurementRegex = (measurement) => {
         switch (measurement) {
@@ -32,7 +32,7 @@ $(document).ready(function() {
 
     const addMeasurementFilter = (tableAPI) => {
 
-        const MEASUREMENT_COLUMN_INDEX = 0;
+        const MEASUREMENT_COLUMN_INDEX = 1;
 
         // build filters for datatable
         const measurements = Object.keys(measurements_info);
@@ -42,7 +42,7 @@ $(document).ready(function() {
             filters.push({
                 key: measurement,
                 label: `${measurements_info[measurement].label}`,
-                regex: `^(${measurement}://).+`
+                regex: `^(${measurements_info[measurement].label})$`
             });
         }
 
@@ -60,7 +60,7 @@ $(document).ready(function() {
 
     const addAlertedFilter = (tableAPI) => {
 
-        const ALERTED_COLUMN_INDEX = 7;
+        const ALERTED_COLUMN_INDEX = 8;
         const filters = [
             {
                 key: 'alerted',
@@ -360,13 +360,13 @@ $(document).ready(function() {
         endpoint: `${http_prefix}/plugins/edit_active_monitoring_host.lua`,
         dontDisableSubmit: true,
         onModalInit: function(amData) {
-            $("#delete-host").html(`<b>${amData.url}</b>`);
+            $("#delete-host").html(`<b>${amData.measurement}://${amData.html_label}</b>`);
         },
         beforeSumbit: (amData) => {
             return {
                 action: 'delete',
                 am_host: amData.host,
-                measurement: amData.measurement,
+                measurement: amData.measurement_key,
                 csrf: am_csrf
             }
         },
@@ -459,7 +459,6 @@ $(document).ready(function() {
                 data: 'threshold',
                 className: 'text-center',
                 render: function(data, type, row) {
-
                     if(type === 'display' || type === 'filter') {
                         if(row.threshold)
                             return `${row.threshold} ${row.unit}`
@@ -487,7 +486,8 @@ $(document).ready(function() {
             },
             {
                 data: 'last_mesurement_time',
-                className: 'text-center'
+                className: 'text-center',
+		render: $.fn.dataTableExt.absoluteFormatSecondsToHHMMSS,
             },
             {
                 data: 'last_ip',
@@ -508,7 +508,6 @@ $(document).ready(function() {
                     // The raw data must be returned here for sorting
                     return(data);
                 }
-
             },
             {
                 data: 'alerted',
@@ -531,6 +530,7 @@ $(document).ready(function() {
                 sortable: false,
                 name: 'actions',
                 width: "200px",
+		responsivePriority: 3,
                 class: 'text-center',
                 render: function(_, type, host) {
 
@@ -541,6 +541,10 @@ $(document).ready(function() {
                         { class: `btn-danger ${disabled}`, icon: 'fa-trash', modal: '#am-delete-modal', }
                     ]);
                 }
+            },
+	    {
+                data: 'measurement_key',
+		visible: false
             }
         ]
     });

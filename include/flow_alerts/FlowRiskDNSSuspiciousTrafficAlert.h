@@ -24,15 +24,18 @@
 
 #include "ntop_includes.h"
 
-class FlowRiskDNSSuspiciousTrafficAlert : public FlowAlert {
+class FlowRiskDNSSuspiciousTrafficAlert : public FlowRiskAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_DNS_SUSPICIOUS_TRAFFIC; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_dns_suspicious_traffic, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskDNSSuspiciousTrafficAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ FlowRiskDNSSuspiciousTrafficAlert(FlowCheck *c, Flow *f) : FlowRiskAlert(c, f) { };
   ~FlowRiskDNSSuspiciousTrafficAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_dns_suspicious_traffic"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_DNS_SUSPICIOUS_TRAFFIC_ALERT_H_ */

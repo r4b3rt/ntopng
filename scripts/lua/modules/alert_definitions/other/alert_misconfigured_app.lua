@@ -10,6 +10,7 @@ local other_alert_keys = require "other_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+local alert_entities = require "alert_entities"
 
 -- ##############################################
 
@@ -21,6 +22,9 @@ alert_misconfigured_app.meta = {
   alert_key = other_alert_keys.alert_misconfigured_app,
   i18n_title = "alerts_dashboard.misconfigured_app",
   icon = "fas fa-fw fa-cog",
+  entities = {
+    alert_entities.system
+  },
 }
 
 -- ##############################################
@@ -44,7 +48,6 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_misconfigured_app.format(ifid, alert, alert_type_params)
-  local alert_severities = require "alert_severities"
   local alert_consts = require("alert_consts")
   local entity = alert_consts.formatAlertEntity(ifid, alert_consts.alertEntityRaw(alert["entity_id"]), alert["entity_val"])
 

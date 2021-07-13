@@ -30,12 +30,12 @@ class RemoteToLocalInsecureProtoAlert : public FlowAlert {
 
  public:
   static FlowAlertType getClassType() { return { flow_alert_remote_to_local_insecure_proto, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_ERROR; };
 
- RemoteToLocalInsecureProtoAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ RemoteToLocalInsecureProtoAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~RemoteToLocalInsecureProtoAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("remote_to_local_insecure_proto"); }
 };
 
 #endif /* _REMOTE_TO_LOCAL_INSECURE_PROTO_ALERT_H_ */

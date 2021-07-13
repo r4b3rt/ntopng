@@ -26,6 +26,7 @@ locales_utils = require "locales_utils"
 local os_utils = require "os_utils"
 local format_utils = require "format_utils"
 local dscp_consts = require "dscp_consts"
+local tag_utils = require "tag_utils"
 
 -- TODO: replace those globals with locals everywhere
 
@@ -56,6 +57,7 @@ end
 -- ##############################################
 
 function shortenString(name, max_len)
+   local ellipsis = "\u{2026}" -- The unicode ellipsis (takes less space than three separate dots)
    if(name == nil) then return("") end
 
    if max_len == nil then
@@ -64,10 +66,10 @@ function shortenString(name, max_len)
       if(max_len == nil) then max_len = 24 end
    end
 
-   if(string.len(name) < max_len) then
+   if(string.len(name) < max_len + 1 --[[ The space taken by the ellipsis --]]) then
       return(name)
    else
-      return(string.sub(name, 1, max_len).."...")
+      return(string.sub(name, 1, max_len)..ellipsis)
    end
 end
 
@@ -190,28 +192,32 @@ end
 
 -- See Utils::l4proto2name()
 l4_keys = {
-   { "IP",       "ip",          0 },
-   { "ICMP",     "icmp",        1 },
-   { "IGMP",     "igmp",        2 },
-   { "TCP",      "tcp",         6 },
-   { "UDP",      "udp",        17 },
+   { "IP",        "ip",          0 },
+   { "ICMP",      "icmp",        1 },
+   { "IGMP",      "igmp",        2 },
+   { "TCP",       "tcp",         6 },
+   { "UDP",       "udp",        17 },
 
-   { "IPv6",     "ipv6",       41 },
-   { "RSVP",     "rsvp",       46 },
-   { "GRE",      "gre",        47 },
-   { "ESP",      "esp",        50 },
-   { "IPv6-ICMP", "ipv6icmp",  58 },
-   { "OSPF",      "ospf",      89 },
-   { "PIM",      "pim",       103 },
-   { "VRRP",     "vrrp",      112 },
-   { "HIP",      "hip",       139 },
-   { "ICMPv6",   "icmpv6",     58 },
-   { "IGMP",     "igmp",        2 },
-   { "Other IP", "other_ip",   -1 }
+   { "IPv6",      "ipv6",       41 },
+   { "RSVP",      "rsvp",       46 },
+   { "GRE",       "gre",        47 },
+   { "ESP",       "esp",        50 },
+   { "IPv6-ICMP", "ipv6icmp",   58 },
+   { "OSPF",      "ospf",       89 },
+   { "PIM",       "pim",       103 },
+   { "VRRP",      "vrrp",      112 },
+   { "HIP",       "hip",       139 },
+   { "ICMPv6",    "icmpv6",     58 },
+   { "IGMP",      "igmp",        2 },
+   { "Other IP",  "other_ip",   -1 }
 }
 
-
-L4_PROTO_KEYS = {tcp=6, udp=17, icmp=1, other_ip=-1}
+L4_PROTO_KEYS = {
+   tcp=6,
+   udp=17,
+   icmp=1,
+   other_ip=-1
+}
 
 function __FILE__() return debug.getinfo(2,'S').source end
 function __LINE__() return debug.getinfo(2, 'l').currentline end
@@ -243,6 +249,7 @@ local http_status_code_map = {
 
 function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition, extra_headers, status_code)
    info = ntop.getInfo(false)
+   -- tprint(info)
    local cookie_attr = ntop.getCookieAttributes()
    local lines = {
       'Cache-Control: max-age=0, no-cache, no-store',
@@ -255,7 +262,8 @@ function sendHTTPHeaderIfName(mime, ifname, maxage, content_disposition, extra_h
    }
 
    if(_SESSION ~= nil) then
-      lines[#lines + 1] = 'Set-Cookie: session='.._SESSION["session"]..'; max-age=' .. maxage .. '; path=/; ' .. cookie_attr
+      local key = "session_"..info.http_port.."_"..info.https_port
+      lines[#lines + 1] = 'Set-Cookie: '..key..'='.._SESSION["session"]..'; max-age=' .. maxage .. '; path=/; ' .. cookie_attr
    end
 
    if(ifname ~= nil) then
@@ -352,7 +360,7 @@ end
 function printASN(asn, asname)
   asname = asname:gsub('"','')
   if(asn > 0) then
-    return("<A HREF='http://as.robtex.com/as"..asn..".html' title='"..asname.."'>"..asname.."</A> <i class='fas fa-external-link-alt fa-lg'></i>")
+   return("<A HREF='http://as.robtex.com/as"..asn..".html' title='"..asname.."'>"..asname.."</A> <i class='fas fa-external-link-alt fa-lg'></i>")
   else
     return(asname)
   end
@@ -405,7 +413,7 @@ function printIpVersionDropdown(base_url, page_params)
    ipversion_params["version"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.ip_version")) print[[]] print(ipversion_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.ip_version")) print[[]] print(ipversion_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, ipversion_params)) print[[">]] print(i18n("flows_page.all_ip_versions")) print[[</a></li>\
          <li><a class="dropdown-item ]] if ipversion == "4" then print('active') end print[[" href="]] ipversion_params["version"] = "4"; print(getPageUrl(base_url, ipversion_params)); print[[">]] print(i18n("flows_page.ipv4_only")) print[[</a></li>\
@@ -437,7 +445,7 @@ function printVLANFilterDropdown(base_url, page_params)
    vlan_id_params["vlan"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.vlan")) print[[]] print(vlan_id_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.vlan")) print[[]] print(vlan_id_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, vlan_id_params)) print[[">]] print(i18n("flows_page.all_vlan_ids")) print[[</a></li>\]]
    for _, vid in ipairs(ids) do
@@ -481,8 +489,8 @@ function printDSCPDropdown(base_url, page_params, dscp_list)
    end
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.dscp")) print[[]] print(dscp_filter) print[[<span class="caret"></span></button>\
-      <ul class="dropdown-menu dropdown-menu-right scrollable-dropdown" role="menu" id="flow_dropdown">\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.dscp")) print[[]] print(dscp_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu dropdown-menu-end scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, dscp_params_non_filter)) print[[">]] print(i18n("flows_page.all_dscp")) print[[</a></li>]]
 
    for key, value in pairsByKeys(ordered_dscp_list, asc) do
@@ -538,8 +546,8 @@ function printHostPoolDropdown(base_url, page_params, host_pool_list)
    end
    
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("details.host_pool")) print[[]] print(host_pool_filter) print[[<span class="caret"></span></button>\
-      <ul class="dropdown-menu dropdown-menu-right scrollable-dropdown" role="menu" id="flow_dropdown">\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("details.host_pool")) print[[]] print(host_pool_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu dropdown-menu-end scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, host_pool_params_non_filter)) print[[">]] print(i18n("flows_page.all_host_pool")) print[[</a></li>]]
 
    for key, value in pairsByKeys(ordered_host_pool_list, asc) do
@@ -572,7 +580,7 @@ function printTrafficTypeFilterDropdown(base_url, page_params)
    traffic_type_params["traffic_type"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.direction")) print[[]] print(traffic_type_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.direction")) print[[]] print(traffic_type_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, traffic_type_params)) print[[">]] print(i18n("hosts_stats.traffic_type_all")) print[[</a></li>\]]
 
@@ -687,6 +695,7 @@ end
 
 function l4_proto_to_string(proto_id)
    if not proto_id then return "" end
+   if isEmptyString(proto_id) then return "" end
 
    proto_id = tonumber(proto_id)
 
@@ -697,6 +706,21 @@ function l4_proto_to_string(proto_id)
    end
 
    return string.format("%d", proto_id)
+end
+
+-- Return the list of L4 proto (key = name, value = id)
+function l4_proto_list()
+   local list = {}
+
+   for _, proto in pairs(l4_keys) do
+      -- add L4 proto only
+      if proto[2] ~= 'ip' and
+         proto[2] ~= 'ipv6' then
+         list[proto[1]] =  proto[3]
+      end
+   end
+
+   return list
 end
 
 -- ##############################################
@@ -766,7 +790,14 @@ function hasAlertsDisabled()
 end
 
 function hasNindexSupport()
+   local auth = require "auth"
+
    if not ntop.isPro() or ntop.isWindows() then
+      return false
+   end
+
+   -- Don't allow nIndex for unauthorized users
+   if not auth.has_capability(auth.capabilities.historical_flows) then
       return false
    end
 
@@ -1289,22 +1320,6 @@ end
 
 -- #################################
 
-function hostVisualization(ip, name, vlan)
-   if (ip ~= name) then
-      if isIPv6(ip) then
-        name = name.." [IPv6]"
-      end
-   else
-      if vlan ~= nil and tonumber(vlan) > 0 then
-        name = name.."@"..vlan
-      end
-   end
-
-   return name
-end
-
--- #################################
-
 -- This function actively resolves an host if there is not information about it.
 -- NOTE: prefer the host2name on this function
 function resolveAddress(hostinfo, allow_empty)
@@ -1325,7 +1340,7 @@ function resolveAddress(hostinfo, allow_empty)
          return hostinfo2label(hostinfo)
       end
    end
-   return hostVisualization(hostinfo["host"], hostname, hostinfo["vlan"])
+   return hostinfo2label(hostinfo)
 end
 
 -- #################################
@@ -1366,7 +1381,7 @@ function getApplicationLabel(name)
   local icon = getApplicationIcon(name)
 
   name = name:gsub("^%l", string.upper)
-  return(icon.." "..name)
+  return(icon.." "..shortenString(name, 12))
 end
 
 -- #################################
@@ -1568,15 +1583,64 @@ end
 
 -- ##############################################
 
-local function  add_vlan_to_alt_name(alt_name, host_info, show_vlan)
-   -- Adding the vlan if requested
-   if show_vlan then
-      if host_info["vlan"] ~= 0 then
-	 alt_name = alt_name .. "@".. host_info["vlan"]
+local function label2formattedlabel(alt_name, host_info, show_vlan, shorten_len)
+   if not isEmptyString(alt_name) then
+      local ip = host_info["ip"] or host_info["host"]
+      -- Make it shorter
+      local res = alt_name
+
+      -- Special shorting function for IP addresses
+      if res ~= ip then
+         if shorten_len then
+            res = shortenString(res, shorten_len)
+         else
+            res = shortenString(res)
+         end
+      end
+
+      -- Adding the vlan if requested
+      if show_vlan then
+	 local vlan = tonumber(host_info["vlan"])
+
+	 if vlan and vlan > 0 then
+	    local full_vlan_name = getFullVlanName(vlan, true --[[ Compact --]])
+
+	    res = string.format("%s@%s", res, full_vlan_name)
+	 end
+      end
+
+      return res
+   end
+
+   -- Fallback: just the IP and VLAN
+   return(hostinfo2hostkey(host_info, true))
+end
+
+-- ##############################################
+
+-- Attempt at retrieving an host label from an host_info, using local caches and DNS resolution.
+-- This can be more expensive if compared to only using information found inside host_info.
+local function hostinfo2label_resolved(host_info, show_vlan, shorten_len)
+   local ip = host_info["ip"] or host_info["host"]
+   local res
+
+   -- If local broadcast domain host and DHCP, try to get the label associated
+   -- to the MAC address
+   if host_info["mac"] and (host_info["broadcast_domain_host"] or host_info["dhcpHost"]) then
+      res = getHostAltName(host_info["mac"])
+   end
+
+   if isEmptyString(res) then
+      -- Try and get the resolved name
+      res = ntop.getResolvedName(ip)
+
+      if isEmptyString(res) then
+	 -- Nothing found, just fallback to the IP address
+	 res = ip
       end
    end
 
-   return alt_name
+   return label2formattedlabel(res, host_info, show_vlan, shorten_len)
 end
 
 -- ##############################################
@@ -1588,49 +1652,31 @@ end
 -- The following order is used to determine the label:
 --    MAC label (LBD hosts only), IP label, MDNS/DHCP name from C, resolved IP
 --
-function hostinfo2label(host_info, show_vlan)
+-- NOTE: The function attempt at labelling an host only using information found in host_info.
+-- In case host_info is not enough to label the host, then local caches and DNS resolution kick in
+-- to find a label (at the expense of extra time).
+function hostinfo2label(host_info, show_vlan, shorten_len)
    local alt_name = nil
    local ip = host_info["ip"] or host_info["host"]
 
-   -- If local broadcast domain host and DHCP, try to get the label associated
-   -- to the MAC address
-   if host_info["mac"] and (host_info["broadcast_domain_host"] or host_info["dhcpHost"]) then
-      alt_name = getHostAltName(host_info["mac"])
+   -- Take the label as found in the host structure
+   local res = host_info.label
 
-      if not isEmptyString(alt_name) then
-	 -- Adding the vlan if requested
-	 return add_vlan_to_alt_name(alt_name, host_info, show_vlan)
+   if isEmptyString(res) then
+      -- Use any user-configured custom name
+      -- This goes first as a label set by the user MUST take precedance over any other possibly available label
+      res = getHostAltName(ip)
+
+      if isEmptyString(res) then
+	 -- Read what is found inside host `name`, e.g., name as found by dissected traffic such as DHCP
+	 res = host_info["name"]
+
+	 if isEmptyString(res) then
+	    return hostinfo2label_resolved(host_info, show_vlan, shorten_len)
+	 end
       end
    end
-
-   alt_name = getHostAltName(ip)
-   
-   if not isEmptyString(alt_name) then
-      alt_name = add_vlan_to_alt_name(alt_name, host_info, show_vlan)
-      
-      if isIPv6(ip) == true then
-	 alt_name = alt_name .. " [IPv6]"
-      end
-
-      -- Adding the vlan if requested
-      return alt_name
-   end
-
-   -- Name info from C (e.g. DHCP name)
-   if not isEmptyString(host_info["name"]) then
-      return add_vlan_to_alt_name(host_info["name"], host_info, show_vlan)      
-   end
-
-   -- Try to get the resolved name
-   local hostname = ntop.getResolvedName(ip)
-   local rname = hostVisualization(ip, hostname, host_info["vlan"])
-
-   if not isEmptyString(rname) then
-      return rname
-   end
-
-   -- Fallback: just the IP and VLAN
-   return(hostinfo2hostkey(host_info))
+   return label2formattedlabel(res, host_info, show_vlan, shorten_len)
 end
 
 -- ##############################################
@@ -1777,17 +1823,24 @@ function hostinfo2detailsurl(host_info, href_params, href_check)
    local res = ''
 
    if not href_check or hostdetails_exists(host_info, href_params) then
+      local auth = require "auth"
       local url_params = table.tconcat(href_params or {}, "=", "&")
 
       -- Alerts pages for the host are in alert_stats.lua (Alerts menu)
       if href_params and href_params.page == "engaged-alerts" then
-         res = string.format("%s/lua/alert_stats.lua?page=host&status=engaged&ip=%s,eq",
-			  ntop.getHttpPrefix(),
-			  hostinfo2hostkey(host_info))
+	 if auth.has_capability(auth.capabilities.alerts) then
+	    res = string.format("%s/lua/alert_stats.lua?page=host&status=engaged&ip=%s%s%s",
+				ntop.getHttpPrefix(),
+				hostinfo2hostkey(host_info),
+                                tag_utils.SEPARATOR, "eq")
+	 end
       elseif href_params and href_params.page == "alerts" then
-         res = string.format("%s/lua/alert_stats.lua?page=host&status=historical&ip=%s,eq",
-			  ntop.getHttpPrefix(),
-			  hostinfo2hostkey(host_info))
+	 if auth.has_capability(auth.capabilities.alerts) then
+	    res = string.format("%s/lua/alert_stats.lua?page=host&status=historical&ip=%s%s%s",
+				ntop.getHttpPrefix(),
+				hostinfo2hostkey(host_info),
+                                tag_utils.SEPARATOR, "eq")
+	 end
       -- All other pages are in host_details.lua
       else
          res = string.format("%s/lua/host_details.lua?%s%s%s",
@@ -1833,7 +1886,7 @@ function hostinfo2detailshref(host_info, href_params, href_value, href_tooltip, 
       local hostdetails_url = hostinfo2detailsurl(host_info, href_params, href_check)
 
       if not isEmptyString(hostdetails_url) then
-	 res = string.format("<a href='%s' data-toggle='tooltip' title='%s'>%s</a>",
+	 res = string.format("<a href='%s' data-bs-toggle='tooltip' title='%s'>%s</a>",
 			     hostdetails_url, href_tooltip or '', href_value or '')
       else
 	 res = href_value or ''
@@ -1872,6 +1925,8 @@ function flowinfo2hostname(flow_info, host_type, alerts_view)
       return(flow_info[host_type..".ip"])
    end
 
+   if(flow_info == nil) then return("") end
+   
    if(host_type == "srv") then
       if flow_info["host_server_name"] ~= nil and flow_info["host_server_name"] ~= "" and flow_info["host_server_name"]:match("%w") then
 	 -- remove possible ports from the name
@@ -1884,6 +1939,7 @@ function flowinfo2hostname(flow_info, host_type, alerts_view)
 
    local hostinfo = {
       host = flow_info[host_type..".ip"],
+      label = flow_info[host_type..".host"],
       mac = flow_info[host_type..".mac"],
       dhcpHost = flow_info[host_type..".dhcpHost"],
       broadcast_domain_host = flow_info[host_type..".broadcast_domain_host"],
@@ -2000,6 +2056,53 @@ end
 
 -- ##############################################
 
+function getVlanAliasKey()
+   return "ntopng.vlan_aliases"
+end
+
+-- ##############################################
+
+function getVlanAlias(vlan_id)
+   local alias = ntop.getHashCache(getVlanAliasKey(), vlan_id)
+
+   if not isEmptyString(alias) then
+      return alias
+   end
+
+   return tostring(vlan_id)
+end
+
+-- ##############################################
+
+function setVlanAlias(vlan_id, alias)
+   if((vlan_id ~= alias) or isEmptyString(alias)) then
+      ntop.setHashCache(getVlanAliasKey(), vlan_id, alias)
+   else
+      ntop.delHashCache(getVlanAliasKey(), vlan_id)
+   end
+end
+
+-- ##############################################
+
+function getFullVlanName(vlan_id, compact)
+   local alias = getVlanAlias(vlan_id)
+
+   if not isEmptyString(alias) then
+      if not isEmptyString(alias) and alias ~= tostring(vlan_id) then
+	 if compact then
+	    alias = shortenString(alias)
+	    return string.format("%s", alias)
+	 else
+	    return string.format("%u [%s]", vlan_id, alias)
+	 end
+      end
+   end
+
+   return vlan_id
+end
+
+-- ##############################################
+
 function flow2hostinfo(host_info, host_type)
    if host_type == "cli" then
       return({host = host_info["cli.ip"], vlan = host_info["cli.vlan"]})
@@ -2067,7 +2170,6 @@ function hostinfo2hostkey(host_info, host_type, show_vlan)
    end
 
    local vlan_id = tonumber(host_info["vlan"] or host_info["vlan_id"] or 0)
-
 
    if vlan_id ~= 0 or show_vlan then
       rsp = rsp..'@'..tostring(vlan_id)
@@ -2565,7 +2667,7 @@ end
 
  -- ##############################################
 
-function haveAdminPrivileges(isJsonResponse)
+function isAdministratorOrPrintErr(isJsonResponse)
 
    if (isAdministrator()) then
       return(true)
@@ -2581,7 +2683,7 @@ function haveAdminPrivileges(isJsonResponse)
       local page_utils = require("page_utils")
       page_utils.print_header()
       dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
-      print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> Access forbidden</div>")
+      print("<div class=\"alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> Access forbidden</div>")
    end
 
    return(false)
@@ -2902,34 +3004,6 @@ end
 
 -- ###############################################
 
-function formatElephantAlertType(flowalert_info)
-   local threshold = ""
-   local res = ""
-
-   if not flowalert_info then
-      return i18n("flow_details.elephant_flow")
-   end
-
-   local l2r_bytes = bytesToSize(flowalert_info["l2r_bytes"])
-
-   if flowalert_info["l2r_bytes"] > flowalert_info["l2r_threshold"] and flowalert_info["l2r_threshold"] > 0 then
-      l2r_bytes = l2r_bytes .." > "..bytesToSize(flowalert_info["l2r_threshold"])
-   end
-
-   local r2l_bytes = bytesToSize(flowalert_info["r2l_bytes"])
-   if flowalert_info["r2l_bytes"] > flowalert_info["r2l_threshold"] and flowalert_info["l2r_threshold"] > 0 then
-      r2l_bytes = r2l_bytes .. " > "..bytesToSize(flowalert_info["r2l_threshold"])
-   end
-
-   res = i18n("flow_details.elephant_flow")
-   res = string.format("%s<sup><i class='fas fa-info-circle' aria-hidden='true' title='"..i18n("flow_details.elephant_flow_descr").."'></i></sup>", res)
-   res = string.format("%s %s", res, i18n("flow_details.elephant_exceeded", {l2r = l2r_bytes, r2l = r2l_bytes}))
-
-   return res
-end
-
--- ###############################################
-
 -- prints purged information for hosts / flows
 function purgedErrorString()
     local info = ntop.getInfo(false)
@@ -2938,14 +3012,14 @@ end
 
 -- print TCP flags
 function printTCPFlags(flags)
-   if(hasbit(flags,0x01)) then print('<span class="badge badge-info">FIN</span> ') end
-   if(hasbit(flags,0x02)) then print('<span class="badge badge-info">SYN</span> ')  end
-   if(hasbit(flags,0x04)) then print('<span class="badge badge-danger">RST</span> ') end
-   if(hasbit(flags,0x08)) then print('<span class="badge badge-info">PUSH</span> ') end
-   if(hasbit(flags,0x10)) then print('<span class="badge badge-info">ACK</span> ')  end
-   if(hasbit(flags,0x20)) then print('<span class="badge badge-info">URG</span> ')  end
-   if(hasbit(flags,0x40)) then print('<span class="badge badge-info">ECE</span> ')  end
-   if(hasbit(flags,0x80)) then print('<span class="badge badge-info">CWR</span> ')  end
+   if(hasbit(flags,0x01)) then print('<span class="badge bg-warning">FIN</span> ') end
+   if(hasbit(flags,0x02)) then print('<span class="badge bg-warning">SYN</span> ')  end
+   if(hasbit(flags,0x04)) then print('<span class="badge bg-danger">RST</span> ') end
+   if(hasbit(flags,0x08)) then print('<span class="badge bg-warning">PUSH</span> ') end
+   if(hasbit(flags,0x10)) then print('<span class="badge bg-warning">ACK</span> ')  end
+   if(hasbit(flags,0x20)) then print('<span class="badge bg-warning">URG</span> ')  end
+   if(hasbit(flags,0x40)) then print('<span class="badge bg-warning">ECE</span> ')  end
+   if(hasbit(flags,0x80)) then print('<span class="badge bg-warning">CWR</span> ')  end
 end
 
 -- convert the integer carrying TCP flags in a more convenient lua table
@@ -2983,7 +3057,7 @@ function historicalProtoHostHref(ifId, host, l4_proto, ndpi_proto_id, info)
       if((ndpi_proto_id ~= nil) and (ndpi_proto_id ~= "")) then hist_url = hist_url.."&protocol="..ndpi_proto_id end
       if((info ~= nil) and (info ~= "")) then hist_url = hist_url.."&info="..info end
       print('&nbsp;')
-      -- print('<span class="badge badge-info">')
+      -- print('<span class="badge bg-info">')
       print('<a href="'..hist_url..'&epoch_begin='..tostring(ago1h)..'" title="'..i18n("db_explorer.last_hour_flows")..'"><i class="fas fa-history fa-lg"></i></a>')
       -- print('</span>')
    end
@@ -3289,29 +3363,32 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
   end
 
   local style = table.merge({display="flex"}, extra.style or {})
-  html_lines[#html_lines+1] = [[<div class="btn-group btn-group-toggle ]] .. table.concat(extra.classes or {}, "") .. [[" id="]] .. ctrl_id .. [[" data-toggle="buttons" style="]] .. table.tconcat(style, ":", "; ", ";") .. [[">]]
+  html_lines[#html_lines+1] = [[<div class="btn-group ]] .. table.concat(extra.classes or {}, "") .. [[" id="]] .. ctrl_id .. [[" role="group" style="]] .. table.tconcat(style, ":", "; ", ";") .. [[">]]
 
   -- foreach character in format
   string.gsub(fmt, ".", function(k)
+
     local v = fmt_to_data[k]
     if v ~= nil then
-       local line = {}
+         local line = {}
 
-       if((max_val == nil) or (v.value < max_val)) then
-	  line[#line+1] = [[<label class="btn]]
-	  if selected == k then
-	     line[#line+1] = [[ btn-primary active]]
-	  else
-	     line[#line+1] = [[ btn-secondary]]
-	  end
-	  line[#line+1] = [[ btn-sm"><input data-resol="]] .. k .. [[" value="]] .. truncate(v.value) .. [[" title="]] .. v.label .. [[" name="opt_resbt_]] .. k .. [[_]] .. ctrl_id .. [[" autocomplete="off" type="radio"]]
-	  if selected == k then line[#line+1] = [[ checked="checked"]] end
-	  line[#line+1] = [[/>]] .. v.label .. [[</label>]]
+         if((max_val == nil) or (v.value < max_val)) then
 
-	  html_lines[#html_lines+1] = table.concat(line, "")
+            local input_name = ("opt_resbt_%s_%s"):format(k, ctrl_id)
+            local input = ([[
+               <input class="btn-check" data-resol="%s" value="%s" title="%s" name="%s" id="input-%s" autocomplete="off" type="radio" %s/>
+                  ]]):format(k, truncate(v.value), v.label, input_name, input_name, ternary((selected == k), 'checked="checked"', ""))
+            local label = ([[
+               <label class="btn btn-sm %s" for="input-%s">%s</label>
+            ]]):format(ternary((selected == k), "btn-primary", "btn-secondary"), input_name, v.label)
+
+	    line[#line+1] = input
+            line[#line+1] = label
+
+            html_lines[#html_lines+1] = table.concat(line, "")
        end
     end
-  end)
+	       end)
 
   html_lines[#html_lines+1] = [[</div>]]
 
@@ -3321,27 +3398,27 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
       var _resol_inputs = [];
 
       function resol_selector_get_input(a_button) {
-        return $("input", $(a_button).closest(".form-group")).last();
+        return $("input", $(a_button).closest(".form-group.mb-3")).last();
       }
 
       function resol_selector_get_buttons(an_input) {
-        return $(".btn-group", $(an_input).closest(".form-group")).first().find("input");
+        return $(".btn-group", $(an_input).closest(".form-group.mb-3")).first().find("input");
       }
 
       /* This function scales values wrt selected resolution */
-      function resol_selector_reset_input_range(selected) {
-        var selected = $(selected);
-        var input = resol_selector_get_input(selected);
+      function resol_selector_reset_input_range($selected) {
+        let duration = $($selected);
+        let input = resol_selector_get_input(duration);
 
-        var raw = parseInt(input.attr("data-min"));
+        let raw = parseInt(input.attr("data-min"));
         if (! isNaN(raw))
-          input.attr("min", Math.sign(raw) * Math.ceil(Math.abs(raw) / selected.val()));
+          input.attr("min", Math.sign(raw) * Math.ceil(Math.abs(raw) / duration.val()));
 
         raw = parseInt(input.attr("data-max"));
         if (! isNaN(raw))
-          input.attr("max", Math.sign(raw) * Math.ceil(Math.abs(raw) / selected.val()));
+          input.attr("max", Math.sign(raw) * Math.ceil(Math.abs(raw) / duration.val()));
 
-        var step = parseInt(input.attr("data-step-" + selected.attr("data-resol")));
+        var step = parseInt(input.attr("data-step-" + duration.attr("data-resol")));
         if (! isNaN(step)) {
           input.attr("step", step);
 
@@ -3353,30 +3430,32 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
         resol_recheck_input_range(input);
       }
 
-      function resol_selector_change_selection(selected) {
-         selected.attr('checked', 'checked')
-          .closest("label").removeClass('btn-secondary').addClass('btn-primary')
-          .siblings().removeClass('active').removeClass('btn-primary').addClass('btn-secondary').find("input").removeAttr('checked');
-
-        resol_selector_reset_input_range(selected);
+      /* 
+       * Remove the checked value inside the radio buttons
+       * and add it only to the one selected 
+       */
+      function resol_selector_change_callback(event) {
+        $(this).parent().find('label').removeClass('btn-primary').addClass('btn-secondary');
+        $(this).parent().find('input[type="radio"]').prop('checked', false);
+        $(this).prop('checked', true).removeClass('btn-secondary').addClass('btn-primary');
+        $(this).parent().find('label[for="' + $(this).attr('id') + '"]').removeClass('btn-secondary').addClass('btn-primary');
+ 
+        resol_selector_reset_input_range($(this));
       }
 
+      /* Function used to check the value input range */
       function resol_recheck_input_range(input) {
-        var value = input.val();
+        let value = input.val();
 
-        if (input[0].hasAttribute("min"))
-          value = Math.max(value, input.attr("min"));
-        if (input[0].hasAttribute("max"))
-          value = Math.min(value, input.attr("max"));
+        if (input[0].hasAttribute("min") && Number.isNaN(input.attr("min")))
+          value = Math.max(parseInt(input.val()), !input.attr("min"));
+        if (input[0].hasAttribute("max") && Number.isNaN(input.attr("max")))
+          value = Math.min(parseInt(input.val()), !input.attr("max"));
 
-        var old_val = input.val();
-        if ((old_val != "") && (old_val != value))
+        if ((input.val() != "") && (input.val() != value))
           input.val(value);
       }
 
-      function resol_selector_change_callback(event) {
-        resol_selector_change_selection($(this));
-      }
 
       function resol_selector_on_form_submit(event) {
         var form = $(this);
@@ -3386,42 +3465,6 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
 
         resol_selector_finalize(form);
         return true;
-      }
-
-      /* Helper function to set a selector value by raw value */
-      function resol_selector_set_value(input_id, its_value) {
-         var input = $(input_id);
-         var buttons = resol_selector_get_buttons($(input_id));
-         var values = [];
-
-         buttons.each(function() {
-            values.push(parseInt($(this).val()));
-         });
-
-         var new_value;
-         var new_i;
-         if (its_value > 0) {
-            /* highest divisor */
-            var highest_i = 0;
-            for (var i=1; i<values.length; i++) {
-              if(((values[i] > values[highest_i]) && (its_value % values[i] == 0)))
-                highest_i = i;
-            }
-
-            new_value = its_value / values[highest_i];
-            new_i = highest_i;
-         } else {
-            /* smallest value */
-            new_value = Math.max(its_value, -1);
-            new_i = values.indexOf(Math.min.apply(Math, values));
-         }
-
-         /* Set */
-         input.val(new_value);
-         resol_selector_change_selection($(buttons[new_i]));
-
-         /* This must be set manually on initialization */
-         $(buttons[new_i]).closest("label").addClass("active");
       }
 
       function resol_selector_get_raw(input) {
@@ -3439,8 +3482,7 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
 
           var selected = $(elem).find("input[checked]");
           var input = resol_selector_get_input(selected);
-          resol_recheck_input_range(input);
-
+ 
           /* transform in raw units */
           var new_input = $("<input type=\"hidden\"/>");
           new_input.attr("name", input.attr("name"));
@@ -3471,8 +3513,8 @@ function makeResolutionButtons(fmt_to_data, ctrl_id, fmt, value, extra, max_val)
   ]]
 
   -- join strings and strip newlines
-  local html = string.gsub(table.concat(html_lines, ""), "\n", "")
-  js_init_code = string.gsub(js_init_code, "\n", "")
+  local html = string.gsub(table.concat(html_lines, " "), "\n", "")
+  js_init_code = string.gsub(js_init_code, "", "")
   js_specific_code = string.gsub(js_specific_code, "\n", "")
 
   if tonumber(value) ~= nil then
@@ -3657,10 +3699,10 @@ end
 
 function printWarningAlert(message)
    print[[<div class="alert alert-warning alert-dismissable" role="alert">]]
-   print[[<a class="close" data-dismiss="alert" aria-label="close">&times;</a>]]
    print[[<i class="fas fa-exclamation-triangle fa-sm"></i> ]]
    print[[<strong>]] print(i18n("warning")) print[[</strong> ]]
    print(message)
+   print[[<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>]]
    print[[</div>]]
 end
 
@@ -3738,9 +3780,7 @@ function printMessageBanners(banners)
    for _, msg in ipairs(banners) do
       print[[
   <div class="alert alert-]] print(msg.type) print([[ alert-dismissible" style="margin-top:2em; margin-bottom:0em;">
-    <button type="button" class="close" data-dismiss="alert" aria-label="]]..i18n("close")..[[">
-      <span aria-hidden="true">&times;</span>
-    </button>]])
+    ]])
 
       if (msg.type == "warning") then
          print("<b>".. i18n("warning") .. "</b>: ")
@@ -3751,6 +3791,7 @@ function printMessageBanners(banners)
       print(msg.text)
 
       print[[
+         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
   </div>]]
    end
 end
@@ -3858,7 +3899,7 @@ function generate_select(id, name, is_required, is_disabled, options, additional
    end
 
    return ([[
-      <select id="]].. id ..[[" class="form-control ]] .. (additional_classes or "") .. [[" ]].. name_attr ..[[ ]].. required_flag ..[[ ]] .. disabled_flag ..[[>
+      <select id="]].. id ..[[" class="form-select ]] .. (additional_classes or "") .. [[" ]].. name_attr ..[[ ]].. required_flag ..[[ ]] .. disabled_flag ..[[>
          ]].. parsed_options ..[[
       </select>
    ]])
@@ -4029,6 +4070,11 @@ end
 --- @return string message If there is a new major release then return a non-nil string
 --- containing the update message.
 function check_latest_major_release()
+
+   if ntop.isOffline() then
+      return nil
+   end
+
    -- get the latest major release
    local latest_version = ntop.getCache("ntopng.cache.major_release")
 
@@ -4048,7 +4094,6 @@ function check_latest_major_release()
    end
 
    return get_version_update_msg(info, latest_version)
-
 end
 
 -- ###########################################
@@ -4293,6 +4338,12 @@ function builMapHREF(ip_address, vlan_id, map, default_page)
 
       return(res)
    end
+end
+
+-- #####################
+
+function formatAlertAHref(key, value, label)
+   return "<a class='tag-filter' data-tag-key='" .. key .. "' title='" .. value .. "' data-tag-value='" .. value .. "' data-tag-label='" .. label .. "' href='#'>" .. label .. "</a>"
 end
 
 -- #####################

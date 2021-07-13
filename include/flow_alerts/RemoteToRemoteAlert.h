@@ -29,12 +29,12 @@ class RemoteToRemoteAlert : public FlowAlert {
   
  public:
   static FlowAlertType getClassType() { return { flow_alert_remote_to_remote, alert_category_network }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- RemoteToRemoteAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ RemoteToRemoteAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~RemoteToRemoteAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("remote_to_remote"); }
 };
 
 #endif /* _REMOTE_TO_REMOTE_ALERT_H_ */

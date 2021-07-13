@@ -152,6 +152,48 @@ end
 
 -- ##############################################
 
+--@brief Removes all exclusions for a given entity
+local function _enable_all_alerts(alert_entity, host)
+   local ret = false
+
+   local locked = _lock()
+
+   if locked then
+      -- In JSON, keys are always strings
+      local entity_id = tostring(alert_entity.entity_id) -- The entity of the alert that is being disabled, e.g., "host", or "flow"
+
+      local do_persist = false
+      local exclusions = _get_configured_alert_exclusions()
+
+      -- Add an entry for the current alert entity, if currently exising exclusions don't already have it
+      if isEmptyString(host) then
+	 if exclusions[entity_id] then
+	    exclusions[entity_id] = nil
+	    do_persist = true
+	 end
+      else
+	 for alert_key, cur_exclusions in pairs(exclusions[entity_id] or {}) do
+	    if cur_exclusions["excluded_hosts"] and cur_exclusions["excluded_hosts"][host] then
+	       -- Remove the entry
+	       cur_exclusions["excluded_hosts"][host] = nil
+	       do_persist = true
+	    end
+	 end
+      end
+
+      if do_persist then
+	 _set_configured_alert_exclusions(exclusions)
+      end
+
+      ret = true
+      _unlock()
+   end
+
+   return ret
+end
+
+-- ##############################################
+
 -- @brief Returns true if `host_ip` has the alert identified with `alert_key` disabled
 function _has_disabled_alert(alert_entity, host_ip, alert_key)
    local exclusions = _get_configured_alert_exclusions()
@@ -162,6 +204,22 @@ function _has_disabled_alert(alert_entity, host_ip, alert_key)
 		      and exclusions[entity_id][alert_key]
 		      and exclusions[entity_id][alert_key]["excluded_hosts"]
 		      and exclusions[entity_id][alert_key]["excluded_hosts"][host_ip])
+end
+
+-- ##############################################
+
+-- @brief Returns true if `alert_entity` has one or more disabled alerts
+function alert_exclusions.has_disabled_alerts(alert_entity)
+   local exclusions = _get_configured_alert_exclusions()
+   local entity_id = tostring(alert_entity.entity_id)
+
+   for alert_key, alert_exclusions in pairs(exclusions[entity_id] or {}) do
+      if alert_exclusions["excluded_hosts"] and table.len(alert_exclusions["excluded_hosts"]) > 0 then
+	 return true
+      end
+   end
+
+   return false
 end
 
 -- ##############################################
@@ -196,6 +254,15 @@ end
 
 -- ##############################################
 
+--@brief Enables all flow alerts possibly disabled
+--@param host If a valid ip address is specified, then all alerts will be enabled only for `host`, otherwise all alerts will be enabled
+--@return True, if enabled with success, false otherwise
+function alert_exclusions.enable_all_flow_alerts(host)
+   return _enable_all_alerts(alert_entities.flow, host)
+end
+
+-- ##############################################
+
 -- @brief Returns true if `host_ip` has the flow alert identified with `alert_key` disabled
 function alert_exclusions.has_disabled_flow_alert(host_ip, alert_key)
    return _has_disabled_alert(alert_entities.flow, host_ip, alert_key)
@@ -219,6 +286,15 @@ end
 
 -- ##############################################
 
+--@brief Enables all host alerts possibly disabled
+--@param host If a valid ip address is specified, then all alerts will be enabled only for `host`, otherwise all alerts will be enabled
+--@return True, if enabled with success, false otherwise
+function alert_exclusions.enable_all_host_alerts(host)
+   return _enable_all_alerts(alert_entities.host, host)
+end
+
+-- ##############################################
+
 -- @brief Returns true if `host_ip` has the host alert identified with `alert_key` disabled
 function alert_exclusions.has_disabled_host_alert(host_ip, alert_key)
    return _has_disabled_alert(alert_entities.host, host_ip, alert_key)
@@ -236,6 +312,22 @@ end
 -- @brief Returns all the excluded hosts for the flowt alert identified with `alert_key`
 function alert_exclusions.flow_alerts_get_excluded_hosts(alert_key)
    return _get_excluded_hosts(alert_entities.flow, alert_key) or {}
+end
+
+-- ##############################################
+
+-- @brief Import a previously `export`ed exclusions configuration
+function alert_exclusions.import(exclusions)
+   _set_configured_alert_exclusions(exclusions)
+end
+
+-- ##############################################
+
+-- @brief Exports the current configuration
+function alert_exclusions.export()
+   local exclusions = _get_configured_alert_exclusions()
+
+   return exclusions
 end
 
 -- ##############################################

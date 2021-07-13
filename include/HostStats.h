@@ -39,7 +39,8 @@ class HostStats: public GenericTrafficElement {
   u_int32_t num_flow_alerts;
   u_int64_t udp_sent_unicast, udp_sent_non_unicast;
   L4Stats l4stats;
-
+  
+  u_int8_t consecutive_high_score;
   time_t periodicUpdate;
 
   /* *************************************** */
@@ -112,6 +113,9 @@ class HostStats: public GenericTrafficElement {
   inline void incSentStats(u_int num_pkts, u_int pkt_len) { sent_stats.incStats(num_pkts, pkt_len); };
   inline void incRecvStats(u_int num_pkts, u_int pkt_len) { recv_stats.incStats(num_pkts, pkt_len); };
   inline void incnDPIFlows(u_int16_t l7_protocol)   { if(ndpiStats) ndpiStats->incFlowsStats(l7_protocol); };
+  inline void incrConsecutiveHighScore()            { consecutive_high_score++; };
+  inline void resetConsecutiveHighScore()           { consecutive_high_score = 0; };
+  inline u_int8_t getConsecutiveHighScore()         { return(consecutive_high_score); };
   inline u_int32_t getTotalNumFlowsAsClient() const { return(total_num_flows_as_client);  };
   inline u_int32_t getTotalNumFlowsAsServer() const { return(total_num_flows_as_server);  };
   inline u_int32_t getTotalActivityTime()     const { return(total_activity_time);        };
@@ -165,14 +169,14 @@ class HostStats: public GenericTrafficElement {
   virtual void incSMTPContactCardinality(Host *h) { ; }
 
   inline bool has_flows_anomaly(bool as_client) { return(as_client ? client_flows_anomaly : server_flows_anomaly); }
-  inline u_int32_t value_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastValue() : active_flows_srv.getLastValue()); }
-  inline u_int32_t lower_bound_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastLowerBound() : active_flows_srv.getLastLowerBound()); }
-  inline u_int32_t upper_bound_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastUpperBound() : active_flows_srv.getLastUpperBound()); }
+  inline u_int64_t value_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastValue() : active_flows_srv.getLastValue()); }
+  inline u_int64_t lower_bound_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastLowerBound() : active_flows_srv.getLastLowerBound()); }
+  inline u_int64_t upper_bound_flows_anomaly(bool as_client) { return(as_client ? active_flows_cli.getLastUpperBound() : active_flows_srv.getLastUpperBound()); }
 
   inline bool has_score_anomaly(bool as_client) { return(as_client ? client_score_anomaly : server_score_anomaly); }
-  inline u_int32_t value_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastValue() : score_srv.getLastValue()); }
-  inline u_int32_t lower_bound_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastLowerBound() : score_srv.getLastLowerBound()); }
-  inline u_int32_t upper_bound_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastUpperBound() : score_srv.getLastUpperBound()); }
+  inline u_int64_t value_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastValue() : score_srv.getLastValue()); }
+  inline u_int64_t lower_bound_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastLowerBound() : score_srv.getLastLowerBound()); }
+  inline u_int64_t upper_bound_score_anomaly(bool as_client) { return(as_client ? score_cli.getLastUpperBound() : score_srv.getLastUpperBound()); }
 };
 
 #endif

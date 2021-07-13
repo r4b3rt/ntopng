@@ -28,6 +28,7 @@ local as_info = interface.getASInfo(asn) or {}
 local ifId = getInterfaceId(ifname)
 local asname = as_info["asname"]
 local base_url = ntop.getHttpPrefix() .. "/lua/as_details.lua"
+local asn_behavior_update_freq = 300 -- An update each 300 seconds
 
 local page_params = {}
 
@@ -104,7 +105,7 @@ page_utils.set_active_menu_entry(page_utils.menu_entries.autonomous_systems)
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 
 if isEmptyString(asn) then
-   print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> ".. i18n("as_details.as_parameter_missing_message") .. "</div>")
+   print("<div class=\"alert alert alert-danger\">".."<i class='fas fa-exclamation-triangle fa-lg' style='color: #B94A48;'></i> " .. i18n("as_details.as_parameter_missing_message") .. "</div>")
    dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
    return
 end
@@ -135,7 +136,7 @@ if isEmptyString(page) or page == "historical" then
    local default_schema = "asn:traffic"
 
    if(not ts_utils.exists(default_schema, {ifid=ifId, asn=asn})) then
-      print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "..i18n("as_details.no_available_data_for_as",{asn = label}))
+      print("<div class=\"alert alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "..i18n("as_details.no_available_data_for_as",{asn = label}))
       print(" "..i18n("as_details.as_timeseries_enable_message",{url = ntop.getHttpPrefix().."/lua/admin/prefs.lua?tab=on_disk_ts",icon_flask="<i class=\"fas fa-flask\"></i>"})..'</div>')
 
    else
@@ -149,18 +150,32 @@ if isEmptyString(page) or page == "historical" then
          protocol = _GET["protocol"],
        }
 
-       graph_utils.drawGraphs(ifId, schema, tags, _GET["zoom"], asn_url, selected_epoch, {
-         top_protocols = "top:asn:ndpi",
-         timeseries = {
-            {schema="asn:traffic",             label=i18n("traffic"), split_directions = true --[[ split RX and TX directions ]]},
+       local all_timeseries = {
+         {schema="asn:traffic",             label=i18n("traffic"), split_directions = true --[[ split RX and TX directions ]]},
 			{schema="asn:rtt",                 label=i18n("graphs.num_ms_rtt"), nedge_exclude=1},
 			{schema="asn:traffic_sent",        label=i18n("graphs.traffic_sent"), nedge_exclude=1},
 			{schema="asn:traffic_rcvd",        label=i18n("graphs.traffic_rcvd"), nedge_exclude=1},
-	    {schema="asn:tcp_retransmissions", label=i18n("graphs.tcp_packets_retr"), nedge_exclude=1},
-	    {schema="asn:tcp_out_of_order",    label=i18n("graphs.tcp_packets_ooo"), nedge_exclude=1},
-	    {schema="asn:tcp_lost",            label=i18n("graphs.tcp_packets_lost"), nedge_exclude=1},
-	    {schema="asn:tcp_keep_alive",      label=i18n("graphs.tcp_packets_keep_alive"), nedge_exclude=1},
-         },
+			{schema="asn:score",                 label=i18n("score"), split_directions = true},
+			{schema="asn:tcp_retransmissions", label=i18n("graphs.tcp_packets_retr"), nedge_exclude=1},
+         {schema="asn:tcp_out_of_order",    label=i18n("graphs.tcp_packets_ooo"), nedge_exclude=1},
+         {schema="asn:tcp_lost",            label=i18n("graphs.tcp_packets_lost"), nedge_exclude=1},
+         {schema="asn:tcp_keep_alive",      label=i18n("graphs.tcp_packets_keep_alive"), nedge_exclude=1},
+       }
+
+       if ntop.isPro() then
+         local pro_timeseries = {
+            {schema="asn:score_anomalies",       label=i18n("graphs.iface_score_anomalies")},
+            {schema="asn:score_behavior",        label=i18n("graphs.iface_score_behavior"), split_directions = true, first_timeseries_only = true, metrics_labels = {i18n("graphs.score"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+            {schema="asn:traffic_anomalies",     label=i18n("graphs.iface_traffic_anomalies")},
+            {schema="asn:traffic_rx_behavior_v2",   label=i18n("graphs.iface_traffic_rx_behavior"), split_directions = true, first_timeseries_only = true, time_elapsed = asn_behavior_update_freq, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_rcvd"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+            {schema="asn:traffic_tx_behavior_v2",   label=i18n("graphs.iface_traffic_tx_behavior"), split_directions = true, first_timeseries_only = true, time_elapsed = asn_behavior_update_freq, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_sent"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+         }
+         all_timeseries = table.merge(all_timeseries, pro_timeseries)
+       end
+
+       graph_utils.drawGraphs(ifId, schema, tags, _GET["zoom"], asn_url, selected_epoch, {
+         top_protocols = "top:asn:ndpi",
+         timeseries = all_timeseries,
        })
    end
 
@@ -212,7 +227,7 @@ if(application ~= nil) then
    application_filter = '<span class="fas fa-filter"></span>'
 end
 
-local dt_buttons = "['<div class=\"btn-group\"><button class=\"btn btn-link dropdown-toggle\" data-toggle=\"dropdown\">"..i18n("flows_page.applications").. " " .. application_filter .. "<span class=\"caret\"></span></button> <ul class=\"dropdown-menu\" role=\"menu\" >"
+local dt_buttons = "['<div class=\"btn-group\"><button class=\"btn btn-link dropdown-toggle\" data-bs-toggle=\"dropdown\">"..i18n("flows_page.applications").. " " .. application_filter .. "<span class=\"caret\"></span></button> <ul class=\"dropdown-menu\" role=\"menu\" >"
 dt_buttons = dt_buttons..'<li><a class="dropdown-item" href="'..nav_url..'&page=flows">'..i18n("flows_page.all_proto")..'</a></li>'
 
 local ndpi_stats = interface.getASInfo(asn)
@@ -228,7 +243,7 @@ end
 dt_buttons = dt_buttons .. "</ul>"
 
 -- Hosts type dropdown
-dt_buttons = dt_buttons .. '<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">' .. i18n("flows_page.hosts") .. '<span class="caret"></span></button><ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">'
+dt_buttons = dt_buttons .. '<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">' .. i18n("flows_page.hosts") .. '<span class="caret"></span></button><ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">'
 
 local flowhosts_type_params = table.clone(page_params)
 flowhosts_type_params["flowhosts_type"] = nil
@@ -244,7 +259,7 @@ dt_buttons = dt_buttons .. formatDropdownEntries({
 dt_buttons = dt_buttons .. "</ul>"
 
 -- IP version dropdown
-dt_buttons = dt_buttons .. '<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">' .. i18n("flows_page.ip_version") .. '<span class="caret"></span></button><ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">'
+dt_buttons = dt_buttons .. '<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">' .. i18n("flows_page.ip_version") .. '<span class="caret"></span></button><ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">'
 
 local flowhosts_type_params = table.clone(page_params)
 flowhosts_type_params["ipversion"] = nil

@@ -7,6 +7,12 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 local tag_utils = {}
 
+-- Operator Separator in query strings
+tag_utils.SEPARATOR = ';'
+
+-- #####################################
+
+-- Supported operators
 tag_utils.tag_operators = {
     ["eq"] = "=",
     ["neq"] = "!=",
@@ -15,6 +21,38 @@ tag_utils.tag_operators = {
     ["gte"] = ">=",
     ["lte"] = "<=",
 }
+
+-- ##############################################
+
+--@brief Evaluate operator
+function tag_utils.eval_op(v1, op, v2)
+   local default_verdict = true
+
+   -- Convert boolean for compatibility
+   if type(v1) == 'boolean' then
+      if v1 then v1 = 1 else v1 = 0 end
+   end
+
+   if not v1 or not v2 then
+      return default_verdict
+   end
+
+   if op == 'eq' then
+      return v1 == v2
+   elseif op == 'neq' then
+      return v1 ~= v2
+   elseif op == 'lt' then
+      return v1 < v2
+   elseif op == 'gt' then
+      return v1 > v2
+   elseif op == 'gte' then
+      return v1 >= v2
+   elseif op == 'lte' then
+      return v1 <= v2
+   end 
+
+   return default_verdict
+end
 
 -- #####################################
 
@@ -39,6 +77,10 @@ tag_utils.nindex_tags_to_where_v4 = {
    ["info"]         = "INFO",
    ["srv_label"]    = "DST_LABEL",
    ["cli_label"]    = "SRC_LABEL",
+   ["cli_asn"]      = "SRC_ASN",
+   ["srv_asn"]      = "DST_ASN",
+   ["observation_point_id"] = "OBSERVATION_POINT_ID",
+   ["probe_ip"]     = "PROBE_IP",
 }
 
 -- #####################################
@@ -60,34 +102,50 @@ tag_utils.nindex_tags_to_where_v6 = {
    ["src2dst_dscp"] = "SRC2DST_DSCP",
    ["dst2src_dscp"] = "DST2SRC_DSCP",
    ["info"]         = "INFO",
+   ["cli_asn"]      = "SRC_ASN",
+   ["srv_asn"]      = "DST_ASN",
+   ["observation_point_id"] = "OBSERVATION_POINT_ID",
+   ["probe_ip"]     = "PROBE_IP",
 }
 
 -- #####################################
 
-function tag_utils.add_tag_if_valid(tags, tag_key, tag, formatters)
+function tag_utils.add_tag_if_valid(tags, tag_key, operators, formatters, i18n_prefix)
     
    if isEmptyString(_GET[tag_key]) then
-        return
+      return
    end
-
-   local value
-   local selected_operator = 'eq'
 
    local get_value = _GET[tag_key]
-   local splitted = split(get_value, ',')
+   local list = split(get_value, ',')
 
-   if #splitted == 2 then
-       value = splitted[1]
-       selected_operator = splitted[2]
+   for _,item in ipairs(list) do
+      local selected_operator = 'eq'
+
+      local splitted = split(item, tag_utils.SEPARATOR)
+
+      local realValue
+      if #splitted == 2 then
+         realValue = splitted[1]
+         selected_operator = splitted[2]
+      end
+
+      local value = realValue
+      if formatters[tag_key] ~= nil then
+         value = formatters[tag_key](value)
+      end
+
+      tag = {
+         realValue = realValue,
+         value = value,
+         label = i18n(i18n_prefix .. "." .. tag_key),
+         key = tag_key,
+         operators = operators,
+         selectedOperator = selected_operator
+      }
+
+      table.insert(tags, tag)
    end
-
-   if formatters[tag_key] ~= nil then
-       value = formatters[tag_key](value)
-   end
-
-   table.insert(tags, {
-       value = value, label = i18n("tags.".. tag_key), key = tag_key, operators = tag.operators, selectedOperator = selected_operator
-   })
 end
 
 return tag_utils

@@ -9,6 +9,7 @@ local other_alert_keys = require "other_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+local alert_entities = require "alert_entities"
 
 -- ##############################################
 
@@ -20,12 +21,14 @@ alert_list_download_succeeded.meta = {
    alert_key = other_alert_keys.alert_list_download_succeeded,
    i18n_title = "alerts_dashboard.list_download_succeeded",
    icon = "fas fa-fw fa-sticky-note",
+   entities = {
+      alert_entities.system
+   },
 }
 
 -- ##############################################
 
 -- @brief Prepare an alert table used to generate the alert
--- @param alert_severity A severity as defined in `alert_severities`
 -- @param list_name The name of the succeeded list as string
 -- @return A table with the alert built
 function alert_list_download_succeeded:init(list_name)

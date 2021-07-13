@@ -9,7 +9,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/notifications/?.lua;" ..
 
 require "lua_utils"
 local pools = require "pools"
-local user_scripts = require "user_scripts"
+local checks = require "checks"
 local ts_utils = require "ts_utils_core"
 local json = require "dkjson"
 
@@ -46,6 +46,13 @@ function host_pools:start_transaction()
    self.transaction_started = true
 end
 
+-- ##############################################
+
+-- Overwrite the pool name, members and recipients
+function host_pools:set_pool_policy(pool_id, new_policy)
+   return self:edit_pool(pool_id, nil, nil, nil, new_policy)
+end
+   
 -- ##############################################
 
 -- @brief Ends a pool transaction.
@@ -212,7 +219,7 @@ end
 
 -- @brief Persist pool details to disk. Possibly assign a pool id
 -- @param pool_id The pool_id of the pool which needs to be persisted. If nil, a new pool id is assigned
-function host_pools:_persist(pool_id, name, members, recipients)
+function host_pools:_persist(pool_id, name, members, recipients, policy)
     -- OVERRIDE
     -- Method must be overridden as host pool details and members are kept as hash caches, which are also used by the C++
 
@@ -234,7 +241,13 @@ function host_pools:_persist(pool_id, name, members, recipients)
     end
 
     -- Recipients
-    ntop.setHashCache(pool_details_key, "recipients", json.encode(recipients));
+    if recipients then -- safety check
+       ntop.setHashCache(pool_details_key, "recipients", json.encode(recipients));
+    end    
+
+    -- Policy
+    -- NB: the policy is already a string
+    ntop.setHashCache(pool_details_key, "policy", (policy or ""));
 
     -- Only reload if a transaction is not started. If a transaction is in progress
     -- no reload is performed: it is UP TO THE CALLER to call end_transaction and
@@ -244,7 +257,9 @@ function host_pools:_persist(pool_id, name, members, recipients)
        ntop.reloadHostPools()
 
        -- Set host recipients in the C++ core
-       self:set_host_recipients(recipients)
+       if recipients then -- safety check
+          self:set_host_recipients(recipients)
+       end
 
        -- Reload periodic scripts
        ntop.reloadPeriodicScripts()
@@ -313,6 +328,12 @@ end
 
 -- ##############################################
 
+function host_pools:get_pool_policy(pool_id)
+   return (self:_get_pool_detail(pool_id, "policy") or "")
+end
+   
+-- ##############################################
+
 function host_pools:get_pool(pool_id, recipient_details)
 
     local recipient_details = recipient_details or true
@@ -350,7 +371,7 @@ function host_pools:get_pool(pool_id, recipient_details)
 
 		if recipient and recipient.recipient_name then
 		   res["recipient_name"] = recipient.recipient_name
-		   res["recipient_user_script_categories"] = recipient.user_script_categories
+		   res["recipient_check_categories"] = recipient.check_categories
 		   res["recipient_minimum_severity"] = recipient.minimum_severity
 		end
 	     end
@@ -364,12 +385,15 @@ function host_pools:get_pool(pool_id, recipient_details)
         recipients = {}
     end
 
+    local policy = self:_get_pool_detail(pool_id, "policy")
+
     local pool_details = {
         pool_id = tonumber(pool_id),
         name = pool_name,
         members = members,
         member_details = member_details,
-        recipients = recipients
+        recipients = recipients,
+	policy = policy,
     }
 
     -- Upon success, pool details are returned, otherwise nil
@@ -429,7 +453,7 @@ function host_pools:hostpool2record(ifid, pool_id, pool)
     record["column_breakdown"] =
         "<div class='progress'><div class='progress-bar bg-warning' style='width: " ..
             sent2rcvd ..
-            "%;'>Sent</div><div class='progress-bar bg-info' style='width: " ..
+            "%;'>Sent</div><div class='progress-bar bg-success' style='width: " ..
             (100 - sent2rcvd) .. "%;'>Rcvd</div></div>"
 
     if (throughput_type == "pps") then

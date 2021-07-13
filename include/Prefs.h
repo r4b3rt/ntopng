@@ -43,7 +43,7 @@ class Prefs {
   char *http_binding_address1, *http_binding_address2;
   char *https_binding_address1, *https_binding_address2;
   bool enable_client_x509_auth, reproduce_at_original_speed;
-  char *lan_interface, *wan_interface;
+  char *lan_interface, *wan_interface, *zmq_publish_events_url;
   Ntop *ntop;
   bool enable_dns_resolution, sniff_dns_responses, pcap_file_purge_hosts_flows,
     categorization_enabled, resolve_all_host_ip, change_user, daemonize,
@@ -52,6 +52,7 @@ class Prefs {
     enable_users_login, disable_localhost_login, online_license_check,
     service_license_check, enable_sql_log, enable_access_log, log_to_file,
     enable_mac_ndpi_stats, enable_activities_debug, enable_behaviour_analysis,
+    enable_asn_behaviour_analysis, enable_network_behaviour_analysis, enable_iface_l7_behaviour_analysis,
     emit_flow_alerts, emit_host_alerts;
   u_int32_t behaviour_analysis_learning_period;
   u_int32_t iec60870_learning_period;
@@ -78,6 +79,7 @@ class Prefs {
   bool device_protocol_policies_enabled, enable_vlan_trunk_bridge;
   bool enable_arp_matrix_generation;
   bool enable_zmq_encryption;
+  bool flow_table_time;
   u_int32_t max_num_secs_before_delete_alert;
   int32_t max_entity_alerts;
   u_int32_t safe_search_dns_ip, global_primary_dns_ip, global_secondary_dns_ip;
@@ -139,6 +141,10 @@ class Prefs {
 			      has been provided on the command line.*/
 #ifndef HAVE_NEDGE
   bool appliance;
+#endif
+
+#ifdef HAVE_PF_RING
+  int pfring_cluster_id;
 #endif
 
   char *test_pre_script_path;
@@ -334,9 +340,13 @@ class Prefs {
   inline void set_lan_interface(char *iface) { if(lan_interface) free(lan_interface); lan_interface = strdup(iface); };
   inline void set_wan_interface(char *iface) { if(wan_interface) free(wan_interface); wan_interface = strdup(iface); };
   inline bool areMacNdpiStatsEnabled()  { return(enable_mac_ndpi_stats); };
-  inline pcap_direction_t getCaptureDirection() { return(captureDirection); }
-  inline void setCaptureDirection(pcap_direction_t dir) { captureDirection = dir; }
-  inline bool hasCmdlTraceLevel()      { return has_cmdl_trace_lvl;      }
+  inline pcap_direction_t getCaptureDirection() { return(captureDirection); };
+  inline void setCaptureDirection(pcap_direction_t dir) { captureDirection = dir; };
+#ifdef HAVE_PF_RING
+  inline bool hasPF_RINGClusterID() { return pfring_cluster_id >= 0; };
+  inline int getPF_RINGClusterID()  { return pfring_cluster_id;      };
+#endif
+  inline bool hasCmdlTraceLevel()      { return has_cmdl_trace_lvl;      };
   inline u_int32_t get_auth_session_duration()          { return(auth_session_duration);  };
   inline bool get_auth_session_midnight_expiration()    { return(auth_session_midnight_expiration);  };
   inline u_int32_t get_housekeeping_frequency()         { return(housekeeping_frequency); };
@@ -347,6 +357,7 @@ class Prefs {
   inline u_int32_t get_pkt_ifaces_flow_max_idle()       { return(pkt_ifaces_flow_max_idle);    };
   inline bool  are_alerts_disabled()                    { return(disable_alerts);              };
   inline bool  are_top_talkers_enabled()                { return(enable_top_talkers);     };
+  inline bool  flow_table_duration_or_last_seen()       { return(flow_table_time);     };
   inline bool  is_idle_local_host_cache_enabled()       { return(enable_idle_local_hosts_cache);    };
   inline bool  is_active_local_host_cache_enabled()     { return(enable_active_local_hosts_cache);  };
 
@@ -390,13 +401,19 @@ class Prefs {
   inline void      enableBehaviourAnalysis()     { enable_behaviour_analysis = true;                    };
   inline bool      isBehavourAnalysisEnabled()   { return(enable_behaviour_analysis);                   };
   inline u_int32_t behaviourAnalysisLearningPeriod() { return behaviour_analysis_learning_period;       };
+  
+  inline bool      isASNBehavourAnalysisEnabled()     { return(enable_asn_behaviour_analysis);               };
+  inline bool      isNetworkBehavourAnalysisEnabled() { return(enable_network_behaviour_analysis);           };
+  inline bool      isIfaceL7BehavourAnalysisEnabled() { return(enable_iface_l7_behaviour_analysis);          };
+
   inline ServiceAcceptance behaviourAnalysisStatusDuringLearning() { return behaviour_analysis_learning_status_during_learning; };
   inline ServiceAcceptance behaviourAnalysisStatusPostLearning()   { return behaviour_analysis_learning_status_post_learning;   };
   inline u_int64_t* getIEC104AllowedTypeIDs()    { return(iec104_allowed_typeids);                      };
   inline u_int32_t getIEC60870LearingPeriod()    { return(iec60870_learning_period);                    };
   inline bool      dontEmitFlowAlerts()          { return(!emit_flow_alerts);                           };
   inline bool      dontEmitHostAlerts()          { return(!emit_host_alerts);                           };
-  void setIEC104AllowedTypeIDs(char *protos);
+  inline char*     getZMQPublishEventsURL()      { return(zmq_publish_events_url);                      };
+  void setIEC104AllowedTypeIDs(const char * const protos);
   void validate();
 };
 

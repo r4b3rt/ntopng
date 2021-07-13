@@ -73,7 +73,11 @@ pfring *PF_RINGInterface::pfringSocketInit(const char *name) {
   pfring_get_bound_device_address(handle, ifMac);
   pfring_set_poll_watermark(handle, 8);
   pfring_set_application_name(handle, (char*)"ntopng");
-  pfring_enable_rss_rehash(handle);
+
+  if (ntop->getPrefs()->hasPF_RINGClusterID())
+    pfring_set_cluster(handle, ntop->getPrefs()->getPF_RINGClusterID(), cluster_per_flow_5_tuple);
+  else
+    pfring_enable_rss_rehash(handle);
   
   switch(ntop->getPrefs()->getCaptureDirection()) {
   case PCAP_D_INOUT: direction = rx_and_tx_direction; break;
@@ -104,39 +108,50 @@ pfring *PF_RINGInterface::pfringSocketInit(const char *name) {
 
 /* **************************************************** */
 
-PF_RINGInterface::PF_RINGInterface(const char *name) : NetworkInterface(name) {
+PF_RINGInterface::PF_RINGInterface(const char *_name) : NetworkInterface(_name) {
+  char name[MAX_INTERFACE_NAME_LEN];
+  int err;
 
   num_pfring_handles = 0;
   pcap_datalink_type = DLT_EN10MB;
   dropped_packets = 0;
 
-  if(strchr(ifname, ':') && strchr(ifname, ',')) { 
-    char name_list[MAX_INTERFACE_NAME_LEN];
-    char *name, *tmp;
+  strncpy(name, ifname, sizeof(name));
+  name[sizeof(name) - 1] = '\0';
+
+  if(strchr(name, ':') && strchr(name, ',')) { 
+    char *item_name, *tmp;
 
     /* This looks like a list of ZC interfaces, aggregation need to be done here */
+    item_name = strtok_r(name, ",", &tmp);
+    while (item_name != NULL && num_pfring_handles < PF_RING_MAX_SOCKETS) {
 
-    strncpy(name_list, ifname, sizeof(name_list));
-    name_list[sizeof(name_list) - 1] = '\0';
-    name = strtok_r(name_list, ",", &tmp);
-    while (name != NULL && num_pfring_handles < PF_RING_MAX_SOCKETS) {
+      pfring_handle[num_pfring_handles] = pfringSocketInit(item_name);
 
-      pfring_handle[num_pfring_handles] = pfringSocketInit(name);
-
-      if(pfring_handle[num_pfring_handles] == NULL)
-        throw errno; 
+      if(pfring_handle[num_pfring_handles] == NULL) {
+        err = errno;
+        throw err; 
+      }
      
       num_pfring_handles++;
 
-      name = strtok_r(NULL, ",", &tmp);
+      item_name = strtok_r(NULL, ",", &tmp);
     }
 
   } else {
 
-    pfring_handle[0] = pfringSocketInit(ifname);
+    if (ntop->getPrefs()->hasPF_RINGClusterID() && !strchr(name, ':')) {
+      /* PF_RING cluster configured, cleaning up queue from the interface name */
+      char *at = strchr(name, '@');
+      if (at) *at = '\0';
+    }
 
-    if(pfring_handle[0] == NULL)
-      throw errno; 
+    pfring_handle[0] = pfringSocketInit(name);
+
+    if(pfring_handle[0] == NULL) {
+      err = errno;
+      throw err; 
+    }
 
     num_pfring_handles = 1;
   }

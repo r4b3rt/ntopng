@@ -40,7 +40,7 @@ function formatTrafficProfile(profile)
    local res = ""
 
    if not isEmptyString(profile) then
-      res = "<span class='badge badge-primary'>"..profile.."</span> "
+      res = "<span class='badge bg-primary'>"..profile.."</span> "
    end
 
    return res
@@ -49,7 +49,7 @@ end
 -- #######################
 
 -- Extracts the information serialized into alert_info from the flow
--- user scripts
+-- checks
 function flow2alertinfo(flow)
    local alert_info = flow["alert_info"]
 
@@ -293,17 +293,12 @@ function handleCustomFlowField(key, value, snmpdevice)
       return(format_utils.formatValue(value))
    elseif key == 'EXPORTER_IPV4_ADDRESS' or
           key == 'NPROBE_IPV4_ADDRESS' then
-      local hinfo = hostkey2hostinfo(value)
-      local res = hostinfo2label(hinfo)
 
-      local ret = ip2detailshref(value, nil, nil, value)
-
-      if((res == "") or (res == nil)) and ret ~= ipaddr then
-	 ret = string.format("%s [%s]", ret, ipaddr)
-      elseif value ~= res then
-	 ret = string.format("%s [%s]", ret, res)
+      if ntop.isPro() then
+	 return("<A HREF=\"".. ntop.getHttpPrefix() .."/lua/pro/enterprise/flowdevice_details.lua?ip="..value.."\">"..value.."</A>")
+      else
+	 return(value)
       end
-      return(ret .. "</A>")
    elseif key == 'FLOW_USER_NAME' then
       elems = string.split(value, ';')
 
@@ -399,30 +394,6 @@ function formatTcpFlags(flags)
 end
 
 -- #######################
-
--- See Utils::l4proto2name()
-l4_protocols = {
-   ['IP'] = 0,
-   ['ICMP'] = 1,
-   ['IGMP'] = 2,
-   ['TCP'] = 6,
-   ['UDP'] = 17,
-   ['IPv6'] = 41,
-   ['RSVP'] = 46,
-   ['GRE'] = 47,
-   ['ESP'] = 50,
-   ['IPv6-ICMP'] = 58,
-   ['OSPF'] = 89,
-   ['PIM'] = 103,
-   ['VRRP'] = 112,
-   ['HIP'] = 139,
-}
-
-function getL4ProtoName(proto_id)
-   return(l4_proto_to_string(proto_id))
-end
-
- -- #######################
 
 local dns_types = {
   ['A'] = 1,
@@ -558,9 +529,9 @@ local function formatFlowHost(flow, cli_or_srv, historical_bounds, hyperlink_suf
      host_name = host_name.." <i class='fas fa-ban' aria-hidden='true' title='Blacklisted'></i>"
   end
   if(flow[cli_or_srv .. ".localhost"] == true) then
-     host_name = host_name .. ' <abbr title=\"'.. i18n("details.label_local_host") ..'\"><span class="badge badge-success">'..i18n("details.label_short_local_host")..'</span></abbr>'
+     host_name = host_name .. ' <abbr title=\"'.. i18n("details.label_local_host") ..'\"><span class="badge bg-success">'..i18n("details.label_short_local_host")..'</span></abbr>'
   else 
-     host_name = host_name .. ' <abbr title=\"'.. i18n("details.label_remote") ..'\"><span class="badge badge-secondary">'..i18n("details.label_short_remote")..'</span></abbr>'
+     host_name = host_name .. ' <abbr title=\"'.. i18n("details.label_remote") ..'\"><span class="badge bg-secondary">'..i18n("details.label_short_remote")..'</span></abbr>'
   end
 
   return hostinfo2detailshref(flow2hostinfo(flow, cli_or_srv), hyperlink_params, host_name, nil, true --[[ perform link existance checks --]])
@@ -582,7 +553,9 @@ function getFlowLabel(flow, show_macs, add_hyperlinks, historical_bounds, hyperl
    local srv_name = flowinfo2hostname(flow, "srv")
    local cli_mac = flow["cli.mac"] 
    local srv_mac = flow["srv.mac"]
-      
+   local cli_as  = nil
+   local srv_as  = nil
+
    if((not isIPv4(cli_name)) and (not isIPv6(cli_name))) then cli_name = shortenString(cli_name) end
    if((not isIPv4(srv_name)) and (not isIPv6(srv_name))) then srv_name = shortenString(srv_name) end
 
@@ -603,12 +576,22 @@ function getFlowLabel(flow, show_macs, add_hyperlinks, historical_bounds, hyperl
 	 srv_port = formatFlowPort(flow, "srv", srv_port, historical_bounds)
       end
 
-      if cli_mac then
-	 cli_mac = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?mac=" ..cli_mac.."\">" ..cli_mac.."</A>"
+      if((flow.cli_as ~= nil) and (flow.cli_as ~= 0)) then
+         cli_as = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?asn=" ..flow.cli_as.."\">" .. shortenString( flow.cli_as_name or "", 14 ) .."</A>"
+         cli_mac = ""
+      else  
+         if cli_mac then
+	   cli_mac = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?mac=" ..cli_mac.."\">" ..cli_mac.."</A>"
+         end
       end
 
-      if srv_mac then
-	 srv_mac = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?mac=" ..srv_mac.."\">" ..srv_mac.."</A>"
+      if((flow.dst_as ~= nil) and (flow.dst_as ~= 0)) then
+         dst_as = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?asn=" ..flow.dst_as.."\">" .. shortenString( flow.dst_as_name or "", 14 ) .."</A>"
+	 srv_mac = ""
+      else  
+        if srv_mac then
+  	  srv_mac = "<A HREF=\""..ntop.getHttpPrefix().."/lua/hosts_stats.lua?mac=" ..srv_mac.."\">" ..srv_mac.."</A>"
+        end
       end
 
    end
@@ -631,10 +614,14 @@ function getFlowLabel(flow, show_macs, add_hyperlinks, historical_bounds, hyperl
       label = label..":"..cli_port
    end
 
-   if show_macs and cli_mac then
-      label = label.." [ "..cli_mac.." ]"
+  if(cli_as ~= nil) then
+     label = label.." [ "..cli_as.." ]"
+   else
+     if show_macs and cli_mac then
+        label = label.." [ "..cli_mac.." ]"
+     end
    end
-
+   
    label = label.."&nbsp; <i class=\"fas fa-exchange-alt fa-lg\"  aria-hidden=\"true\"></i> &nbsp;"
 
    if not isEmptyString(srv_name) then
@@ -653,9 +640,13 @@ function getFlowLabel(flow, show_macs, add_hyperlinks, historical_bounds, hyperl
       label = label..":"..srv_port
    end
 
-   if show_macs and srv_mac then
+  if(dst_as ~= nil) then
+     label = label.." [ "..dst_as.." ]"
+  else
+    if show_macs and srv_mac then
       label = label.." [ "..srv_mac.." ]"
-   end
+    end
+  end
 
    local s_info = flow2alertinfo(flow)
    if(s_info ~= nil) then
@@ -1386,12 +1377,10 @@ function printFlowSNMPInfo(snmpdevice, input_idx, output_idx)
 	       return ifurl
 	    end
 
-	    local inputurl
-	    local outputurl
-
 	    if input_idx then
 	       inputurl = prepare_interface_url(input_idx, snmp_interfaces[input_idx])
 	    end
+	    
 	    if output_idx then
 	       outputurl = prepare_interface_url(output_idx, snmp_interfaces[output_idx])
 	    end
@@ -1432,8 +1421,8 @@ function printBlockFlowJs()
         var row_id = flow_key + "_" + flow_hash_id;
         if (data.status == "BLOCKED") {
           $('#'+row_id+'_block')
-            .removeClass('badge-secondary')
-            .addClass('badge-danger')
+            .removeClass('bg-secondary')
+            .addClass('bg-danger')
             .attr('title', ']] print(i18n("flow_details.flow_traffic_is_dropped")) print[[');
         }
       },
@@ -1466,8 +1455,8 @@ function printL4ProtoDropdown(base_url, page_params, l4_proto)
    end
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.l4_protocol")) print[[]] print(l4proto_filter) print[[<span class="caret"></span></button>\
-      <ul class="dropdown-menu dropdown-menu-right scrollable-dropdown" role="menu" id="flow_dropdown">\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.l4_protocol")) print[[]] print(l4proto_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu dropdown-menu-end scrollable-dropdown" role="menu" id="flow_dropdown">\
          <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, l4proto_params_non_tcp)) print[[">]] print(i18n("flows_page.all_l4_protocols")) print[[</a></li>]]
 
     if l4_proto then
@@ -1517,8 +1506,8 @@ local function printFlowDevicesFilterDropdown(base_url, page_params)
    end
 
    print[[, '<div class="btn-group float-right">\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.device_ip")) print[[]] print(cur_dev_filter) print[[<span class="caret"></span></button>\
-      <ul class="dropdown-menu dropdown-menu-right scrollable-dropdown" role="menu" id="flow_dropdown">\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.device_ip")) print[[]] print(cur_dev_filter) print[[<span class="caret"></span></button>\
+      <ul class="dropdown-menu dropdown-menu-end scrollable-dropdown" role="menu" id="flow_dropdown">\
 	 <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, dev_params)) print[[">]] print(i18n("flows_page.all_devices")) print[[</a></li>\]]
    for _, dev_ip in ipairs(devips) do
       local dev_name = dev_ip
@@ -1559,7 +1548,7 @@ local function printFlowDevicesFilterDropdown(base_url, page_params)
 
 	 if_params[direction] = nil
 	    print[[, '<div class="btn-group float-right">\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page."..direction)) print[[]] print(cur_if_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page."..direction)) print[[]] print(cur_if_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\
 	 <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, if_params)) print[[">]] print(i18n("flows_page.all_"..direction)) print[[</a></li>\]]
 
@@ -1613,7 +1602,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
     print[['\
        <div class="btn-group">\
-	  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.hosts")) print(getParamFilter(page_params, "flowhosts_type")) print[[<span class="caret"></span></button>\
+	  <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.hosts")) print(getParamFilter(page_params, "flowhosts_type")) print[[<span class="caret"></span></button>\
 	  <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\
 	     <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, flowhosts_type_params)) print[[">]] print(i18n("flows_page.all_hosts")) print[[</a></li>\]]
        printDropdownEntries({
@@ -1634,7 +1623,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
     print[[, '\
        <div class="btn-group">\
-	  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("status")) print(getParamFilter(page_params, "alert_type")) print[[<span class="caret"></span></button>\
+	  <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("status")) print(getParamFilter(page_params, "alert_type")) print[[<span class="caret"></span></button>\
 	  <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 	  <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, alert_type_params)) print[[">]] print(i18n("flows_page.all_flows")) print[[</a></li>\]]
 
@@ -1681,7 +1670,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
        print[[, '\
        <div class="btn-group">\
-	  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.alert_type_severity")) print(getParamFilter(page_params, "alert_type_severity")) print[[<span class="caret"></span></button>\
+	  <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.alert_type_severity")) print(getParamFilter(page_params, "alert_type_severity")) print[[<span class="caret"></span></button>\
 	  <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 	  <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, alert_type_severity_params)) print[[">]] print(i18n("flows_page.all_flows")) print[[</a></li>]]
 
@@ -1713,7 +1702,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
 	  print[[, '\
 	   <div class="btn-group">\
-	      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.tcp_state")) print(getParamFilter(page_params, "tcp_flow_state")) print[[<span class="caret"></span></button>\
+	      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.tcp_state")) print(getParamFilter(page_params, "tcp_flow_state")) print[[<span class="caret"></span></button>\
 	      <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 	      <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, tcp_state_params)) print[[">]] print(i18n("flows_page.all_flows")) print[[</a></li>\]]
 
@@ -1736,7 +1725,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
 	print[[, '\
 	   <div class="btn-group">\
-	      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("flows_page.direction")) print(getParamFilter(page_params, "traffic_type")) print[[<span class="caret"></span></button>\
+	      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("flows_page.direction")) print(getParamFilter(page_params, "traffic_type")) print[[<span class="caret"></span></button>\
 	      <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 		 <li><a class="dropdown-item" href="]] print(getPageUrl(base_url, traffic_type_params)) print[[">]] print(i18n("flows_page.all_flows")) print[[</a></li>\]]
 	printDropdownEntries({
@@ -1760,7 +1749,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 	    if not table.empty(pods) then
 		print[[, '\
 	       <div class="btn-group">\
-		  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("containers_stats.pod")) print(getParamFilter(page_params, "pod")) print[[<span class="caret"></span></button>\
+		  <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("containers_stats.pod")) print(getParamFilter(page_params, "pod")) print[[<span class="caret"></span></button>\
 		  <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 		  ]]
 		local entries = {}
@@ -1789,7 +1778,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 	    if not table.empty(containers) then
 		print[[, '\
 	       <div class="btn-group">\
-		  <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("containers_stats.container")) print(getParamFilter(page_params, "container")) print[[<span class="caret"></span></button>\
+		  <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("containers_stats.container")) print(getParamFilter(page_params, "container")) print[[<span class="caret"></span></button>\
 		  <ul class="dropdown-menu scrollable-dropdown" role="menu">\
 		  ]]
 		local entries = {}
@@ -1810,7 +1799,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
     end
 
     -- L7 Application
-    print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">'..i18n("report.applications")..' ' .. getParamFilter(page_params, "application") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
+    print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">'..i18n("report.applications")..' ' .. getParamFilter(page_params, "application") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
     print('<li><a class="dropdown-item" href="')
 
     -- table.clone needed to modify some parameters while keeping the original unchanged
@@ -1846,7 +1835,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
     print("</ul> </div>'")
 
     -- L7 Application Category
-    print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">'..i18n("users.categories")..' ' .. getParamFilter(page_params, "category") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
+    print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">'..i18n("users.categories")..' ' .. getParamFilter(page_params, "category") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
     print('<li><a class="dropdown-item" href="')
     -- table.clone needed to modify some parameters while keeping the original unchanged
     local category_filter_params = table.clone(page_params)
@@ -1925,7 +1914,7 @@ function printActiveFlowsDropdown(base_url, page_params, ifstats, flowstats, is_
 
       if profiles_defined then
         -- Traffic Profiles
-        print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">'..i18n("traffic_profiles.traffic_profiles")..' ' .. getParamFilter(page_params, "traffic_profile") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
+        print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">'..i18n("traffic_profiles.traffic_profiles")..' ' .. getParamFilter(page_params, "traffic_profile") .. '<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">')
         print('<li><a class="dropdown-item" href="')
 	-- table.clone needed to modify some parameters while keeping the original unchanged
         local traffic_profile_filter_params = table.clone(page_params)

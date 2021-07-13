@@ -10,6 +10,7 @@ local format_utils = require("format_utils")
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+local alert_entities = require "alert_entities"
 
 -- ##############################################
 
@@ -21,6 +22,9 @@ alert_am_threshold_cross.meta = {
    alert_key = other_alert_keys.alert_am_threshold_cross,
    i18n_title = "graphs.active_monitoring",
    icon = "fas fa-fw fa-exclamation",
+   entities = {
+      alert_entities.am_host,
+   },
 }
 
 -- ##############################################
@@ -56,7 +60,9 @@ function alert_am_threshold_cross.format(ifid, alert, alert_type_params)
    if(alert_type_params.value == 0) then -- host unreachable
       if(alert_type_params.alt_i18n) then
 	 -- The measurement may have defined a custom message via unreachable_alert_i18n
-	 msg = i18n(alert_type_params.alt_i18n) or alert_type_params.alt_i18n
+	 msg = i18n(alert_type_params.alt_i18n,
+		    {host = ip_label,
+		     numeric_ip = numeric_ip}) or alert_type_params.alt_i18n
       end
 
       -- Fallback

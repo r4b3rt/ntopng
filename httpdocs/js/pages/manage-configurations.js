@@ -1,4 +1,4 @@
-$(document).ready(function() {
+$(function() {
 
     const setImportExportButtonLabels = (key) => {
 
@@ -25,7 +25,7 @@ $(document).ready(function() {
 
         // create a filename for the selectec config
         const filename = `${key}_config.json`;
-        const href = new URL(`/lua/rest/v1/export/${key}/config.lua`, location.origin);
+        const href = new URL(`/lua/rest/v2/export/${key}/config.lua`, location.origin);
         href.searchParams.set('download', '1');
 
         // update the export button link
@@ -53,7 +53,7 @@ $(document).ready(function() {
 
         try {
 
-            const request = await fetch(`${http_prefix}/lua/rest/v1/reset/${key}/config.lua`);
+            const request = await fetch(`${http_prefix}/lua/rest/v2/reset/${key}/config.lua`);
             const response = await request.json();
 
             // check if the request failed
@@ -89,7 +89,7 @@ $(document).ready(function() {
     NtopUtils.importModalHelper({
         loadConfigXHR: (jsonConf) => {
             const key = $(`input[name='configuration']:checked`).val();
-            return $.post(`${http_prefix}/lua/rest/v1/import/${key}/config.lua`, { JSON: jsonConf, csrf: importCSRF});
+            return $.post(`${http_prefix}/lua/rest/v2/import/${key}/config.lua`, { JSON: jsonConf, csrf: importCSRF});
         }
     });
 

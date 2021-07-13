@@ -31,13 +31,13 @@ class BlacklistedCountryAlert : public FlowAlert {
   ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType() { return { flow_alert_blacklisted_country, alert_category_security }; }
+  static FlowAlertType getClassType()  { return { flow_alert_blacklisted_country, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_ERROR; };
 
-  BlacklistedCountryAlert(FlowCallback *c, Flow *f, bool _is_server) : FlowAlert(c, f) { is_server = _is_server; };
+  BlacklistedCountryAlert(FlowCheck *c, Flow *f, bool _is_server) : FlowAlert(c, f) { is_server = _is_server; };
   ~BlacklistedCountryAlert() { };
 
-  FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_blacklisted_country"); }
+  FlowAlertType getAlertType() const { return getClassType();  }
 
   bool isServer() { return is_server; }
 };

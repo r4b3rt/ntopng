@@ -57,10 +57,12 @@ Ntop::Ntop(char *appName) {
   extract = new (std::nothrow) TimelineExtract();
   pa      = new (std::nothrow) PeriodicActivities();
   address = new (std::nothrow) AddressResolution();
+  offline = false;
   custom_ndpi_protos = NULL;
   prefs = NULL, redis = NULL;
 #ifndef HAVE_NEDGE
   export_interface = NULL;
+  zmqPublisher = NULL;
 #endif
   trackers_automa = NULL;
   num_cpus = -1;
@@ -71,16 +73,21 @@ Ntop::Ntop(char *appName) {
   last_stats_reset = 0;
   ndpiReloadInProgress = false;
   
-  /* Callbacks loader */
-  flowCallbacksReloadInProgress = true; /* Lazy, will be reloaded the first time this condition is evaluated */
-  hostCallbacksReloadInProgress = true;
-  flow_callbacks_loader = NULL;
-  host_callbacks_loader = NULL;
-  
-/* Flow alerts loader */
+  /* Checks loader */
+  flowChecksReloadInProgress = true; /* Lazy, will be reloaded the first time this condition is evaluated */
+  hostChecksReloadInProgress = true;
+  flow_checks_loader = NULL;
+  host_checks_loader = NULL;
+
+  /* Flow alerts exclusions */
+#ifdef NTOPNG_PRO
   alertExclusionsReloadInProgress = true;
   alert_exclusions = alert_exclusions_shadow = NULL;
-  
+#endif
+
+  /* Host Pools reload - Interfaces initialize their pools inside the constructor */
+  hostPoolsReloadInProgress = false;
+
   httpd = NULL, geo = NULL, mac_manufacturers = NULL;
   memset(&cpu_stats, 0, sizeof(cpu_stats));
   cpu_load = 0;
@@ -91,7 +98,7 @@ Ntop::Ntop(char *appName) {
 #endif
   privileges_dropped = false;
   can_send_icmp = Utils::isPingSupported();
-  
+
   for (int i = 0; i < CONST_MAX_NUM_NETWORKS; i++)
     local_network_names[i] = local_network_aliases[i] = NULL;
 
@@ -114,7 +121,7 @@ Ntop::Ntop(char *appName) {
   internal_alerts_queue = new (std::nothrow) FifoSerializerQueue(INTERNAL_ALERTS_QUEUE_SIZE);
 
   resolvedHostsBloom = new (std::nothrow) Bloom(NUM_HOSTS_RESOLVED_BITS);
-  
+
 #ifdef WIN32
   if(SHGetFolderPath(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, working_dir) != S_OK) {
     strncpy(working_dir, "C:\\Windows\\Temp\\ntopng", sizeof(working_dir)); // Fallback: it should never happen
@@ -151,7 +158,7 @@ Ntop::Ntop(char *appName) {
   plugins0_active = 0;
 
   //umask(0);
-  
+
   if(getcwd(startup_dir, sizeof(startup_dir)) == NULL)
     ntop->getTrace()->traceEvent(TRACE_ERROR,
 				 "Occurred while checking the current directory (errno=%d)", errno);
@@ -188,6 +195,10 @@ Ntop::Ntop(char *appName) {
   inotify_fd = -1;
 #endif
 
+#ifndef HAVE_NEDGE
+  refresh_ips_rules = false;
+#endif
+  
   // printf("--> %s [%s]\n", startup_dir, appName);
 
   initTimezone();
@@ -217,9 +228,9 @@ void Ntop::lockNtopInstance() {
     ntop->getTrace()->traceEvent(TRACE_DEBUG, "Working dir does not exist yet");
     return;
   }
-  
+
   snprintf(lockPath, sizeof(lockPath), "%s/.lock", working_dir);
-  
+
   lock.l_type   = F_WRLCK;  /* read/write (exclusive versus shared) lock */
   lock.l_whence = SEEK_SET; /* base for seek offsets */
   lock.l_start  = 0;        /* 1st byte in file */
@@ -235,7 +246,7 @@ void Ntop::lockNtopInstance() {
   if(fcntl(startupLockFile, F_SETLK, &lock) < 0) { /** F_SETLK doesn't block, F_SETLKW does **/
     ntop->getTrace()->traceEvent(TRACE_ERROR, "Another ntopng instance is running...");
     exit(EXIT_FAILURE);
-  }  
+  }
 }
 
 #endif
@@ -264,6 +275,7 @@ void Ntop::initTimezone() {
 
 Ntop::~Ntop() {
   int num_local_networks = local_network_tree.getNumAddresses();
+
   for (int i = 0; i < num_local_networks; i++) {
     if (local_network_names[i] != NULL) free(local_network_names[i]);
     if (local_network_aliases[i] != NULL) free(local_network_aliases[i]);
@@ -290,7 +302,7 @@ Ntop::~Ntop() {
   if(cping)               delete cping;
   if(ping)                delete ping;
 #endif
-  
+
   if(udp_socket != -1)    closesocket(udp_socket);
 
   if(trackers_automa)     ndpi_free_automa(trackers_automa);
@@ -303,8 +315,10 @@ Ntop::~Ntop() {
 
 #ifdef NTOPNG_PRO
   if(pro) delete pro;
+  if(alert_exclusions)          delete alert_exclusions;
+  if(alert_exclusions_shadow)   delete alert_exclusions_shadow;
 #endif
-  
+
   if(resolvedHostsBloom) delete resolvedHostsBloom;
   delete internal_alerts_queue;
 
@@ -319,11 +333,9 @@ Ntop::~Ntop() {
   if(prefs)   { delete prefs; prefs = NULL;     }
   if(globals) { delete globals; globals = NULL; }
 
-  if(flow_callbacks_loader)     delete flow_callbacks_loader;
-  if(host_callbacks_loader)     delete host_callbacks_loader;
-  if(alert_exclusions)          delete alert_exclusions;
-  if(alert_exclusions_shadow)   delete alert_exclusions_shadow;
-  
+  if(flow_checks_loader)     delete flow_checks_loader;
+  if(host_checks_loader)     delete host_checks_loader;
+
 #ifdef __linux__
   if(inotify_fd > 0)  close(inotify_fd);
 #endif
@@ -372,13 +384,13 @@ void Ntop::registerPrefs(Prefs *_prefs, bool quick_registration) {
     /* Initialize another redis instance for the trace of events */
     ntop->getTrace()->initRedis(prefs->get_redis_host(), prefs->get_redis_password(),
 				prefs->get_redis_port(), prefs->get_redis_db_id());
-    
+
     if(ntop->getRedis() == NULL) {
       ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to initialize redis. Quitting...");
       exit(-1);
     }
   }
-  
+
 #ifdef NTOPNG_PRO
   pro->init_license();
 
@@ -501,7 +513,7 @@ void Ntop::start() {
   prefs->loadInstanceNameDefaults();
 
   loadLocalInterfaceAddress();
-  
+
   address->startResolveAddressLoop();
 
   system_interface->allocateStructures();
@@ -551,9 +563,10 @@ void Ntop::start() {
     get_HTTPserver()->startCaptiveServer();
 #endif
 
+  checkReloadHostPools();
   checkReloadAlertExclusions();
-  checkReloadFlowCallbacks();
-  checkReloadHostCallbacks();
+  checkReloadFlowChecks();
+  checkReloadHostChecks();
 
   for(int i=0; i<num_defined_interfaces; i++)
     iface[i]->startPacketPolling();
@@ -607,8 +620,8 @@ void Ntop::start() {
 	/* One extra housekeeping before executing tests (this assumes all flows have been walked) */
 	runHousekeepingTasks();
 
-	/* Allow NetworkInterface::hookFlowLoop to process all enqueued flows for hook execution */
-	sleep(1);
+	/* Allow host and flow checks to be executed, allow notifications to be processed (notifications.lua) */
+	sleep(3);
 
 	/* Test Script (Post Analysis) */
 	if(ntop->getPrefs()->get_test_post_script_path()) {
@@ -625,7 +638,7 @@ void Ntop::start() {
 
 #ifndef __linux__
     gettimeofday(&end, NULL);
-    
+
     usec_diff = Utils::usecTimevalDiff(&end, &begin);
 
     if(usec_diff < nap_usec)
@@ -668,7 +681,7 @@ void Ntop::start() {
         }
       }
     } while(usec_diff < nap_usec);
-#endif    
+#endif
   }
 }
 
@@ -815,9 +828,9 @@ void Ntop::loadLocalInterfaceAddress() {
 
   for(int ifIdx = 0; ifIdx < (int)pIPAddrTable->dwNumEntries; ifIdx++) {
     char name[256];
-    
+
     getIfName(pIPAddrTable->table[ifIdx].dwIndex, name, sizeof(name));
-    
+
     for(int id = 0; id < num_defined_interfaces; id++) {
       if((name[0] != '\0') && (strstr(iface[id]->get_name(), name) != NULL)) {
 	u_int32_t bits = Utils::numberOfSetBits((u_int32_t)pIPAddrTable->table[ifIdx].dwMask);
@@ -1210,7 +1223,7 @@ bool Ntop::isUserAdministrator(lua_State* vm) {
   } else if(HTTPserver::authorized_localhost_user_login(conn))
     return(true); /* login disabled from localhost, everyone's connecting from localhost is an admin */
 
-  if((username = getLuaVMUserdata(vm,user)) == NULL) {
+  if((username = getLuaVMUserdata(vm, user)) == NULL) {
     // ntop->getTrace()->traceEvent(TRACE_WARNING, "%s(%s): NO", __FUNCTION__, "???");
     return(false); /* Unknown */
   }
@@ -1320,7 +1333,7 @@ bool Ntop::isPcapDownloadAllowed(lua_State* vm, const char *ifname) {
 
   if(isUserAdministrator(vm))
     return true;
-  
+
   if (isInterfaceAllowed(vm, ifname)) {
     char *username = getLuaVMUserdata(vm,user);
     ntop->getUserPermission(username, &allow_pcap_download);
@@ -1418,7 +1431,7 @@ bool Ntop::checkUserInterfaces(const char * const user) const {
 
 bool Ntop::getUserPasswordHashLocal(const char * const user, char *password_hash) const {
   char key[64], val[64];
-  
+
   snprintf(key, sizeof(key), CONST_STR_USER_PASSWORD, user);
 
   if(ntop->getRedis()->get(key, val, sizeof(val)) < 0) {
@@ -2082,10 +2095,40 @@ bool Ntop::getUserPermission(const char * const username, bool *allow_pcap_downl
 
   snprintf(key, sizeof(key), CONST_STR_USER_ALLOW_PCAP, username);
 
-  if(ntop->getRedis()->get(key, val, sizeof(val)) >= 0) 
+  if(ntop->getRedis()->get(key, val, sizeof(val)) >= 0)
     if(strcmp(val, "1") == 0) *allow_pcap_download = true;
 
   return(true);
+}
+
+/* ******************************************* */
+
+/*
+  Assigns a unique user id to be assigned to a new ntopng user. Callers must lock.
+  Assigned user id, if assignment is successful, is returned in the first param.
+ */
+bool Ntop::assignUserId(u_int8_t *new_user_id) {
+  char cur_id_buf[8];
+  int cur_id;
+
+  for(cur_id = 0; cur_id < NTOP_MAX_NUM_USERS; cur_id++) {
+    snprintf(cur_id_buf, sizeof(cur_id_buf), "%d", cur_id);
+
+    if(!ntop->getRedis()->sismember(PREF_NTOP_USER_IDS, cur_id_buf))
+      break;
+  }
+
+  if(cur_id == NTOP_MAX_NUM_USERS)
+    return false; /* No more ids available */
+
+  if(ntop->getRedis()->sadd(PREF_NTOP_USER_IDS, cur_id_buf) < 0)
+    return false; /* Unable to add the newly assigned user id to the set of all user ids */
+
+  *new_user_id = cur_id;
+
+  ntop->getTrace()->traceEvent(TRACE_DEBUG, "Assigned user id %u", *new_user_id);
+
+  return true;
 }
 
 /* ******************************************* */
@@ -2107,9 +2150,16 @@ bool Ntop::addUser(char *username, char *full_name, char *password, char *host_r
 		   char *language, bool allow_pcap_download) {
   char key[CONST_MAX_LEN_REDIS_KEY];
   char password_hash[33];
+  char new_user_id_buf[8];
+  u_int8_t new_user_id = 0;
 
-  if(existsUser(username))
+  users_m.lock(__FILE__, __LINE__);
+
+  if(existsUser(username) /* User already existing */
+     || !assignUserId(&new_user_id) /* Unable to assign a user id */) {
+    users_m.unlock(__FILE__, __LINE__);
     return(false);
+  }
 
   snprintf(key, sizeof(key), CONST_STR_USER_FULL_NAME, username);
   ntop->getRedis()->set(key, full_name, 0);
@@ -2117,12 +2167,19 @@ bool Ntop::addUser(char *username, char *full_name, char *password, char *host_r
   snprintf(key, sizeof(key), CONST_STR_USER_GROUP, username);
   ntop->getRedis()->set(key, (char*) host_role, 0);
 
+  snprintf(key, sizeof(key), CONST_STR_USER_ID, username);
+  snprintf(new_user_id_buf, sizeof(new_user_id_buf), "%d", new_user_id);
+  ntop->getRedis()->set(key, new_user_id_buf, 0);
+
   snprintf(key, sizeof(key), CONST_STR_USER_PASSWORD, username);
   mg_md5(password_hash, password, NULL);
   ntop->getRedis()->set(key, password_hash, 0);
 
   snprintf(key, sizeof(key), CONST_STR_USER_NETS, username);
   ntop->getRedis()->set(key, allowed_networks, 0);
+
+  snprintf(key, sizeof(key), CONST_STR_USER_THEME, username);
+  ntop->getRedis()->set(key, "", 0);
 
   if(language && language[0] != '\0') {
     snprintf(key, sizeof(key), CONST_STR_USER_LANGUAGE, username);
@@ -2144,6 +2201,8 @@ bool Ntop::addUser(char *username, char *full_name, char *password, char *host_r
     snprintf(key, sizeof(key), CONST_STR_USER_HOST_POOL_ID, username);
     ntop->getRedis()->set(key, host_pool_id, 0);
   }
+
+  users_m.unlock(__FILE__, __LINE__);
 
   return(true);
 }
@@ -2177,12 +2236,30 @@ bool Ntop::isCaptivePortalUser(const char * const username) {
 /* ******************************************* */
 
 bool Ntop::deleteUser(char *username) {
+  char user_id_buf[8];
   char key[64];
+
+  users_m.lock(__FILE__, __LINE__);
+
+  if(!existsUser(username)) {
+    users_m.unlock(__FILE__, __LINE__);
+    return(false);
+  }
+
+  snprintf(key, sizeof(key), CONST_STR_USER_ID, username);
+
+  /* Dispose the currently assigned user id so that it can be recycled */
+  if((ntop->getRedis()->get(key, user_id_buf, sizeof(user_id_buf)) >= 0)) {
+    ntop->getRedis()->srem(PREF_NTOP_USER_IDS, user_id_buf);
+  }
 
   snprintf(key, sizeof(key), CONST_STR_USER_FULL_NAME, username);
   ntop->getRedis()->del(key);
 
   snprintf(key, sizeof(key), CONST_STR_USER_GROUP, username);
+  ntop->getRedis()->del(key);
+
+  snprintf(key, sizeof(key), CONST_STR_USER_ID, username);
   ntop->getRedis()->del(key);
 
   snprintf(key, sizeof(key), CONST_STR_USER_PASSWORD, username);
@@ -2203,7 +2280,10 @@ bool Ntop::deleteUser(char *username) {
   snprintf(key, sizeof(key), CONST_STR_USER_HOST_POOL_ID, username);
   ntop->getRedis()->del(key);
 
-  /* 
+  snprintf(key, sizeof(key), CONST_STR_USER_THEME, username);
+  ntop->getRedis()->del(key);
+
+  /*
      Delete the API Token, first from the hash of all tokens,
      then from the user
   */
@@ -2214,6 +2294,8 @@ bool Ntop::deleteUser(char *username) {
 
   snprintf(key, sizeof(key), CONST_STR_USER_API_TOKEN, username);
   ntop->getRedis()->del(key);
+
+  users_m.unlock(__FILE__, __LINE__);
 
   return true;
 }
@@ -2553,21 +2635,57 @@ void Ntop::initInterface(NetworkInterface *_if) {
   }
 
   /* Other initialization activities */
-  _if->initFlowCallbacksLoop();
-  _if->initHostCallbacksLoop();
+  _if->initFlowChecksLoop();
+  _if->initHostChecksLoop();
   _if->checkDisaggregationMode();
+}
+
+/* *************************************** */
+
+void Ntop::addToPool(char *host_or_mac, u_int16_t user_pool_id) {
+  char key[128], pool_buf[16];
+
+#ifdef HOST_POOLS_DEBUG
+  ntop->getTrace()->traceEvent(TRACE_NORMAL,
+			       "Adding %s as host pool member [pool id: %i]",
+			       host_or_mac,
+			       user_pool_id);
+#endif
+
+  snprintf(pool_buf, sizeof(pool_buf), "%u", user_pool_id);
+  snprintf(key, sizeof(key), HOST_POOL_MEMBERS_KEY, pool_buf);
+  ntop->getRedis()->sadd(key, host_or_mac); /* New member added */
+
+  reloadHostPools();
+}
+
+/* ******************************************* */
+
+void Ntop::checkReloadHostPools() {
+  if(hostPoolsReloadInProgress /* Check if a reload has been requested */) {
+    /* Leave this BEFORE the actual swap and new allocation to guarantee changes are always seen */
+    hostPoolsReloadInProgress = false; 
+
+    for(int i = 0; i < get_num_interfaces(); i++) {
+      NetworkInterface *iface;
+
+      if((iface = ntop->getInterface(i)) != NULL)
+	iface->reloadHostPools();
+    }
+  }
 }
 
 /* ******************************************* */
 
 void Ntop::checkReloadAlertExclusions() {
+#ifdef NTOPNG_PRO
   if(alert_exclusions_shadow) { /* Dispose old memory if necessary */
     delete alert_exclusions_shadow;
     alert_exclusions_shadow = NULL;
   }
 
   if(alertExclusionsReloadInProgress /* Check if a reload has been requested */
-     || !alert_exclusions /* Control groups are not allocated */) { 
+     || !alert_exclusions /* Control groups are not allocated */) {
     alertExclusionsReloadInProgress = false; /* Leave this BEFORE the actual swap and new allocation to guarantee changes are always seen */
 
     alert_exclusions_shadow = alert_exclusions; /* Save the existing instance */
@@ -2576,33 +2694,34 @@ void Ntop::checkReloadAlertExclusions() {
     if(!alert_exclusions)
       ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to allocate memory for control groups.");
   }
+#endif
 }
 
 /* ******************************************* */
 
-void Ntop::checkReloadFlowCallbacks() {
-  if (!ntop->getPrefs()->is_pro_edition() /* Community mode */ && 
-      flow_callbacks_loader && flow_callbacks_loader->getCallbacksEdition() != ntopng_edition_community) {
-    /* Force a reload when switching to community (demo mode) */  
-    reloadFlowCallbacks();
+void Ntop::checkReloadFlowChecks() {
+  if (!ntop->getPrefs()->is_pro_edition() /* Community mode */ &&
+      flow_checks_loader && flow_checks_loader->getChecksEdition() != ntopng_edition_community) {
+    /* Force a reload when switching to community (demo mode) */
+    reloadFlowChecks();
   }
 
-  if(flowCallbacksReloadInProgress /* Reload requested from the UI upon configuration changes */) {
-    FlowCallbacksLoader *old, *tmp_flow_callbacks_loader = new (std::nothrow) FlowCallbacksLoader();
+  if(flowChecksReloadInProgress /* Reload requested from the UI upon configuration changes */) {
+    FlowChecksLoader *old, *tmp_flow_checks_loader = new (std::nothrow) FlowChecksLoader();
 
-    if(!tmp_flow_callbacks_loader) {
-      ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to allocate memory for flow callbacks.");
+    if(!tmp_flow_checks_loader) {
+      ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to allocate memory for flow checks.");
       return;
     }
 
-    tmp_flow_callbacks_loader->initialize();
-    old = flow_callbacks_loader;
+    tmp_flow_checks_loader->initialize();
+    old = flow_checks_loader;
 
-    /* Pass the newly allocated loader to all interfaces so they will update their callbacks */
+    /* Pass the newly allocated loader to all interfaces so they will update their checks */
     for(int i = 0; i < get_num_interfaces(); i++)
-      iface[i]->reloadFlowCallbacks(tmp_flow_callbacks_loader);
+      iface[i]->reloadFlowChecks(tmp_flow_checks_loader);
 
-    flow_callbacks_loader = tmp_flow_callbacks_loader;
+    flow_checks_loader = tmp_flow_checks_loader;
 
     if(old) {
       sleep(2); /* Make sure nobody is using the old one */
@@ -2610,35 +2729,35 @@ void Ntop::checkReloadFlowCallbacks() {
       delete old;
     }
 
-    flowCallbacksReloadInProgress = false;
+    flowChecksReloadInProgress = false;
   }
 }
 
 /* ******************************************* */
 
-void Ntop::checkReloadHostCallbacks() {
-  if (!ntop->getPrefs()->is_pro_edition() /* Community mode */ && 
-      host_callbacks_loader && host_callbacks_loader->getCallbacksEdition() != ntopng_edition_community) {
-    /* Force a reload when switching to community (demo mode) */  
-    reloadHostCallbacks();
+void Ntop::checkReloadHostChecks() {
+  if (!ntop->getPrefs()->is_pro_edition() /* Community mode */ &&
+      host_checks_loader && host_checks_loader->getChecksEdition() != ntopng_edition_community) {
+    /* Force a reload when switching to community (demo mode) */
+    reloadHostChecks();
   }
 
-  if(hostCallbacksReloadInProgress /* Reload requested from the UI upon configuration changes */) {
-    HostCallbacksLoader *old, *tmp_host_callbacks_loader = new (std::nothrow) HostCallbacksLoader();
+  if(hostChecksReloadInProgress /* Reload requested from the UI upon configuration changes */) {
+    HostChecksLoader *old, *tmp_host_checks_loader = new (std::nothrow) HostChecksLoader();
 
-    if(!tmp_host_callbacks_loader) {
-      ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to allocate memory for host callbacks.");
+    if(!tmp_host_checks_loader) {
+      ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to allocate memory for host checks.");
       return;
     }
 
-    tmp_host_callbacks_loader->initialize();
-    old = host_callbacks_loader;
+    tmp_host_checks_loader->initialize();
+    old = host_checks_loader;
 
-    /* Pass the newly allocated loader to all interfaces so they will update their callbacks */
+    /* Pass the newly allocated loader to all interfaces so they will update their checks */
     for(int i = 0; i < get_num_interfaces(); i++)
-      iface[i]->reloadHostCallbacks(tmp_host_callbacks_loader);
+      iface[i]->reloadHostChecks(tmp_host_checks_loader);
 
-    host_callbacks_loader = tmp_host_callbacks_loader;
+    host_checks_loader = tmp_host_checks_loader;
 
     if(old) {
       sleep(2); /* Make sure nobody is using the old one */
@@ -2646,7 +2765,7 @@ void Ntop::checkReloadHostCallbacks() {
       delete old;
     }
 
-    hostCallbacksReloadInProgress = false;
+    hostChecksReloadInProgress = false;
   }
 }
 
@@ -2654,9 +2773,10 @@ void Ntop::checkReloadHostCallbacks() {
 
 /* NOTE: the multiple isShutdown checks below are necessary to reduce the shutdown time */
 void Ntop::runHousekeepingTasks() {
+  checkReloadHostPools();
   checkReloadAlertExclusions();
-  checkReloadFlowCallbacks();
-  checkReloadHostCallbacks();
+  checkReloadFlowChecks();
+  checkReloadHostChecks();
 
   for(int i = 0; i < get_num_interfaces(); i++)
     iface[i]->runHousekeepingTasks();
@@ -2698,7 +2818,7 @@ void Ntop::shutdownInterfaces() {
     stats->print();
     iface[i]->shutdown();
     ntop->getTrace()->traceEvent(TRACE_NORMAL, "Polling shut down [interface: %s]",
-        iface[i]->get_description());
+				 iface[i]->get_description());
   }
 }
 
@@ -2799,8 +2919,11 @@ void Ntop::loadTrackers() {
       return;
     }
 
-    while(fgets(line, MAX_PATH, fd) != NULL)
-      ndpi_add_string_to_automa(trackers_automa, line);
+    while(fgets(line, MAX_PATH, fd) != NULL) {
+      char *str = strdup(line);
+      if (str)
+        ndpi_add_string_to_automa(trackers_automa, str);
+    }
 
     fclose(fd);
     ndpi_finalize_automa(trackers_automa);
@@ -2842,7 +2965,7 @@ void Ntop::refreshAllowedProtocolPresets(DeviceType device_type, bool client, lu
     int t = lua_type(L, -1);
 
     if((int)key_proto < 0) continue;
-    
+
     switch (t) {
       case LUA_TNUMBER:
       {
@@ -3024,7 +3147,7 @@ struct ndpi_detection_module_struct* Ntop::initnDPIStruct() {
 
 void Ntop::cleanShadownDPI() {
   ntop->getTrace()->traceEvent(TRACE_INFO, "%s(%p)", __FUNCTION__, ndpi_struct_shadow);
-  
+
   ndpi_exit_detection_module(ndpi_struct_shadow);
   ndpi_struct_shadow = NULL;
 }
@@ -3064,18 +3187,18 @@ void Ntop::finalizenDPIReload() {
     ntop->getTrace()->traceEvent(TRACE_ERROR, "Internal error: nested nDPI category reload");
     return;
   }
-  
+
   if(ndpi_struct_shadow) {
     struct ndpi_detection_module_struct *old_struct;
 
     ntop->getTrace()->traceEvent(TRACE_INFO, "Going to reload custom categories");
-    
+
     /* The new categories were loaded on the current ndpi_struct_shadow */
     ndpi_enable_loaded_categories(ndpi_struct_shadow);
     ndpi_finalize_initialization(ndpi_struct_shadow);
-    
+
     ntop->getTrace()->traceEvent(TRACE_INFO, "nDPI finalizing reload...");
-    
+
     old_struct = ndpi_struct;
     ndpi_struct = ndpi_struct_shadow;
     ndpi_struct_shadow = old_struct;
@@ -3095,7 +3218,7 @@ void Ntop::finalizenDPIReload() {
 
 void Ntop::nDPILoadIPCategory(char *what, ndpi_protocol_category_t id) {
   // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s(%p) [%s]", __FUNCTION__, ndpi_struct_shadow, what);
-  
+
   if(what && ndpi_struct_shadow)
     ndpi_load_ip_category(ndpi_struct_shadow, what, id);
 }
@@ -3104,7 +3227,7 @@ void Ntop::nDPILoadIPCategory(char *what, ndpi_protocol_category_t id) {
 
 void Ntop::nDPILoadHostnameCategory(char *what, ndpi_protocol_category_t id) {
   // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s(%p) [%s]", __FUNCTION__, ndpi_struct_shadow, what);
-  
+
   if(what && ndpi_struct_shadow)
     ndpi_load_hostname_category(ndpi_struct_shadow, what, id);
 }
@@ -3115,7 +3238,7 @@ int Ntop::nDPILoadMaliciousJA3Signatures(const char *file_path) {
   int n = 0;
 
   // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s(%p) [%s]", __FUNCTION__, ndpi_struct_shadow, what);
-  
+
   if(file_path && ndpi_struct_shadow)
     n = ndpi_load_malicious_ja3_file(ndpi_struct_shadow, file_path);
 
@@ -3182,9 +3305,11 @@ u_int8_t Ntop::getLocalNetworkId(const char *address_str) {
 /* ******************************************* */
 
 bool Ntop::addLocalNetwork(char *_net) {
-  char *net, alias[64], *position_ptr;
+  char *net, *position_ptr;
+  char alias[64] = "";
+
   int id = local_network_tree.getNumAddresses(), pos = 0;
-  
+
   if(id >= CONST_MAX_NUM_NETWORKS) {
     ntop->getTrace()->traceEvent(TRACE_ERROR, "Too many networks defined (%d): ignored %s",
 				 id, _net);
@@ -3213,17 +3338,18 @@ bool Ntop::addLocalNetwork(char *_net) {
 
   local_network_names[id] = strdup(net);
 
-  if(net)
-    free(net);
-
   // Adding, if available, the alias
   if(pos)
     local_network_aliases[id] = strdup(alias);
+
+  if(net)
+    free(net);  
 
   return(true);
 }
 
 /* ******************************************* */
+
 bool Ntop::getLocalNetworkAlias(lua_State *vm, u_int8_t network_id) {
   char *alias = local_network_aliases[network_id];
 
@@ -3241,9 +3367,65 @@ bool Ntop::getLocalNetworkAlias(lua_State *vm, u_int8_t network_id) {
 /* Format: 131.114.21.0/24,10.0.0.0/255.0.0.0 */
 void Ntop::addLocalNetworkList(const char *rule) {
   char *tmp, *net = strtok_r((char *) rule, ",", &tmp);
-  
+
   while(net != NULL) {
     if(!addLocalNetwork(net)) return;
-    net = strtok_r(NULL, ",", &tmp);   
+    net = strtok_r(NULL, ",", &tmp);
   }
 }
+
+/* ******************************************* */
+
+bool Ntop::luaFlowCheckInfo(lua_State *vm, std::string check_name) const {
+  FlowChecksLoader *fcl = flow_checks_loader;
+  if(fcl) return fcl->luaCheckInfo(vm, check_name);
+
+  return false;
+}
+
+/* ******************************************* */
+
+bool Ntop::luaHostCheckInfo(lua_State *vm, std::string check_name) const {
+  HostChecksLoader *hcl = host_checks_loader;
+  if(hcl) return hcl->luaCheckInfo(vm, check_name);
+
+  return false;
+}
+
+/* ******************************************* */
+
+#ifndef HAVE_NEDGE
+
+bool Ntop::broadcastIPSMessage(char *msg) {
+  bool rc = false;
+  
+  if(prefs->getZMQPublishEventsURL() == NULL)
+    return(false);
+  
+  /* Jeopardized users_m lock :-) */
+  users_m.lock(__FILE__, __LINE__);
+  
+  if(zmqPublisher == NULL) {
+    try {
+      zmqPublisher = new ZMQPublisher(prefs->getZMQPublishEventsURL());
+    } catch(...) {
+      zmqPublisher = NULL;
+    }
+  }
+  
+  if(!zmqPublisher) {
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Unable to create ZMQ publisher");
+    users_m.unlock(__FILE__, __LINE__);
+    return(false);
+  }
+
+  if(msg)
+    rc = zmqPublisher->sendIPSMessage(msg);
+  
+  users_m.unlock(__FILE__, __LINE__);
+
+  return(rc);
+}
+
+#endif
+

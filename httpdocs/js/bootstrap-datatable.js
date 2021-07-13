@@ -97,7 +97,7 @@
       // top
       this.$top_details = $("<div></div>").attr("id", "dt-top-details");
       // bottom
-      this.$bottom_details = $("<div></div>").attr("id", "dt-bottom-details");
+      this.$bottom_details = $("<div class='d-flex flex-column'></div>").attr("id", "dt-bottom-details");
 
       // localize the object
       var that = this;
@@ -287,7 +287,7 @@
         that = this;
 
       this.$toolbar = $("<div></div>").addClass(
-        "dt-toolbar btn-toolbar float-right"
+        "dt-toolbar btn-toolbar ms-auto"
       );
 
       this.$button_group = $("<div></div>")
@@ -316,7 +316,7 @@
       } else {
         if (!this.$toolbar_container) {
           this.$toolbar_container = $("<div></div>").addClass(
-            "dt-toolbar-container clearfix"
+            "dt-toolbar-container d-flex"
           );
         }
         $e.prepend(this.$toolbar_container.append(this.$toolbar));
@@ -339,7 +339,7 @@
       if (end > o.totalRows) end = o.totalRows;
 
       $(
-        '<div class="float-left"><p>' +
+        '<div class="text-left"><p>' +
           i18n.showing_x_to_y_rows.sformat(start, end, o.totalRows) +
           "</p></div>"
       ).prependTo(this.$bottom_details);
@@ -592,7 +592,7 @@
       if (o.perPage >= res.totalRows) return;
 
       if (!this.$pagination) {
-        this.$pagination = $("<div></div>").addClass("float-right");
+        this.$pagination = $("<div></div>").addClass("ms-auto");
 
         // how many pages?
         o.pageCount = Math.ceil(res.totalRows / o.perPage);
@@ -897,10 +897,6 @@
           .modal();
         return false;
       })
-      .popover({
-        trigger: "hover",
-        placement: "top"
-      });
     this.buttons.unshift($toggle);
 
     if (o.debug) console.log($toggle);
@@ -927,68 +923,64 @@
 
         return false;
       })
-      .popover({
-        trigger: "hover",
-        placement: "top"
-      });
     this.buttons.unshift($toggle);
   }
 
   function _initPerPage() {
-    var o = this.options,
-      $e = this.$element,
-      that = this;
+      var o = this.options,
+	  $e = this.$element,
+	  that = this;
 
-    // per page options and current filter/sorting
-    var $perpage_select = $("<a></a>")
-      .addClass("btn dropdown-toggle")
-      .data("content", i18n.change_number_of_rows + ".")
-      .attr("data-toggle", "dropdown")
-      .html(o.perPage + "&nbsp;")
-      .css({ fontWeight: "normal" })
-      .append($("<span></span>").addClass("caret"))
-      .popover({
-        trigger: "hover",
-        placement: "top"
-      });
-    this.buttons.push($perpage_select);
+      // per page options and current filter/sorting
+      var $perpage_select = $("<div></div>")
+	  .addClass("btn-group")
+	  .append($("<button></button>")
+		  .addClass("btn btn-link dropdown-toggle")
+		  .data("content", i18n.change_number_of_rows + ".")
+		  .attr("data-bs-toggle", "dropdown")
+		  .html(o.perPage + "&nbsp;")
+		  .append($("<span></span>")
+			  .addClass("caret")));
 
-    var $perpage_values = $("<ul></ul>")
-      .addClass("dropdown-menu")
-      .css({ fontSize: "initial", fontWeight: "normal" })
-      .append(
-        $(
-          '<li data-value="10"><a class="dropdown-item" href="#">10</a></li>'
-        ).click(function() {
-          _updatePerPage.call(this, that);
-          return false;
-        }),
-        $(
-          '<li data-value="20"><a class="dropdown-item" href="#">20</a></li>'
-        ).click(function() {
-          _updatePerPage.call(this, that);
-          return false;
-        }),
-        $(
-          '<li data-value="50"><a class="dropdown-item" href="#">50</a></li>'
-        ).click(function() {
-          _updatePerPage.call(this, that);
-          return false;
-        }),
-        $(
-          '<li data-value="100"><a class="dropdown-item" href="#">100</a></li>'
-        ).click(function() {
-          _updatePerPage.call(this, that);
-          return false;
-        }),
-        $(
-          '<li data-value="200"><a class="dropdown-item" href="#">200</a></li>'
-        ).click(function() {
-          _updatePerPage.call(this, that);
-          return false;
-        })
-      );
-    this.buttons.push($perpage_values);
+      var $perpage_values = $("<ul></ul>")
+	  .addClass("dropdown-menu scrollable-dropdown")
+	  .attr("role", "menu")
+	  .append(
+	      $(
+		  '<li data-value="10"><a class="dropdown-item" href="#">10</a></li>'
+	      ).click(function() {
+		  _updatePerPage.call(this, that);
+		  return false;
+	      }),
+	      $(
+		  '<li data-value="20"><a class="dropdown-item" href="#">20</a></li>'
+	      ).click(function() {
+		  _updatePerPage.call(this, that);
+		  return false;
+	      }),
+	      $(
+		  '<li data-value="50"><a class="dropdown-item" href="#">50</a></li>'
+	      ).click(function() {
+		  _updatePerPage.call(this, that);
+		  return false;
+	      }),
+	      $(
+		  '<li data-value="100"><a class="dropdown-item" href="#">100</a></li>'
+	      ).click(function() {
+		  _updatePerPage.call(this, that);
+		  return false;
+	      }),
+	      $(
+		  '<li data-value="200"><a class="dropdown-item" href="#">200</a></li>'
+	      ).click(function() {
+		  _updatePerPage.call(this, that);
+		  return false;
+	      })
+	  );
+
+      $perpage_select.append($perpage_values);
+
+      this.buttons.push($perpage_select);
   }
 
   function _initTableInfo() {
@@ -1042,9 +1034,6 @@
             : ""
         )
       )
-      .popover({
-        placement: "bottom"
-      });
 
     this.buttons.unshift($info);
   }
@@ -1113,8 +1102,6 @@
       offset = o.currentPage * o.perPage;
     }
     if (o.currentPage < 1) o.currentPage = 1;
-
-    if ($(this).popover) $(this).popover("hide");
 
     // update the table
     that.render();

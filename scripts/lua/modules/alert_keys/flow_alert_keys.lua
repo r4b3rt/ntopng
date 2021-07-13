@@ -22,8 +22,8 @@ local flow_alert_keys = {
    flow_alert_internals                       = 14,
    flow_alert_potentially_dangerous           = 15,
    flow_alert_remote_to_remote                = 16,
-   flow_alert_suspicious_tcp_probing          = 17,
-   flow_alert_suspicious_tcp_syn_probing      = 18,
+   flow_alert_suspicious_tcp_probing          = 17, -- No longer used, can be recycled
+   flow_alert_suspicious_tcp_syn_probing      = 18, -- No longer used, can be recycled
    flow_alert_tcp_connection_issues           = 19,
    flow_alert_tcp_connection_refused          = 20,
    flow_alert_tcp_severe_connection_issues    = 21,
@@ -63,6 +63,8 @@ local flow_alert_keys = {
    flow_alert_iec_unexpected_type_id          = 55,
    flow_alert_tcp_no_data_exchanged           = 56,
    flow_alert_remote_access                   = 57,
+   flow_alert_lateral_movement                = 58,
+   flow_alert_periodicity_changed             = 59,
    -- NOTE: for flow alerts not not go beyond the size of Bitmap alert_map inside Flow.h (currently 128)
 }
 

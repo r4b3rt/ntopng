@@ -13,6 +13,7 @@ local ui_utils = require "ui_utils"
 local json = require "dkjson"
 local template_utils = require "template_utils"
 local endpoints = require("endpoints")
+local alert_entities = require "alert_entities"
 
 local host_pools              = require "host_pools"
 local flow_pools              = require "flow_pools"
@@ -44,7 +45,7 @@ local page = _GET["page"] or 'host'
 
 sendHTTPContentTypeHeader('text/html')
 
-if not haveAdminPrivileges() then return end
+if not isAdministratorOrPrintErr() then return end
 
 page_utils.set_active_menu_entry(page_utils.menu_entries.manage_pools)
 
@@ -70,7 +71,7 @@ page_utils.print_navbar(i18n("pools.pools"), url, {
 
 -- ************************************* ------
 
-local ALL_POOL_GET_ENDPOINT = '/lua/rest/v1/get/pools.lua'
+local ALL_POOL_GET_ENDPOINT = '/lua/rest/v2/get/pools.lua'
 
 local pool_types = {
 
@@ -101,17 +102,17 @@ local menu = {
    entries = {
 
       -- Normal Pools
-      { key = "host", title = i18n("pools.pool_names.host"), url = "?page=host", hidden = false},
-      { key = "interface", title = i18n("pools.pool_names.interface"), url = "?page=interface", hidden = false},
-      { key = "local_network", title = i18n("pools.pool_names.local_network"), url = "?page=local_network", hidden = false},
-      { key = "snmp_device", title = i18n("pools.pool_names.snmp_device"), url = "?page=snmp_device", hidden = not ntop.isPro() or is_nedge},
-      { key = "active_monitoring", title = i18n("pools.pool_names.active_monitoring"), url = "?page=active_monitoring", hidden = false },
+      { key = "host", title = i18n(alert_entities.host.i18n_label), url = "?page=host", hidden = false},
+      { key = "interface", title = i18n(alert_entities.interface.i18n_label), url = "?page=interface", hidden = false},
+      { key = "local_network", title = i18n(alert_entities.network.i18n_label), url = "?page=local_network", hidden = false},
+      { key = "snmp_device", title = i18n(alert_entities.snmp_device.i18n_label), url = "?page=snmp_device", hidden = not ntop.isPro() or is_nedge},
+      { key = "active_monitoring", title = i18n(alert_entities.am_host.i18n_label), url = "?page=active_monitoring", hidden = false },
 
    -- Default Only Pools
-      { key = "host_pool", title = i18n("pools.pool_names.host_pool"), url = "?page=host_pool", hidden = false},
-      { key = "flow", title = i18n("pools.pool_names.flow"), url = "?page=flow", hidden = false},
-      { key = "mac", title = i18n("pools.pool_names.mac"), url = "?page=mac", hidden = false},
-      { key = "system", title = i18n("pools.pool_names.system"), url = "?page=system", hidden = false},
+      { key = "host_pool", title = i18n(alert_entities.host_pool.i18n_label), url = "?page=host_pool", hidden = false},
+      { key = "flow", title = i18n(alert_entities.flow.i18n_label), url = "?page=flow", hidden = false},
+      { key = "mac", title = i18n(alert_entities.mac.i18n_label), url = "?page=mac", hidden = false},
+      { key = "system", title = i18n(alert_entities.system.i18n_label), url = "?page=system", hidden = false},
 
       -- All Pool
       { key = "all", title = i18n("pools.pool_names.all"), url = "?page=all", hidden = false},
@@ -125,10 +126,10 @@ for _, entry in ipairs(menu.entries) do
 end
 
 local rest_endpoints = {
-   get_all_pools  = (page == "all" and ALL_POOL_GET_ENDPOINT or string.format(ntop.getHttpPrefix() .. "/lua/rest/v1/get/%s/pools.lua", pool_type)),
-   add_pool       = string.format(ntop.getHttpPrefix() .. "/lua/rest/v1/add/%s/pool.lua", pool_type),
-   edit_pool      = string.format(ntop.getHttpPrefix() .. "/lua/rest/v1/edit/%s/pool.lua", pool_type),
-   delete_pool    = string.format(ntop.getHttpPrefix() .. "/lua/rest/v1/delete/%s/pool.lua", pool_type),
+   get_all_pools  = (page == "all" and ALL_POOL_GET_ENDPOINT or string.format(ntop.getHttpPrefix() .. "/lua/rest/v2/get/%s/pools.lua", pool_type)),
+   add_pool       = string.format(ntop.getHttpPrefix() .. "/lua/rest/v2/add/%s/pool.lua", pool_type),
+   edit_pool      = string.format(ntop.getHttpPrefix() .. "/lua/rest/v2/edit/%s/pool.lua", pool_type),
+   delete_pool    = string.format(ntop.getHttpPrefix() .. "/lua/rest/v2/delete/%s/pool.lua", pool_type),
 }
 
 local context = {

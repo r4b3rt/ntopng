@@ -24,15 +24,18 @@
 
 #include "ntop_includes.h"
 
-class FlowRiskMalformedPacketAlert : public FlowAlert {
+class FlowRiskMalformedPacketAlert : public FlowRiskAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_MALFORMED_PACKET; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_malformed_packet, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskMalformedPacketAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ FlowRiskMalformedPacketAlert(FlowCheck *c, Flow *f) : FlowRiskAlert(c, f) { };
   ~FlowRiskMalformedPacketAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_malformed_packet"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_MALFORMED_PACKET_ALERT_H_ */

@@ -399,6 +399,11 @@ void IEC104Stats::lua(lua_State* vm) {
 /* *************************************** */
 
 char* IEC104Stats::getFlowInfo(char *buf, u_int buf_len) {
-  snprintf(buf, buf_len-1, "%s", infobuf);
+  if(buf) {
+    lock.rdlock(__FILE__, __LINE__);
+    snprintf(buf, buf_len-1, "%s", infobuf);
+    lock.unlock(__FILE__, __LINE__);
+  }
+
   return(buf);
 }

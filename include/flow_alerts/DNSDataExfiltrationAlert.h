@@ -27,12 +27,12 @@
 class DNSDataExfiltrationAlert : public FlowAlert {
  public:
   static FlowAlertType getClassType() { return { flow_alert_dns_data_exfiltration, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_WARNING; };
 
- DNSDataExfiltrationAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ DNSDataExfiltrationAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) { };
   ~DNSDataExfiltrationAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_dns_data_exfiltration"); }
 };
 
 #endif /* _DNS_DATA_EXFILTRATION_ALERT_H_ */

@@ -50,16 +50,9 @@ for key, am_host in pairs(am_hosts) do
     local alerted = 0
 
     if(last_update ~= nil) then
-      local tdiff = os.time() - last_update.when
-
-      if(tdiff <= 600) then
-        column_last_update  = secondsToTime(tdiff).. " " ..i18n("details.ago")
-      else
-        column_last_update = format_utils.formatPastEpochShort(last_update.when)
-      end
-
-      column_last_value = last_update.value
-      column_last_ip = last_update.ip
+       column_last_update = last_update.when
+       column_last_value = last_update.value
+       column_last_ip = last_update.ip
     end
 
     column_last_value = tonumber(column_last_value)
@@ -96,7 +89,8 @@ for key, am_host in pairs(am_hosts) do
        html_label = am_utils.formatAmHost(am_host.host, am_host.measurement, true),
        host = am_host.host,
        alerted = alerted,
-       measurement = am_host.measurement,
+       measurement = i18n(m_info.i18n_label),
+       measurement_key = am_host.measurement,
        chart = chart,
        threshold = am_host.threshold,
        last_measure = column_last_value or "",

@@ -22,14 +22,13 @@ alert_device_protocol_not_allowed.meta = {
    alert_key = flow_alert_keys.flow_alert_device_protocol_not_allowed,
    i18n_title = "alerts_dashboard.suspicious_device_protocol",
    icon = "fas fa-fw fa-exclamation",
-   has_victim = true,
+
    has_attacker = true,
 }
 
 -- ##############################################
 
 -- @brief Prepare an alert table used to generate the alert
--- @param alert_severity A severity as defined in `alert_severities`
 -- @param cli_devtype A string with the device type of the client
 -- @param srv_devtype A string with the device type of the server
 -- @param devproto_forbidden_peer A string with the forbidden peer, one of 'cli' or 'srv'

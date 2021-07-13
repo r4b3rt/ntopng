@@ -77,8 +77,9 @@ end
 local function recursivePluginsSearch(edition, source_dir, max_recursion, plugins, plugins_with_deps)
    -- Prepend the current `source_dir` to the Lua path - this is necessary for doing the require
    lua_path_utils.package_path_prepend(source_dir)
+   local source_dir_contents = ntop.readdir(source_dir)
 
-   for plugin_name in pairs(ntop.readdir(source_dir)) do
+   for plugin_name in pairs(source_dir_contents) do
       local plugin_dir = os_utils.fixPath(source_dir .. "/" .. plugin_name)
       local plugin_info = os_utils.fixPath(plugin_dir .. "/manifest.lua")
 
@@ -121,8 +122,7 @@ local function recursivePluginsSearch(edition, source_dir, max_recursion, plugin
 	    recursivePluginsSearch(edition, plugin_dir, max_recursion - 1, plugins, plugins_with_deps)
 	 else
 	    -- Maximum recursion hit. must stop
-	    traceError(TRACE_INFO, TRACE_CONSOLE, string.format("Unable to load '%s'. Missing 'manifest.lua'", plugin_dir))
-	    return
+	    traceError(TRACE_INFO, TRACE_CONSOLE, string.format("Unable to load '%s'. Too many recursion levels.", plugin_dir))
 	 end
       end
 
@@ -226,7 +226,7 @@ local function init_runtime_paths()
     modules = os_utils.fixPath(runtime_path) .. "/modules",
     httpdocs = os_utils.fixPath(runtime_path) .. "/httpdocs",
 
-    -- User scripts
+    -- Checks
     interface_scripts = os_utils.fixPath(runtime_path .. "/callbacks/interface/interface"),
     host_scripts = os_utils.fixPath(runtime_path .. "/callbacks/interface/host"),
     network_scripts = os_utils.fixPath(runtime_path .. "/callbacks/interface/network"),
@@ -365,8 +365,8 @@ end
 
 -- ##############################################
 
-local function load_plugin_user_scripts(paths_to_plugin, plugin)
-  local scripts_path = os_utils.fixPath(plugin.path .. "/user_scripts")
+local function load_plugin_checks(paths_to_plugin, plugin)
+  local scripts_path = os_utils.fixPath(plugin.path .. "/checks")
   local paths_map = {}
   local extn = ".lua"
   local rv = (
@@ -634,7 +634,7 @@ function plugins_utils.loadPlugins(community_plugins_only)
         load_plugin_web_gui(plugin) and
         load_plugin_data_dirs(plugin) and
         load_plugin_other(plugin) and
-        load_plugin_user_scripts(path_map, plugin) and
+        load_plugin_checks(path_map, plugin) and
         load_plugin_alert_endpoints(plugin) then
       loaded_plugins[plugin.key] = plugin
     else
@@ -658,21 +658,22 @@ function plugins_utils.loadPlugins(community_plugins_only)
     plugins = loaded_plugins,
     path_map = path_map,
   }
+
   persistence.store(getMetadataPath(), plugins_metadata)
   ntop.setDefaultFilePermissions(getMetadataPath())
 
   -- Swap the active plugins directory with the shadow
   clearInternalState()
   ntop.swapPluginsDir()
-  deleteCachePattern("ntonpng.cache.user_scripts.available_system_modules.*")
+  deleteCachePattern("ntonpng.cache.checks.available_system_modules.*")
 
   -- Reload the periodic scripts to load the new plugins
   ntop.reloadPeriodicScripts()
 
-  -- Reload user scripts with their configurations
-  local user_scripts = require "user_scripts"
-  user_scripts.initDefaultConfig()
-  user_scripts.loadUnloadUserScripts(true --[[ load --]])
+  -- Reload checks with their configurations
+  local checks = require "checks"
+  checks.initDefaultConfig()
+  checks.loadUnloadUserScripts(true --[[ load --]])
 
   return(true)
 end
@@ -1004,7 +1005,7 @@ function plugins_utils.renderTemplate(plugin_name, template_file, context)
   -- If no template is found...
   if not ntop.exists(full_path) then
      -- Attempt at locating the template class under modules (global to ntopng)
-     full_path = os_utils.fixPath(dirs.installdir .. "/scripts/lua/modules/user_script_templates/"..template_file)
+     full_path = os_utils.fixPath(dirs.installdir .. "/scripts/lua/modules/check_templates/"..template_file)
   end
 
   return template_utils.gen(full_path, context, true --[[ using full path ]])
@@ -1012,7 +1013,7 @@ end
 
 -- ##############################################
 
--- @brief Load a plugin Lua template, e.g., those used for plugin user scripts
+-- @brief Load a plugin Lua template, e.g., those used for plugin checks
 function plugins_utils.loadTemplate(plugin_name, template_file)
    -- Attempt at locating the template class under the plugin templates directory
    -- Locate the template directory of the plugin containing this user script

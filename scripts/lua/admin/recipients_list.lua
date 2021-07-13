@@ -9,16 +9,16 @@ require "lua_utils"
 
 local page_utils = require("page_utils")
 local ui_utils = require("ui_utils")
-local template = require "template_utils"
+local template_utils = require "template_utils"
 local json = require "dkjson"
 local plugins_utils = require("plugins_utils")
 local toasts_manager = require("toasts_manager")
-local user_scripts = require("user_scripts")
+local checks = require("checks")
 local alert_severities = require "alert_severities"
 local endpoint_configs = require("endpoints")
 local endpoints = endpoint_configs.get_configs(true)
 
-if not haveAdminPrivileges() then
+if not isAdministratorOrPrintErr() then
     return
 end
 
@@ -71,7 +71,7 @@ local context = {
         endpoint_types_labels = endpoint_types_labels,
         endpoint_list = endpoints,
         can_create_recipient = can_create_recipient,
-        script_categories = user_scripts.script_categories,
+        check_categories = checks.check_categories,
         alert_severities = alert_severities,
         filters = {
             endpoint_types = endpoint_type_filters
@@ -79,14 +79,14 @@ local context = {
     },
     plugins_utils = plugins_utils,
     ui_utils = ui_utils,
-    template_utils = template,
+    template_utils = template_utils,
     page_utils = page_utils,
     json = json,
     info = ntop.getInfo()
 }
 
 -- print config_list.html template
-print(template.gen("pages/recipients_list.template", context))
+template_utils.render("pages/recipients_list.template", context)
 
 -- append the menu below the page
 dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")

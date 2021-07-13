@@ -33,15 +33,17 @@ typedef struct {
 } TCPSeqNum;
 
 class FlowAlert;
-class FlowCallback;
+class FlowCheck;
 
 class Flow : public GenericHashEntry {
  private:
   Host *cli_host, *srv_host;
   IpAddress *cli_ip_addr, *srv_ip_addr;
   ICMPinfo *icmp_info;
+  u_int32_t flowCreationTime;
   u_int8_t cli2srv_tos, srv2cli_tos; /* RFC 2474, 3168 */
-  u_int16_t cli_port, srv_port, vlanId;
+  u_int16_t cli_port, srv_port;
+  VLANid vlanId;
   u_int32_t vrfId;
   u_int32_t srcAS, dstAS, prevAdjacentAS, nextAdjacentAS;
   u_int8_t protocol, src2dst_tcp_flags, dst2src_tcp_flags;
@@ -49,7 +51,7 @@ class Flow : public GenericHashEntry {
   u_int16_t flow_score;
   struct ndpi_flow_struct *ndpiFlow;
   ndpi_risk ndpi_flow_risk_bitmap;
-  /* The bitmap of all possible flow alerts set by FlowCallback subclasses. When no alert is set, the 
+  /* The bitmap of all possible flow alerts set by FlowCheck subclasses. When no alert is set, the 
      flow is in flow_alert_normal.
 
      A flow can have multiple alerts but at most ONE of its alerts is predominant
@@ -71,12 +73,14 @@ class Flow : public GenericHashEntry {
     good_tls_hs,
     quota_exceeded, has_malicious_cli_signature, has_malicious_srv_signature,
     swap_done, swap_requested;
+  
 #ifdef ALERTED_FLOWS_DEBUG
   bool iface_alert_inc, iface_alert_dec;
 #endif
 #ifdef NTOPNG_PRO
   bool ingress2egress_direction;
   u_int8_t routing_table_id;
+  bool lateral_movement, periodicity_changed;
 #ifndef HAVE_NEDGE
   FlowProfile *trafficProfile;
 #else
@@ -92,6 +96,7 @@ class Flow : public GenericHashEntry {
   ndpi_serializer *tlv_info;
   char *host_server_name, *bt_hash;
   IEC104Stats *iec104;
+  char *suspicious_dga_domain; /* Stores the suspicious DGA domain for flows with NDPI_SUSPICIOUS_DGA_DOMAIN */
   OSType operating_system;
 #ifdef HAVE_NEDGE
   u_int32_t last_conntrack_update; 
@@ -116,6 +121,7 @@ class Flow : public GenericHashEntry {
     struct {
       char *last_query;
       char *last_query_shadow;
+      time_t last_query_update_time; /* The time when the last query was updated */
       u_int16_t last_query_type;
       u_int16_t last_return_code;
       bool invalid_chars_in_query;
@@ -167,7 +173,7 @@ class Flow : public GenericHashEntry {
   struct {
     u_int32_t device_ip;
     u_int32_t in_index, out_index;
-    u_int16_t device_id;
+    u_int16_t observation_point_id;
   } flow_device;
 
   /* eBPF Information */
@@ -270,14 +276,15 @@ class Flow : public GenericHashEntry {
     - Synchronous:  The alerts bitmap is updated and the predominant alert is possibly updated.
                     Immediate alert JSON generation and enqueue to the recipients are performed as well.
    */
-  bool setAlertsBitmap(FlowAlertType alert_type, u_int8_t cli_inc, u_int8_t srv_inc, bool async);
+  bool setAlertsBitmap(FlowAlertType alert_type, u_int16_t cli_inc, u_int16_t srv_inc, bool async);
   void setNormalToAlertedCounters();
   /* Decreases scores on both client and server hosts when the flow is being destructed */
   void decAllFlowScores();
 
  public:
   Flow(NetworkInterface *_iface,
-       u_int16_t _vlanId, u_int8_t _protocol,
+       VLANid _vlanId, u_int16_t _observation_point_id,
+       u_int8_t _protocol,
        Mac *_cli_mac, IpAddress *_cli_ip, u_int16_t _cli_port,
        Mac *_srv_mac, IpAddress *_srv_ip, u_int16_t _srv_port,
        const ICMPinfo * const icmp_info,
@@ -290,17 +297,17 @@ class Flow : public GenericHashEntry {
   bool enqueueAlertToRecipients(FlowAlert *alert);
 
   /*
-    Called by FlowCallback subclasses to trigger a flow alert. This is an asynchronous call, faster, but can
+    Called by FlowCheck subclasses to trigger a flow alert. This is an asynchronous call, faster, but can
     cause the alert JSON to be generated after the call.
-    The FlowCallback should implement the buildAlert() method which is called in the predominant callback to actually build the FlowAlert object.
+    The FlowCheck should implement the buildAlert() method which is called in the predominant check to actually build the FlowAlert object.
    */
-  bool triggerAlertAsync(FlowAlertType alert_type, u_int8_t cli_score_inc, u_int8_t srv_score_inc);
+  bool triggerAlertAsync(FlowAlertType alert_type, u_int16_t cli_score_inc, u_int16_t srv_score_inc);
 
   /* 
-     Called by FlowCallback subclasses to trigger a flow alert. This is a syncrhonous call, more expensive, but
+     Called by FlowCheck subclasses to trigger a flow alert. This is a syncrhonous call, more expensive, but
      causes the alert (FlowAlert) to be immediately enqueued to all recipients.
    */
-  bool triggerAlertSync(FlowAlert *alert, u_int8_t cli_score_inc, u_int8_t srv_score_inc);
+  bool triggerAlertSync(FlowAlert *alert, u_int16_t cli_score_inc, u_int16_t srv_score_inc);
 
   /*
     Enqueues the predominant alert of the flow to all available flow recipients.
@@ -339,6 +346,13 @@ class Flow : public GenericHashEntry {
   inline bool isHTTP() const { return(isProto(NDPI_PROTOCOL_HTTP)); }
   inline bool isICMP() const { return(isProto(NDPI_PROTOCOL_IP_ICMP) || isProto(NDPI_PROTOCOL_IP_ICMPV6)); }
 
+#ifdef NTOPNG_PRO
+  inline bool isLateralMovement() const { return(lateral_movement);  }
+  inline void setLateralMovement(bool change) { lateral_movement = change;  }
+  inline bool isPeriodicityChanged() const { return(periodicity_changed);  }
+  inline void setPeriodicityChanged(bool change) { periodicity_changed = change;  }
+#endif
+
   inline bool isCliDeviceAllowedProtocol() const {
     return !cli_host || cli_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), true) == device_proto_allowed;
   }		      
@@ -367,6 +381,9 @@ class Flow : public GenericHashEntry {
   void alert2JSON(FlowAlert *alert, ndpi_serializer *serializer);
   json_object* flow2JSON();
   json_object* flow2es(json_object *flow_object);
+
+  inline void updateJA3C(char *j) { if(j && (j[0] != '\0') && (protos.tls.ja3.client_hash == NULL)) protos.tls.ja3.client_hash = strdup(j); updateCliJA3(); }
+  inline void updateJA3S(char *j) { if(j && (j[0] != '\0') && (protos.tls.ja3.server_hash == NULL)) protos.tls.ja3.server_hash = strdup(j); updateSrvJA3(); }
   
   inline u_int8_t getTcpFlags()        const { return(src2dst_tcp_flags | dst2src_tcp_flags);  };
   inline u_int8_t getTcpFlagsCli2Srv() const { return(src2dst_tcp_flags);                      };
@@ -400,6 +417,7 @@ class Flow : public GenericHashEntry {
   void updateTcpSeqIssues(const ParsedFlow *pf);
   void updateDNS(ParsedFlow *zflow);
   void updateHTTP(ParsedFlow *zflow);
+  void updateSuspiciousDGADomain();
   static void incTcpBadStats(bool src2dst_direction,
 			     Host *cli, Host *srv,
 			     NetworkInterface *iface,
@@ -466,7 +484,7 @@ class Flow : public GenericHashEntry {
   inline const struct ndpi_in6_addr* get_srv_ipv6() const { return(srv_host->get_ip()->get_ipv6());  };
   inline u_int16_t get_cli_port()        const { return(ntohs(cli_port));                 };
   inline u_int16_t get_srv_port()        const { return(ntohs(srv_port));                 };
-  inline u_int16_t get_vlan_id()         const { return(vlanId);                          };
+  inline VLANid    get_vlan_id()              const { return(filterVLANid(vlanId));                        };
   inline u_int8_t  get_protocol()        const { return(protocol);                        };
   inline u_int64_t get_bytes()           const { return(stats.get_cli2srv_bytes() + stats.get_srv2cli_bytes() );                };
   inline u_int64_t get_bytes_cli2srv()   const { return(stats.get_cli2srv_bytes());                                             };
@@ -510,9 +528,9 @@ class Flow : public GenericHashEntry {
   inline u_int16_t getICMPPayloadSize()             const { return(isICMP() ? protos.icmp.max_icmp_payload_size : 0); };
   inline ICMPinfo* getICMPInfo()                    const { return(isICMP() ? icmp_info : NULL); }
   inline ndpi_protocol_breed_t get_protocol_breed() const {
-    return(ndpi_get_proto_breed(iface->get_ndpi_struct(), isDetectionCompleted() ? ndpiDetectedProtocol.app_protocol : NDPI_PROTOCOL_UNKNOWN));
+    return(ndpi_get_proto_breed(iface->get_ndpi_struct(), isDetectionCompleted() ? ndpi_get_upper_proto(ndpiDetectedProtocol) : NDPI_PROTOCOL_UNKNOWN));
   };
-  inline const char * const get_protocol_breed_name() const { return(iface->get_ndpi_proto_breed_name(get_protocol_breed())); };
+  inline const char * const get_protocol_breed_name() const { return(ndpi_get_proto_breed_name(iface->get_ndpi_struct(), get_protocol_breed())); };
   inline ndpi_protocol_category_t get_protocol_category() const {
     return(ndpi_get_proto_category(iface->get_ndpi_struct(),
 				   isDetectionCompleted() ? ndpiDetectedProtocol : ndpiUnknownProtocol));
@@ -546,7 +564,17 @@ class Flow : public GenericHashEntry {
   inline bool is_swap_requested()  const { return swap_requested;  };
   inline bool is_swap_done()       const { return swap_done;       };
   inline void set_swap_done()            { swap_done = true;       };
-  bool is_hash_entry_state_idle_transition_ready() const;
+  /*
+    Returns actual client and server, that is the client and server as determined after
+    the swap heuristic that has taken place.
+   */
+  inline void get_actual_peers(Host **actual_client, Host **actual_server) const {
+    if(is_swap_requested())
+      *actual_client = get_srv_host(), *actual_server = get_cli_host();
+    else
+      *actual_client = get_cli_host(), *actual_server = get_srv_host();
+  };
+  bool is_hash_entry_state_idle_transition_ready();
   void hosts_periodic_stats_update(NetworkInterface *iface, Host *cli_host, Host *srv_host, PartializableFlowTrafficStats *partial,
 				   bool first_partial, const struct timeval *tv) const;
   void periodic_stats_update(const struct timeval *tv);
@@ -559,9 +587,11 @@ class Flow : public GenericHashEntry {
   u_int32_t key();
   static u_int32_t key(Host *cli, u_int16_t cli_port,
 		       Host *srv, u_int16_t srv_port,
-		       u_int16_t vlan_id,
+		       VLANid vlan_id,
+		       u_int16_t _observation_point_id,
 		       u_int16_t protocol);
-  void lua(lua_State* vm, AddressTree * ptree, DetailsLevel details_level, bool asListElement);
+  void lua(lua_State* vm, AddressTree * ptree,
+	   DetailsLevel details_level, bool asListElement);
   void lua_get_min_info(lua_State* vm);
   void lua_duration_info(lua_State* vm);
   void lua_snmp_info(lua_State* vm);
@@ -587,7 +617,7 @@ class Flow : public GenericHashEntry {
   void lua_get_tcp_info(lua_State *vm) const;
   void lua_get_port(lua_State *vm, bool client) const;
   void lua_get_geoloc(lua_State *vm, bool client, bool coords, bool country_city) const;
-  void lua_get_risk_info(lua_State* vm, bool as_table);
+  void lua_get_risk_info(lua_State* vm);
   
   void getInfo(ndpi_serializer *serializer);
   void getHTTPInfo(ndpi_serializer *serializer) const;
@@ -595,7 +625,8 @@ class Flow : public GenericHashEntry {
 
   bool equal(const IpAddress *_cli_ip, const IpAddress *_srv_ip,
 	     u_int16_t _cli_port, u_int16_t _srv_port,
-	     u_int16_t _vlanId, u_int8_t _protocol,
+	     VLANid _vlanId, u_int16_t _observation_point_id,
+	     u_int8_t _protocol,
 	     const ICMPinfo * const icmp_info,
 	     bool *src2srv_direction) const;
   void sumStats(nDPIStats *ndpi_stats, FlowStats *stats);
@@ -634,22 +665,16 @@ class Flow : public GenericHashEntry {
     return 0;
   }
   inline bool hasInvalidDNSQueryChars()  { return(isDNS() && protos.dns.invalid_chars_in_query); }
-  inline bool hasMaliciousSignature()    { return(has_malicious_cli_signature || has_malicious_srv_signature); }
+  inline bool hasMaliciousSignature(bool as_client) const { return as_client ? has_malicious_cli_signature : has_malicious_srv_signature; }
 
   void setRisk(ndpi_risk r);
   void addRisk(ndpi_risk r);
   inline ndpi_risk getRiskBitmap() const { return ndpi_flow_risk_bitmap; }
   bool hasRisk(ndpi_risk_enum r) const;
   bool hasRisks() const;
-
-  inline char* getDNSQuery()        { return(isDNS() ? protos.dns.last_query : (char*)"");  }
-  inline void  setDNSQuery(char *v) {
-    if(isDNS()) {
-      if(protos.dns.last_query_shadow) free(protos.dns.last_query_shadow);
-      protos.dns.last_query_shadow = protos.dns.last_query;
-      protos.dns.last_query = v;
-    }
-  }
+  inline char* getDGADomain() const { return(hasRisk(NDPI_SUSPICIOUS_DGA_DOMAIN) && suspicious_dga_domain ? suspicious_dga_domain : (char*)""); }
+  inline char* getDNSQuery()  const { return(isDNS() ? protos.dns.last_query : (char*)"");  }
+  bool setDNSQuery(char *v);
   inline void  setDNSQueryType(u_int16_t t) { if(isDNS()) { protos.dns.last_query_type = t; } }
   inline void  setDNSRetCode(u_int16_t c)   { if(isDNS()) { protos.dns.last_return_code = c; } }
   inline u_int16_t getLastQueryType()       { return(isDNS() ? protos.dns.last_query_type : 0); }
@@ -723,14 +748,16 @@ class Flow : public GenericHashEntry {
       +((float)(serverNwLatency.tv_usec + clientNwLatency.tv_usec)) / (float)1000000;
   }
   inline void setFlowApplLatency(float latency_msecs) { applLatencyMsec = latency_msecs; }
-  inline void setFlowDevice(u_int32_t device_ip, u_int16_t device_id, u_int32_t inidx, u_int32_t outidx) {
-    flow_device.device_ip = device_ip, flow_device.device_id = device_id;
+  inline void setFlowDevice(u_int32_t device_ip, u_int16_t observation_point_id,
+			    u_int32_t inidx, u_int32_t outidx) {
+    flow_device.device_ip = device_ip, flow_device.observation_point_id = observation_point_id;
     flow_device.in_index = inidx, flow_device.out_index = outidx;
   }
-  inline u_int32_t getFlowDeviceIp()       { return flow_device.device_ip; };
-  inline u_int32_t getFlowDeviceId()       { return flow_device.device_id; };
-  inline u_int32_t getFlowDeviceInIndex()  { return flow_device.in_index;  };
-  inline u_int32_t getFlowDeviceOutIndex() { return flow_device.out_index; };
+  inline u_int32_t getFlowDeviceIp()           { return flow_device.device_ip;             };
+  inline u_int16_t getFlowObservationPointId() { return flow_device.observation_point_id;  };
+  inline u_int16_t get_observation_point_id()  { return(getFlowObservationPointId());      };
+  inline u_int32_t getFlowDeviceInIndex()      { return flow_device.in_index;              };
+  inline u_int32_t getFlowDeviceOutIndex()     { return flow_device.out_index;             };
 
   inline const u_int16_t getScore()            const { return(flow_score); };
 

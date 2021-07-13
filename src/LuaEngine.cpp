@@ -674,7 +674,8 @@ void LuaEngine::purifyHTTPParameter(char *param) {
 /* ****************************************** */
 
 bool LuaEngine::switchInterface(struct lua_State *vm, const char *ifid,
-    const char *user, const char *session) {
+				const char *user, const char *group,
+				const char *session) {
   NetworkInterface *iface = NULL;
   char iface_key[64], ifname_key[64];
   char iface_id[16];
@@ -687,6 +688,12 @@ bool LuaEngine::switchInterface(struct lua_State *vm, const char *ifid,
   if(user != NULL) {
     if(!strlen(session) && strcmp(user, NTOP_NOLOGIN_USER))
       return false; 
+
+    /* Non-admins cannot switch to the system interface */
+    if(iface == ntop->getSystemInterface()
+       && strcmp(user, NTOP_NOLOGIN_USER)
+       && strncmp(group, CONST_USER_GROUP_ADMIN, strlen(CONST_USER_GROUP_ADMIN)))
+      return false;
 
     snprintf(iface_key, sizeof(iface_key), NTOPNG_PREFS_PREFIX ".%s.iface", user);
     snprintf(ifname_key, sizeof(ifname_key), NTOPNG_PREFS_PREFIX ".%s.ifname", user);
@@ -714,6 +721,8 @@ void LuaEngine::setInterface(const char * user, char * const ifname,
 			     u_int16_t ifname_len, bool * const is_allowed) const {
   NetworkInterface *iface = NULL;
   char key[CONST_MAX_LEN_REDIS_KEY];
+  u_int16_t observationPointId = 0;
+  
   ifname[0] = '\0';
 
   if((user == NULL) || (user[0] == '\0'))
@@ -749,6 +758,26 @@ void LuaEngine::setInterface(const char * user, char * const ifname,
 
     ntop->getTrace()->traceEvent(TRACE_DEBUG, "Interface found [Interface: %s][user: %s]", iface->get_name(), user);
   }
+
+  if(iface && iface->haveObservationPointsDefined()) {
+    char buf[16];
+    
+    snprintf(key, sizeof(key), NTOPNG_PREFS_PREFIX ".%s.observationPointId", user);
+    
+    if(ntop->getRedis()->get(key, buf, sizeof(buf)) != -1) {
+      observationPointId = atoi(buf);
+
+      if(!iface->hasObservationPointId(observationPointId))
+	observationPointId = iface->getFirstObservationPointId(); /* Not existing */
+    }
+  }
+
+  /* Set the observationPointId in the VM */
+  getLuaVMUservalue(L, observationPointId) = observationPointId;
+
+  // ntop->getTrace()->traceEvent(TRACE_WARNING, "observationPointId: %u", observationPointId);
+  
+  lua_push_uint32_table_entry(L, "observationPointId", observationPointId);
 }
 
 /* ****************************************** */
@@ -873,7 +902,7 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   char switch_interface[2] = { '\0' };
   char addr_buf[64];
   char session_buf[64];
-  char ifid_buf[32];
+  char ifid_buf[32], session_key[32];
   const char* origin_header;
   bool send_redirect = false;
   IpAddress client_addr;
@@ -888,13 +917,14 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   getLuaVMUservalue(L, conn) = conn;
 
   content_type = mg_get_header(conn, "Content-Type");
-  mg_get_cookie(conn, "session", session_buf, sizeof(session_buf));
+  Utils::make_session_key(session_key, sizeof(session_key));
+  mg_get_cookie(conn, session_key, session_buf, sizeof(session_buf));
 
   /* Check for POST requests */
   if((strcmp(request_info->request_method, "POST") == 0) && (content_type != NULL)) {
     int content_len = mg_get_content_len(conn) + 1;
 
-    if (content_len > HTTP_MAX_POST_DATA_LEN) {
+    if(content_len > HTTP_MAX_POST_DATA_LEN) {
       ntop->getTrace()->traceEvent(TRACE_WARNING,
 				   "Too much data submitted with the form. [data len: %u][max len: %u]",
 				   content_len, HTTP_MAX_POST_DATA_LEN);
@@ -970,10 +1000,11 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
 
       /* Check for interface switch requests */
       mg_get_var(post_data, post_data_len, "switch_interface", switch_interface, sizeof(switch_interface));
-      if (strlen(switch_interface) > 0 && request_info->query_string) {
+      if(strlen(switch_interface) > 0 && request_info->query_string) {
         mg_get_var(request_info->query_string, strlen(request_info->query_string), "ifid", ifid_buf, sizeof(ifid_buf));
-        if (strlen(ifid_buf) > 0) {
-          switchInterface(L, ifid_buf, user, session_buf);
+	
+        if(strlen(ifid_buf) > 0) {
+          switchInterface(L, ifid_buf, user, group, session_buf);
 
 	  /* Sending a redirect is needed to prevent the current lua script
 	   * from receiving the POST request, as it could exchange the request
@@ -1070,7 +1101,9 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   }
   lua_setglobal(L, "_COOKIE"); /* Like in php */
 
-  /* Read user capabilities */
+  /*
+    Read user capabilities
+  */
   u_int64_t capabilities = 0;
 
   if(!strncmp(group, CONST_USER_GROUP_ADMIN, strlen(CONST_USER_GROUP_ADMIN)))
@@ -1079,7 +1112,9 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   else {
     char val[32];
 
-    /* Non-admins only have a subset of capabilities */
+    /*
+      Non-admins only have a subset of capabilities
+    */
     snprintf(key, sizeof(key), CONST_STR_USER_CAPABILITIES, user);
 
     if((ntop->getRedis()->get(key, val, sizeof(val)) != -1)
@@ -1088,6 +1123,24 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
     }
   }
 
+  /*
+    Read user allowed networks
+  */
+  char allowed_nets[MAX_USER_NETS_VAL_LEN];
+
+  snprintf(key, sizeof(key), CONST_STR_USER_NETS, user);
+  /* Set the default, if no allowed networks are found */
+  if(ntop->getRedis()->get(key, allowed_nets, sizeof(allowed_nets)) == -1)
+    snprintf(allowed_nets, sizeof(allowed_nets), CONST_DEFAULT_ALL_NETS);
+
+  /*
+    Give user the 'alerts' and 'historical_flows' capabilities if its allowed networks equal the 'all networks' constant
+    NOTE: currently, this is only given for local-users. For non-local users (i.e., Radius, LDAP)
+    this is left for future implementation.
+  */
+  if(localuser && !strncmp(allowed_nets, CONST_DEFAULT_ALL_NETS, sizeof(allowed_nets)))
+    capabilities |= (1 << capability_alerts) | (1 << capability_historical_flows);
+
   /* Put the _SESSION params into the environment */
   lua_newtable(L);
 
@@ -1095,7 +1148,7 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   lua_push_str_table_entry(L, "user", (char*)user);
   lua_push_str_table_entry(L, "group", (char*)group);
   lua_push_bool_table_entry(L, "localuser", localuser);
-  lua_push_uint64_table_entry(L, "capabilities", capabilities);
+  lua_push_uint64_table_entry(L, "capabilities", capabilities);  
 
   // now it's time to set the interface.
   setInterface(user, ifname, sizeof(ifname), &is_interface_allowed);
@@ -1106,29 +1159,26 @@ int LuaEngine::handle_script_request(struct mg_connection *conn,
   lua_setglobal(L, "_SESSION"); /* Like in php */
 
   if(user[0] != '\0') {
-    char val[MAX_USER_NETS_VAL_LEN];
-
+    char val[16];
     getLuaVMUservalue(L, user) = (char*)user;
 
-    snprintf(key, sizeof(key), CONST_STR_USER_NETS, user);
-    if(ntop->getRedis()->get(key, val, sizeof(val)) == -1)
-      ptree.addAddresses(CONST_DEFAULT_ALL_NETS);
-    else
-      ptree.addAddresses(val);
+    /* Populate a patricia tree with the user allowed networks */
+    ptree.addAddresses(allowed_nets);
 
     getLuaVMUservalue(L, allowedNets) = &ptree;
-      // ntop->getTrace()->traceEvent(TRACE_WARNING, "SET [p: %p][val: %s][user: %s]", &ptree, val, user);
+    // ntop->getTrace()->traceEvent(TRACE_WARNING, "SET [p: %p][val: %s][user: %s]", &ptree, val, user);
 
     snprintf(key, sizeof(key), CONST_STR_USER_LANGUAGE, user);
     if((ntop->getRedis()->get(key, val, sizeof(val)) != -1)
        && (val[0] != '\0')) {
       lua_pushstring(L, val);
-    } else {
+    } else
       lua_pushstring(L, NTOP_DEFAULT_USER_LANG);
-    }
+    
     lua_setglobal(L, CONST_USER_LANGUAGE);
   }
 
+  
   getLuaVMUservalue(L, group) = (char*)(group ? (group) : "");
   getLuaVMUservalue(L, localuser) = localuser;
   getLuaVMUservalue(L, csrf) = (char*)session_csrf;

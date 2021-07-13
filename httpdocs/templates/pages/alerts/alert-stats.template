@@ -9,50 +9,86 @@
 <script type='text/javascript' src='{{ ntop.getHttpPrefix() }}/js/widgets/widgets.js?{{ ntop.getStaticFileEpoch() }}'></script>
 
 <div class='row'>
-    <div class='col-12'>
-        <div class="mb-2">
-            {* ui_utils.render_datetime_range_picker(range_picker) *}
-        </div>
+  <div class='col-12'>
+    <div class="mb-2">
+      {* ui_utils.render_datetime_range_picker(range_picker) *}
     </div>
-    <div class='col-12'>
-        <div class="card card-shadow">
-	        <div class="overlay justify-content-center align-items-center position-absolute h-100 w-100">
-                    <div class="text-center">
-                        <div class="spinner-border text-primary" role="status">
-                          <span class="sr-only">Loading...</span>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body p-2">
-                {* widget_gui_utils.render_chart(chart.name, {
-                    displaying_label = ""
-                }) *}
-               <table id='{{ datatable.name }}' class='table table-striped table-bordered w-100'> 
-                    <thead>
-                       {* datatable.table *}
-                    </thead>
-                </table>
-            </div>
-            <div class="card-footer">
-                <button id="btn-get-permalink" class="btn btn-secondary">
-                    <i class="fas fa-link"></i> {{ i18n('graphs.get_permanent_link') }}
-                </button>
-                <a id="btn-download-alerts" download="alerts.txt" class="btn btn-secondary" href="{{ ntop.getHttpPrefix() }}/lua/rest/v1/get/{{ alert_stats.entity }}/alert/list.lua{{ build_query_params(datatable.datasource.params) }}&format=txt">
-                    <i class="fas fa-file-download"></i> {{ i18n('show_alerts.download_alerts') }}
-                </a>
-		<button id="btn-delete-alerts" {{ ternary(datatable.show_delete, "", 'hidden="hidden"') }} data-target='#delete-alerts-modal' data-toggle="modal" class="btn btn-danger">
-                    <i class="fas fa fa-trash"></i> {{ i18n("delete_alerts")}}
-                </button>
+  </div>
+  <div class='col-12'>
+    <div class="card card-shadow">
+      <div class="overlay justify-content-center align-items-center position-absolute h-100 w-100">
+        <div class="text-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+          </div>
+        </div>
+      </div>
 
+
+      <div class="card-body">
+        <div class="row">
+
+          <div class="col-12" id="ChartDiv" style="padding-right: 2px;padding-left: 2px;">
+            <div class="card h-100 overflow-hidden">
+              {* widget_gui_utils.render_chart(chart.name, {
+              displaying_label = ""
+              }) *}
             </div>
+          </div>
+
+          {% if alert_stats.status ~= "engaged" and ntop.isPro() then %}
+          <div class="col-2 d-none" id="CardDiv1" style="padding-right: 2px;padding-left: 2px;">
+            <div class="card border-primary h-100 mb-2" id="Card1">
+              <div class="card-header text-start fs-6 fw-bold" data-bs-custom-class="custom-tooltip" title="Loading..." id="alertCardTitle1"> Loading... </div>
+	      <div class="card-body ms-1">
+		<span class="card-text text-start fs-6" id="alertCard1">Loading...</span>
+	      </div>
+	    </div>
+	  </div>
+
+          <div class="col-2 d-none" id="CardDiv2" style="padding-right: 2px;padding-left: 2px;">
+            <div class="card border-success h-100 mb-2" id="Card2">
+              <div class="card-header text-start fs-6 fw-bold" data-bs-custom-class="custom-tooltip"  title="Loading..." id="alertCardTitle2"> Loading...</div>
+              <div class="card-body ms-1">
+                <span class="card-text text-start fs-6" id="alertCard2">Loading...</span>
+              </div>
+            </div>
+          </div>
+          {% end  %}
+
+          <table id='{{ datatable.name }}' class='table table-striped table-bordered w-100'>
+            <thead>
+              {* datatable.table *}
+            </thead>
+          </table>
         </div>
+      </div>
+
+      {% if alert_stats.entity ~= 'all' then %}
+      <div class="card-footer">
+        <button id="btn-get-permalink" class="btn btn-secondary">
+          <i class="fas fa-link"></i> {{ i18n('graphs.get_permanent_link') }}
+        </button>
+        <a id="btn-download-alerts" download="alerts.txt" class="btn btn-secondary" href="{{ datatable.endpoint_list }}{{ build_query_params(datatable.datasource.params) }}&format=txt">
+          <i class="fas fa-file-download"></i> {{ i18n('show_alerts.download_alerts') }}
+        </a>
+
+        {% if alert_stats.status == "historical" then %}
+        <button id="btn-acknowledge-alerts" {{ ternary(datatable.show_admin_controls, "", 'hidden="hidden"') }} data-bs-target='#acknowledge-alerts-modal' data-bs-toggle="modal" class="btn btn-primary">
+          <i class="fas fa fa-user-check"></i> {{ i18n("acknowledge_alerts")}}
+        </button>
+	{% end %}
+
+	{% if alert_stats.status ~= "engaged" then %}
+	<button id="btn-delete-alerts" {{ ternary(datatable.show_admin_controls, "", 'hidden="hidden"') }} data-bs-target='#delete-alerts-modal' data-bs-toggle="modal" class="btn btn-danger">
+          <i class="fas fa fa-trash"></i> {{ i18n("delete_alerts")}}
+        </button>
+	{% end %}
+      </div>
+      {% end %}
     </div>
+  </div>
 </div>
-<style>
-    table.dataTable td, table.dataTable th {
-        padding: 0.55rem;
-    }
-</style>
 
 {# add modals if defined #}
 {% if datatable.modals then %}
@@ -63,11 +99,16 @@
 </div>
 {% end %}
 
-<link href="{{ ntop.getHttpPrefix() }}/datatables/datatables.min.css" rel="stylesheet"/>
+{* template_utils.gen("pages/modals/alerts/filters/add.template", filters) *}
+
+<link href="{{ ntop.getHttpPrefix() }}/css/dataTables.bootstrap5.min.css" rel="stylesheet"/>
 <script type="text/javascript">
     i18n.showing_x_to_y_rows = "{{ i18n('showing_x_to_y_rows', {x='_START_', y='_END_', tot='_TOTAL_'}) }}";
 </script>
 <script type='text/javascript'>
+    let alertStats = {};
+    let pageCsrf = "{{ ntop.getRandomCSRFValue() }}";
+
     $(document).ready(function(){
         const INITIAL_ROWS_LENGTH = {{datatable.initialLength}};
         const FAMILY = "{{ alert_stats.entity }}"
@@ -78,8 +119,9 @@
         const $inputBeginEpoch = $(`#begin-epoch`);
         const $inputEndEpoch = $(`#end-epoch`);
         const $btnGetPermaLink = $(`#btn-get-permalink`);
+        const alertCard = [$('#alertCard1'),$('#alertCard2')];    
 
-	    /* Show an overlay to hide loading */
+	/* Show an overlay to hide loading */
         function toggleOverlays(time = 500) {
             $(`.overlay`).toggle(time);
         }
@@ -92,7 +134,37 @@
             $(`.overlay`).fadeOut(time);
         }
 
-        function updateDatasourceParams() {
+        function getSearchParams() {
+            const searchParams = new URLSearchParams();
+
+            // get all filters tags
+            const tags = tagify.getTagElms();
+
+            // add the tag filters inside the search params object
+            for (const tag of tags) {
+                const tagData = tagify.tagData(tag);
+
+                const key = tagData.key;
+                const selectedOperator = tagData.selectedOperator;
+                const realValue = tagData.realValue;
+                const value = tagData.value;
+
+                let param_value = `${realValue || value}{{ opsep }}${selectedOperator || 'eq'}`;
+                if (searchParams.get(key)) {
+                    param_value = `${searchParams.get(key)},${param_value}`;
+                }
+                searchParams.set(key, param_value);
+            }
+
+            return searchParams;
+        }
+
+        function setDatasourceParams() {
+            const searchParams = getSearchParams();
+
+            searchParams.forEach(function(value, key) {
+                datasourceParams[key] = value;
+            });
 
             const [begin, end] = getTimestampRange();
             if (begin == null && end == null) return datasourceParams;
@@ -105,9 +177,9 @@
         }
 
         async function reloadTable($table, ) {
-
             const searchParams = new URLSearchParams(Object.entries(datasourceParams));
-	        toggleOverlays();
+
+            toggleOverlays();
 	    
             // reload the table
             $table.ajax.url(`{* datatable.datasource.name *}?${searchParams.toString()}`).load();
@@ -117,6 +189,9 @@
             catch(e) {
                 console.warn(e);
             }
+            {% if alert_stats.status ~= "engaged" and ntop.isPro() then %}
+                alertCardStats();
+            {% end %} 
         }
 
         function printQueryTime($table) {
@@ -135,30 +210,71 @@
             return [begin, end];
         }
 
+        function updateNavbarLink(searchParams, element) {
+	    /* Read the current href */
+	    const cur_href = $(element).attr('href');
+	    let cur_url = new URL(cur_href, location.origin);
+	    /* Read current href params and extract the page name */
+	    const cur_page = cur_url.searchParams.get('page');
+	    if(cur_page) {
+	        /* Prepare the new URL which is the page name extracted plus all other params */
+	        searchParams.set('page', cur_page);
+	        searchParams.delete('alert_id');
+	        cur_url.search = searchParams.toString();
+	        /* Attach the new URL to the current href */
+	        $(element).attr('href', cur_url.toString());
+	    }
+	}
+
+        function updateStatusSwitchLink(begin, end, element) {
+	    const cur_href = $(element).attr('href');
+	    let cur_url = new URL(cur_href, location.origin + location.pathname);
+            let searchParams = new URLSearchParams(cur_url.search);
+
+            /* Set updated epoch */
+            searchParams.set('epoch_begin', begin.unix());
+            searchParams.set('epoch_end',   end.unix());
+
+	    /* Attach the new URL to the current href */
+	    cur_url.search = searchParams.toString();
+	    $(element).attr('href', cur_url.toString());
+	}
+
         function pushNewHistoryState(begin, end, len) {
-            
             const url = new URL(location);
-            const searchParams = new URLSearchParams();
+
+            const searchParams = getSearchParams();
 
             searchParams.set('epoch_begin', begin.unix());
             searchParams.set('epoch_end', end.unix());
             
-            if (url.searchParams.has('page')) {
-                searchParams.set('page', url.searchParams.get('page'));
-            }
             if (url.searchParams.has('status')) {
                 searchParams.set('status', url.searchParams.get('status'));
             }
 
-            // get all filters tags
-            const tags = tagify.getTagElms();
+	    /*
+	      Update navbar items, e.g., alert entities, with begin/end epochs
+              and status to preserve them when switching between tabs
+	     */
+	    $('#navbarNav a').each(function(index, element) {
+                updateNavbarLink(searchParams, element);
+            });
 
-            // add the tag filters inside the search params object
-            for (const tag of tags) {
+	    /*
+	      Update status switch items (Engaged, Acknoledged, Past)
+              with begin/end epochs to preserve them when switching status
+	     */
+	    $('#statusSwitch a').each(function(index, element) {
+                updateStatusSwitchLink(begin, end, element);
+            });
 
-                const tagData = tagify.tagData(tag);
-                const {key, selectedOperator, realValue, value} = tagData;
-                searchParams.set(key, `${realValue || value},${selectedOperator}`);
+	    /*
+	      Other page params are not preserved when switching tabs as they may be not valid across
+	      multiple entities
+	     */
+	    searchParams.delete('page');
+            if (url.searchParams.has('page')) {
+                searchParams.set('page', url.searchParams.get('page'));
             }
 
             url.search = searchParams.toString();
@@ -166,21 +282,65 @@
         }
 
         async function onRangePickerChange(pushHistroy = false) {
-
             const [begin, end] = getTimestampRange();
-	        updateDatasourceParams();
+
+	    setDatasourceParams();
+
             await reloadTable($table);
 
             // update the link of the download button
-            const href = $(`#btn-download-records`).attr('href');
+            const href = $(`#btn-download-alerts`).attr('href');
             const newDownloadURL = new URL(href, location.origin);
-            newDownloadURL.search = new URLSearchParams(datasourceParams); 
-            $(`#btn-download-records`).attr('href', newDownloadURL.toString());
+            newDownloadURL.search = new URLSearchParams(datasourceParams);
+	    newDownloadURL.searchParams.set('format', 'txt');
+            $(`#btn-download-alerts`).attr('href', newDownloadURL.toString());
 
             if (pushHistroy) {
                 pushNewHistoryState(begin, end);
             }
+        }
 
+        async function addFilterTag(tag) {
+            const existingTagElms = tagify.getTagElms();
+
+            {% if false then %}
+            /* Lookup by key (does not allow dup) */
+            const existingTagElement = existingTagElms.find(htmlTag => htmlTag.getAttribute('key') === tag.key);
+            const existingTag = tagify.tagData(existingTagElement);
+            if (existingTag !== undefined /* && existingTag.realValue !== tag.realValue */) {
+            {% else %}   
+            /* Lookup by index (allow dup) */
+            if (tag.index && existingTagElms.length > tag.index) {
+            {% end %}
+                const existingTagElement = existingTagElms[tag.index];
+                const existingTag = tagify.tagData(existingTagElement);
+
+                // replace the tag!
+                existingTag.value = tag.value;
+                existingTag.realValue = tag.realValue;
+                if (tag.selectedOperator) {
+                    existingTag.selectedOperator = tag.selectedOperator;
+                }
+
+                tagify.replaceTag(existingTagElement, existingTag);
+
+                // update the datasource params
+                await onRangePickerChange(true);
+
+                return;
+            } 
+
+            // has the tag an operator object?
+            if (!Array.isArray(DEFINED_TAGS[tag.key])) {
+                tag.operators = DEFINED_TAGS[tag.key].operators;
+            }
+
+            if (!tag.selectedOperator) {
+                tag.selectedOperator = 'eq';
+            }
+
+            // add filter!
+            tagify.addTags([tag]);
         }
 
         function loadColumns() {
@@ -192,17 +352,34 @@
 
             /* Actions Column */
 	    {% if alert_stats.entity ~= 'all' then %}
-            columns.push({width: '5%', targets: -1, className: 'text-center text-nowrap', orderable: false, data: null, render: (_, type, dataRow) => {
-	        const buttons = [
+            columns.push({responsivePriority: 1, width: '5%', targets: -1, className: 'text-center text-nowrap', orderable: false, data: null, render: (_, type, dataRow) => {
+		const buttons = [
+		    {% if alert_stats.entity ~= 'system' and datatable.show_admin_controls == true then %}
+		    {icon: 'fa fa-cog', label: "{{ i18n('settings') }}", href: '#check_settings', class: 'btn-primary'},
+		    {% end %}
+
+		    /* Button to jump to flow alerts within the same time period */
+		    {% if alert_stats.entity == 'host' then %}
+		    {icon: 'fa-stream', label: "{{ i18n('flows') }}", modal: '#flow_alerts', class: "btn-info"},
+		    {% end %}
+
 		    /* Bell button to disable alerts is only supported for hosts and flows */
-		    {% if alert_stats.entity == 'host' or alert_stats.entity == 'flow' then %}
+		    {% if (alert_stats.entity == 'host' or alert_stats.entity == 'flow') and datatable.show_admin_controls == true then %}
 		    {icon: 'fa-bell-slash', label: "{{ i18n('disable') }}", modal: '#alerts_filter_dialog', class: "btn-warning {{ ((alert_stats.entity == 'host' or alert_stats.entity == 'flow') and '' or 'disabled') }}"},
 		    {% end %}
 
 		    /* Only not-engaged alerts can be deleted */
-                    {% if alert_stats.entity ~= 'all' and alert_stats.status ~= "engaged" and datatable.show_delete == true then %}
-                    {icon: 'fa fa-trash', label: "{{ i18n('remove') }}", modal: '#delete_alert_dialog', class: 'btn-danger'},
-                    {% end %}
+		    {% if alert_stats.entity ~= 'all' and datatable.show_admin_controls == true then %}
+
+		    {% if alert_stats.status == "historical" then %}
+		    {icon: 'fa fa-user-check', label: "{{ i18n('acknowledge') }}", modal: '#acknowledge_alert_dialog', class: 'btn-primary'},
+		    {% end %}
+
+		    {% if alert_stats.status ~= "engaged" then %}
+		    {icon: 'fa fa-trash', label: "{{ i18n('remove') }}", modal: '#delete_alert_dialog', class: 'btn-danger'},
+		    {% end %}
+
+		    {% end %}
 		];
 
                 return DataTableUtils.createActionButtons(buttons);
@@ -222,7 +399,7 @@
 
         let config = DataTableUtils.getStdDatatableConfig(datatableButton);
         config = DataTableUtils.extendConfig(config, {
-	        serverSide: true,
+	    serverSide: true,
             searching: false,
             ajax: {
                 method: 'get',
@@ -257,7 +434,8 @@
                     return data;
                 }
             },
-            lengthMenu: [[INITIAL_ROWS_LENGTH, 50, 100, 250], [INITIAL_ROWS_LENGTH, 50, 100, 250]],
+            lengthMenu: [10, 20, 50, 100, 200],
+	    pageLength: INITIAL_ROWS_LENGTH,
             columns: loadColumns()
         });
 
@@ -267,10 +445,14 @@
         });
 
         // on ajax request complete then print the query time
+        $table.on('preXhr', function() {
+            toggleOverlays();
+        });
         $table.on('xhr', function() {
             printQueryTime($table);
             hideOverlays();
-	    });
+            filterModalLoadData();
+        });
 
 	$(`.range-picker`).on('change', async function(e) {
             await onRangePickerChange(true);
@@ -305,14 +487,45 @@
             }
 
             const tag = detail.data;
-            // add/update datasource params, default operator `=`
-            datasourceParams[tag.key] = `${tag.realValue || tag.value},eq`;
+
             // trigger request
             await onRangePickerChange(true);
         });
 
-        tagify.on('edit:updated', async function(e) {
+        // Tag 'click' event handler to open the 'Edit' modal. Note: this prevents
+        // inline editing of the tag ('edit:updated' is never called as a consequence)
+        tagify.on('click', async function(e) {
+            const detail = e.detail;
 
+            if (detail.data === undefined) { return; }
+            if (detail.data.key === undefined) {return;}
+
+            const tag = detail.data;
+
+            alertStats.filterModalShow(true);
+
+            $('#add-alert-filter-modal input[name="index"]').val(detail.index);
+            $('#alert-filter-type-select').val(tag.key).change();
+
+            let value = tag.realValue || tag.value;
+
+            let value_select = $('#add-alert-filter-modal select[name="value"]');
+            if (value_select) {
+                value_select.val(value);
+            }
+
+            let value_input = $('#add-alert-filter-modal input[name="value"]');
+            if (value_input) {
+                value_input.val(value);
+            }
+
+            let operator_select = $('#add-alert-filter-modal select[name="operator"]');
+            if (operator_select) {
+                operator_select.val(tag.selectedOperator);
+            }
+        });
+
+        tagify.on('edit:updated', async function(e) {
             const detail = e.detail;
             if (detail.data === undefined) { return; }
             if (detail.data.key === undefined) {return;}
@@ -321,9 +534,6 @@
             const prevTag = detail.previousData;
 
             tag.realValue = tag.value;
-
-            // add/update datasource params, default operator `=`
-            datasourceParams[tag.key] = `${tag.value},${prevTag.selectedOperator}`;
 
             // trigger request
             await onRangePickerChange(true);
@@ -338,14 +548,13 @@
 
             $tag.attr("selectedoperator", selectedOperator);
 
-            datasourceParams[$tag.attr('key')] = `${tagData.realValue || tagData.value},${selectedOperator}`;
             tagData.selectedOperator = selectedOperator;
 
             // trigger request
             await onRangePickerChange(true);
         });
 
-	    // clear all the filters on click
+	// clear all the filters on click
         $(".btn-remove-tags").on('click', async function() {
 
             const tags = tagify.getTagElms();
@@ -361,45 +570,39 @@
             await onRangePickerChange(true);
         });
 
-        $table.on('click', `a.tag-filter`, async function (e) {
-            e.preventDefault();
 
+        const addFilter = (e, tmp) => {
+            e.preventDefault();
+    
             // Getting the row data
-            const key = $(this).data('tagKey');
-            const label = $(this).data('tagLabel');
-            const value = $(this).data('tagValue');
+            const key = tmp.data('tagKey');
+            const label = tmp.data('tagLabel');
+            const value = tmp.data('tagValue');
             const tagTitle = i18n.tags[key];
             
-            const tag = { label: tagTitle, key: key, value: label, realValue: value };
-            // does the tag exist?
-            const existingTagElement = tagify.getTagElms().find(htmlTag => htmlTag.getAttribute('key') === tag.key);
-            const existingTag = tagify.tagData(existingTagElement);
+            const tag = { label: tagTitle, key: key, value: label, realValue: value, title: value};
 
-            if (existingTag !== undefined && existingTag.realValue !== tag.realValue) {
-                
-                // replace the tag!
-                existingTag.value = tag.value;
-                existingTag.realValue = tag.realValue;
+            addFilterTag(tag);
+        }
 
-                tagify.replaceTag(existingTagElement, existingTag);
-                // update the datasource params
-                datasourceParams[tag.key] = `${tag.realValue},${existingTag.selectedOperator}`;
-                await onRangePickerChange(true);
-
-                return;
-            } 
-
-            // has the tag an operator object?
-            if (!Array.isArray(DEFINED_TAGS[key])) {
-                tag.operators = DEFINED_TAGS[key].operators;
-            }
-
-            tag.selectedOperator = 'eq';
-
-            // add filter!
-            tagify.addTags([tag]);
+        $table.on('click', `a.tag-filter`, async function (e) {
+            addFilter(e, $(this));
         });
-    
+        
+
+        /* Cards */
+        {% if alert_stats.status ~= "engaged" and ntop.isPro() then %}
+
+        alertCard.forEach(element=>{
+            const card = "#".concat(element[0].id);
+            
+            $(card).on('click', `a.tag-filter`, async function (e) {
+                addFilter(e, $(this));
+            })
+        })
+
+        {% end %}
+        
         // when the user navigates using the browser's arrows
         // set the input boxes with their respective values
         $(window).on('popstate', function(e) {
@@ -434,12 +637,45 @@
             const begin = moment(xaxis.min);
             const end = moment(xaxis.max);
 
-            $(`#select-presets option:last`).attr('selected', 'true');
+	    $(`#select-presets`).val('custom');
 
             $inputBeginEpoch.datetimepicker('date', begin);
             $inputEndEpoch.datetimepicker('date', end);
 
             await onRangePickerChange(true);
+        });
+
+	$table.on('click', `a[href='#check_settings']`, function (e) {
+            const alert = $table.row($(this).parent().parent()).data();
+	    const check_settings_href = $(alert.msg.configset_ref).attr('href');
+            window.location.href = check_settings_href;
+        });
+
+        $table.on('click', `a[href='#flow_alerts']`, function (e) {
+            /* Create and redirect to the flow alerts filtered by alert timestamps and alert ip */
+
+            /* Prepare URL params */
+            const alert = $table.row($(this).parent().parent()).data();
+            const alert_tstamp = alert.tstamp.value;
+            const duration = alert.duration;
+            const [epoch_begin, epoch_end] = [alert_tstamp - 300 /* Look a bit before than the timestamp */, alert_tstamp + duration];
+            const alert_ip = alert.ip.value + "{{ require("tag_utils").SEPARATOR }}eq";
+
+            const flow_alerts_url = new URL(location);
+            const flow_search_params = {epoch_begin: epoch_begin, epoch_end: epoch_end, page: "flow"};
+
+            /*
+                For server alerts, we redirect to the flow alerts having this IP as server. For client alert, the
+                redirection is done on the client.
+             */
+            if(alert.is_server) {
+                flow_search_params["srv_ip"] = alert_ip;
+            } else { /* Client alert or unkown cli/srv role */
+                flow_search_params["cli_ip"] = alert_ip;
+            }
+
+            flow_alerts_url.search = new URLSearchParams(flow_search_params);
+            window.location.href = flow_alerts_url.href;
         });
 
 	$table.on('click', `a[href='#delete_alert_dialog']`, function (e) {
@@ -450,9 +686,9 @@
         const $deleteAlertModal = $('#delete_alert_dialog form').modalHandler({
             method: 'post',
             csrf: PAGE_CSRF,
-            endpoint: `${http_prefix}/lua/rest/v1/delete/{{ alert_stats.entity }}/alerts.lua`,
+            endpoint: `${http_prefix}{* datatable.endpoint_delete *}`,
             beforeSumbit: function (alert) {
-                return { ifid: "{{ ifid }}", row_id: alert.row_id };
+                return { ifid: "{{ ifid }}", row_id: alert.row_id, status: "{{ alert_stats.status }}"};
             },
             onModalInit: function (alert) {
                 $(`#delete_alert_dialog button[type='submit']`).removeAttr("disabled");
@@ -470,14 +706,62 @@
             }
         });
 
+	    $(`#btn-acknowledge-alerts`).on('click', function (e) {
+            $acknowledgeFilteredAlerts.invokeModalInit();
+        });
+
+	    const $acknowledgeFilteredAlerts = $('#acknowledge-alerts-modal form').modalHandler({
+            method: 'post',
+            csrf: PAGE_CSRF,
+            endpoint: `${http_prefix}{* datatable.endpoint_acknowledge *}`,
+            beforeSumbit: function (alert) {
+	    	let post_params = {};
+		for (let key in datasourceParams) {
+		    post_params[key] = (datasourceParams[key]);
+		}
+
+		/* Read the label from the corresponding form field */
+		post_params["label"] = $("#acknowledge-alerts-modal #alert-label-modal").val();
+
+		return post_params;
+            },
+            onModalInit: function () {
+	        $(`#acknowledge-alerts-modal button[type='submit']`).removeAttr("disabled");
+                $('#acknowledge-alerts-modal .filters-list').empty();
+                const tags = tagify.getTagElms();
+
+                const beginEpoch = moment(parseInt(datasourceParams["epoch_begin"]), 'X').format("DD/MM/YYYY HH:mm:ss");
+                const endEpoch = moment(parseInt(datasourceParams["epoch_end"]), 'X').format("DD/MM/YYYY HH:mm:ss");
+
+                const sortedTags = tags.sort((a, b) => {
+                    return i18n.tags[tagify.tagData(a).key].localeCompare(i18n.tags[tagify.tagData(b).key])
+                });
+
+                $('#acknowledge-alerts-modal #end-epoch-acknowledge').val(endEpoch);
+                $('#acknowledge-alerts-modal #begin-epoch-acknowledge').val(beginEpoch);
+
+                for (const tag of sortedTags) {
+                    const { key, selectedOperator, realValue, value } = tagify.tagData(tag);
+                    const label = i18n.tags[key]
+                    const child = $('<div class="form-group row"><div class="col-sm-6"><label class="col-form-label"><b>'+label+'</b></label></div><div class="col-sm-6 mt-1"><input class="form-control" type="text" value="'+value+'" disabled/></div></div>');
+
+                    $('#acknowledge-alerts-modal .filters-list').append(child);
+                }
+            },
+            onSubmitSuccess: function (response) {
+                reloadTable($table);
+		return (response.rc == 0);
+            }
+        });
+
 	    $(`#btn-delete-alerts`).on('click', function (e) {
             $deleteFilteredAlerts.invokeModalInit();
         });
-	
+
 	    const $deleteFilteredAlerts = $('#delete-alerts-modal form').modalHandler({
             method: 'post',
             csrf: PAGE_CSRF,
-            endpoint: `${http_prefix}/lua/rest/v1/delete/{{ alert_stats.entity }}/alerts.lua`,
+            endpoint: `${http_prefix}{* datatable.endpoint_delete *}`,
             beforeSumbit: function (alert) {
 	    	let post_params = {};
 		for (let key in datasourceParams) {
@@ -503,7 +787,7 @@
                 for (const tag of sortedTags) {
                     const { key, selectedOperator, realValue, value } = tagify.tagData(tag);
                     const label = i18n.tags[key]
-                    const child = $('<div class="form-group row"><div class="col-sm-6"><label class="col-form-label"><b>'+label+'</b></label></div><div class="col-sm-6"><input type="text" value="'+value+'" disabled/></div></div>');
+                    const child = $('<div class="form-group row"><div class="col-sm-6"><label class="col-form-label"><b>'+label+'</b></label></div><div class="col-sm-6 mt-1"><input class="form-control" type="text" value="'+value+'" disabled/></div></div>');
 
                     $('#delete-alerts-modal .filters-list').append(child);
                 }
@@ -514,7 +798,6 @@
             }
         });
 
-
         $table.on('click', `a[href='#alerts_filter_dialog']`, function (e) {
             const alert = $table.row($(this).parent().parent()).data();
             $disableAlert.invokeModalInit(alert);
@@ -523,7 +806,7 @@
         const $disableAlert = $('#alerts_filter_dialog form').modalHandler({
             method: 'post',
             csrf: PAGE_CSRF,
-            endpoint: `${http_prefix}/lua/rest/v1/edit/user_script/filter.lua`,
+            endpoint: `${http_prefix}/lua/pro/rest/v2/edit/check/filter.lua`,
             beforeSumbit: function (alert) {
 
                 const data = {
@@ -581,6 +864,45 @@
             }
         });
 
+        $table.on('click', `a[href='#acknowledge_alert_dialog']`, function (e) {
+            const alert = $table.row($(this).parent().parent()).data();
+            $acknowledgeAlert.invokeModalInit(alert);
+        });
+
+        const $acknowledgeAlert = $('#acknowledge_alert_dialog form').modalHandler({
+            method: 'post',
+            csrf: PAGE_CSRF,
+            endpoint: `${http_prefix}{* datatable.endpoint_acknowledge *}`,
+            beforeSumbit: function (alert) {
+                return { ifid: "{{ ifid }}",
+		       row_id: alert.row_id,
+		       label: $(`#acknowledge_alert_dialog #alert-label`).val()};
+            },
+            onModalInit: function (alert) {
+	        $(`#acknowledge_alert_dialog button[type='submit']`).removeAttr("disabled");
+                const $type = $(`<span>${alert.alert_id.label}</span>`);
+                $(`#acknowledge_alert_dialog .alert_label`).text($type.text().trim());
+                $(`#acknowledge_alert_dialog #alert-label`).val(alert.user_label);
+            },
+            onSubmitSuccess: function (response, dataSent) {
+
+                if (response.rc < 0) {
+                    $('#acknowledge_alert_dialog .invalid-feedback').html(i18n.rest[response.rc_str] || response.rc_str).show();
+                }
+                else {
+
+                    if (dataSent.delete_alerts) {
+                        location.reload();
+                    }
+                    else {
+                        onRangePickerChange(false);
+                    }
+                }
+
+                return (response.rc == 0);
+            }
+        });
+
         /**
          * Release Button Handler
         $table.on('click', `a[href='#release_single_alert']`, function (e) {
@@ -590,7 +912,7 @@
         const $releaseAlertModal = $('#release_single_alert form').modalHandler({
             method: 'post',
             csrf: PAGE_CSRF,
-            endpoint: `${http_prefix}/lua/rest/v1/release/{{ alert_stats.entity }}/alerts.lua`,
+            endpoint: `${http_prefix}/lua/rest/v2/release/{{ alert_stats.entity }}/alerts.lua`,
             beforeSumbit: function (alert) {
                 return {
                     ifid: "{{ ifid }}",
@@ -613,6 +935,181 @@
             }
         });
          */
+
+        /*** Filters modal ***/
+
+        // load data for filters (e.g. alert types in the selected range)
+        async function filterModalLoadData() {
+            const [begin, end] = getTimestampRange();
+
+            /* Here it is where we can load dynamic data on time range change */
+        }
+
+        alertStats.filterModalShow = function(edit) {
+            $('#add-alert-filter-modal-title').text(edit ? "{{i18n('alerts_dashboard.edit_filter')}}" : "{{i18n('alerts_dashboard.add_filter')}}");
+            $('#add-alert-filter-btn').text(edit ? "{{i18n('apply')}}" : "{{i18n('add')}}");
+            $('#alert-filter-type-select').prop( "disabled", edit ? true : false);
+            $('#add-alert-filter-modal').modal('show');
+            $('#add-alert-filter-modal input[name="index"]').val('');
+        }
+
+        const filterModalMakeTag = (formSelector) => {
+           const alert_filter_type = $(`${formSelector} [name='alert_filter_type']`).val();
+
+           let tag = {
+               key: alert_filter_type,             // e.g. l7_proto 
+               label: i18n.tags[alert_filter_type] // e.g. L7 Proto
+           }
+
+           let index = $(`${formSelector} input[name='index']`).val();
+           if (index) {
+               tag.index = index;
+           }
+
+           // load filter params inside the template container
+           const $inputsTemplate = $(`${formSelector} .alert-filter-template-container [name]`);
+           $inputsTemplate.each(function (i, input) {
+               if ($(this).attr('name') == 'operator') {
+                   tag.selectedOperator = $(this).val().trim();
+               } else {
+                   tag.realValue = $(this).val().trim();
+                   tag.value = $('option:selected', this).data('tagLabel');
+                   if (!tag.value) tag.value = tag.realValue;
+               }
+           });
+
+           return tag;
+       }
+
+       function filterModalCloneTemplate(type) {
+           const template = $(`template#${type}-filter-template`).html();
+           // if the template is not empty then return a copy of the template content
+           if (template && template.trim() != "") {
+               const $template = $(template);
+               return $template;
+           }
+           return (null);
+       }
+
+       const filterModalCreateTemplateOnSelect = (formSelector) => {
+
+           const $templateContainer = $(`${formSelector} .alert-filter-template-container`);
+
+           // on filter type Selection load the right template to fill
+           $(`${formSelector} select[name='alert_filter_type']`).change(function (e) {
+               const $option = $(this).find(`option[value='${$(this).val()}']`);
+               const $cloned = filterModalCloneTemplate($option.data('alertFilterKey'));
+               // show the template inside the modal container
+               $templateContainer.hide().empty();
+               if ($cloned) {
+                   $templateContainer.append($(`<hr>`));
+                   $templateContainer.append($cloned).show();
+               }
+               $(`${formSelector} span.test-feedback`).fadeOut();
+           });
+       }
+
+       /* bind add filter event */
+       $(`#add-alert-filter-modal form`).modalHandler({
+           /* Note: no endpoint defined, ajax is not used here */
+           resetAfterSubmit: false,
+           onModalInit: () => { filterModalCreateTemplateOnSelect(`#add-alert-filter-modal`); },
+           onModalShow: () => {
+               // load the template of the selected filter
+               const $cloned = filterModalCloneTemplate($(`#add-alert-filter-modal select[name='alert_filter_type'] option:selected`).data('alertFilterKey'));
+               if ($cloned) {
+                   $(`#add-alert-filter-modal form .alert-filter-template-container`).empty().append($(`<hr>`), $cloned).show();
+               }
+           },
+           beforeSumbit: () => {
+               $(`#add-alert-filter-modal form button[type='submit']`).click(function () {
+                   $(`#add-alert-filter-modal form span.invalid-feedback`).hide();
+               });
+
+               $(`#add-alert-filter-modal .test-feedback`).hide();
+
+               const tag = filterModalMakeTag(`#add-alert-filter-modal form`);
+
+               addFilterTag(tag);
+
+               return {};
+           },
+           onSubmitSuccess: (response) => {
+               // hide modal
+               $(`#add-alert-filter-modal`).modal('hide');
+               $(`#add-alert-filter-modal form .alert-filter-template-container`).hide();
+               return true;
+           }
+       }).invokeModalInit();
+
+        //Set chart on his max height
+        $('#widget-alert-timeseries').attr({
+            "class" : "widget chart-widget h-100"
+        })
+
+        /* Cards */
+        {% if alert_stats.status ~= "engaged" and ntop.isPro() then %}
+        
+        const [begin_epoch, end_epoch] = getTimestampRange();
+        let alertCardStats = () => {
+            let entity = "{{ alert_stats.entity }}"
+            entity = entity.replace("_", "/")
+            let params = (new URLSearchParams(datasourceParams)).toString();
+            $.getJSON(`pro/rest/v2/get/${entity}/alert/general_stats.lua?${params}`,function (data) {
+
+                let chartBox = $('#ChartDiv')
+                let divBox = [$('#CardDiv1'),$('#CardDiv2')];
+                let cardBox = [$('#Card1'),$('#Card2')];
+                let alertCardTitle = [$('#alertCardTitle1'),$('#alertCardTitle2')];
+                let numCards = 0;
+                let graphWidth;
+
+                for(i=0;i<alertCard.length;i++){
+                    if(data.rsp[i] == undefined){
+                        divBox[i].attr({
+                        	"class" : "col-2 d-none"
+                        });
+                    }else{
+                        alertCardTitle[i].html(data.rsp[i].label);
+                        alertCardTitle[i].attr({
+                            "title" : data.rsp[i].tooltip                
+                        });
+                        let cardText = "";
+                        for(j=0;j<3;j++){
+                            // Concat the name with the percentage of the stat
+                            // NB: These name should be filters if available
+                            if(data.rsp[i].value[0].lenght != 0 && data.rsp[i].value[0][j] != undefined){
+                                let restText = " (" + (data.rsp[i].value[0][j].count).toFixed(1) + "%)</li>";
+                                if(data.rsp[i].value[0][j].count != 0 && data.rsp[i].value[0][j].count < 0.1){restText = " (< 0.1%)</li>";}
+                                cardText += "<li>" + data.rsp[i].value[0][j].name + restText;
+                            }                           
+                        }
+                        if(cardText != ""){
+	                        divBox[i].attr({
+	                        	"class" : "col-2 mb-2"
+	                        });
+                            alertCard[i].html("<small>" + cardText + "</small>");
+                            numCards += 1;
+                        }else{
+	                        divBox[i].attr({
+	                        	"class" : "col-2 d-none"
+	                        });
+                        }
+                    }
+                }
+
+                // Calculating the width of the graph: Tot width (12) - Num of cards (2 per card)
+                graphWidth = (12 - (numCards * 2)).toString();
+
+                chartBox.attr({
+                    "class" : "col-" + graphWidth + " mb-2"
+                });
+            });
+        }
+    alertCardStats();
+        
+    {% end %}
+
 
     });
 </script>

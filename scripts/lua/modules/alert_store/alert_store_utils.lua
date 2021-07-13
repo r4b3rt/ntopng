@@ -19,17 +19,29 @@ function alert_store_utils.all_instances_factory()
    local res = {}
 
    for alert_store_file in pairs(ntop.readdir(alert_store_dir)) do
-
+      
       -- Load all sub-classes of alert_store
       if alert_store_file:match("_alert_store%.lua$") then
+	 if not ntop.isPro() then
+	    if string.find(alert_store_file, "snmp") then
+	       goto continue
+	    end
+	 end
+	    
          local file_info = string.split(alert_store_file, "%.")
          local instance_name = file_info[1]
 
 	 local instance = require(instance_name).new()
 
 	 if instance then
-	    res[#res + 1] = instance
+            local family_name = instance:get_family()
+            -- Note: skip special instances without a family (e.g. 'all')
+            if family_name then
+   	       res[family_name] = instance
+            end
 	 end
+
+	 ::continue::
       end
    end
 

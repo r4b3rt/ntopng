@@ -30,8 +30,6 @@ class Mac;
 
 class HostPools {
  private:
-  Mutex *swap_lock;
-  volatile time_t latest_swap;
   VLANAddressTree *tree, *tree_shadow;
   NetworkInterface *iface;
   u_int16_t max_num_pools;
@@ -77,8 +75,10 @@ class HostPools {
   void reloadPools();
   u_int16_t getPool(Host *h);
   u_int16_t getPool(Mac *m);
+  u_int16_t getPoolByName(const char * const pool_name);
 
-  bool findIpPool(IpAddress *ip, u_int16_t vlan_id, u_int16_t *found_pool, ndpi_patricia_node_t **found_node);
+  bool findIpPool(IpAddress *ip, VLANid vlan_id,
+		  u_int16_t *found_pool, ndpi_patricia_node_t **found_node);
   bool findMacPool(const u_int8_t * const mac, u_int16_t *found_pool);
   bool findMacPool(Mac *mac, u_int16_t *found_pool);
   void lua(lua_State *vm);
@@ -159,7 +159,6 @@ class HostPools {
   inline u_int32_t getPoolSchedule(u_int16_t pool_id) {
     return(((pool_id != NO_HOST_POOL_ID) && (pool_id < max_num_pools)) ? schedule_bitmap[pool_id] : DEFAULT_TIME_SCHEDULE);
   }
-  void addToPool(char *host_or_mac, u_int16_t user_pool_id);
 
   inline bool isChildrenSafePool(u_int16_t pool_id) {
     return((pool_id < max_num_pools) ? children_safe[pool_id] : false);

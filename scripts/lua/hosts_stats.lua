@@ -29,7 +29,7 @@ local function generate_map_url(map, map_url, query, icon)
       local map_available = table.len(map) > 0
 
       if (map_available) then
-         url = "<a class='ml-1' href='"..ntop.getHttpPrefix().."/lua/pro/enterprise/"..map_url.."?" .. query .. "'><i class='".. icon .."'></i></a>"
+         url = "<a class='ms-1' href='"..ntop.getHttpPrefix().."/lua/pro/enterprise/"..map_url.."?" .. query .. "'><i class='".. icon .."'></i></a>"
       end
    end
 
@@ -71,7 +71,7 @@ if ((mode ~= "all") or (not isEmptyString(pool))) then
    hosts_filter = '<span class="fas fa-filter"></span>'
 end
 
-function getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipver_title, os_, country, asninfo, mac, pool_, vlan_title)
+function getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipver_title, os_, country, asninfo, mac, pool_, vlan_title, vlan_alias)
    local mode_label = ""
 
    if mode == "remote" then
@@ -86,6 +86,14 @@ function getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipv
       mode_label = i18n("nedge.network_conf_dhcp")
    end
 
+   if(network == nil) then
+      wheel = ""
+      charts_icon = ""
+   else
+      wheel = '<A HREF="'.. ntop.getHttpPrefix().. '/lua/network_details.lua?network='.. network ..'&page=config' ..'"><i class="fas fa-cog fa-sm"></i></A>'
+      charts_icon = charts_icon.."&nbsp; <a href='".. ntop.getHttpPrefix() .."/lua/network_details.lua?network=".. network .. "&page=historical'><i class='fas fa-sm fa-chart-area'></i></a>"
+   end
+   
    -- Note: we must use the empty string as fallback. Multiple spaces will be collapsed into one automatically.
    return i18n("hosts_stats.hosts_page_title", {
         all = isEmptyString(mode_label) and i18n("hosts_stats.all") or "",
@@ -98,7 +106,10 @@ function getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipv
         ["os"] = discover.getOsName(os_),
         country_asn_or_mac = country or asninfo or mac or pool_ or "",
         vlan = vlan_title or "",
-   }) .. charts_icon
+        vlan_name = vlan_alias or "",
+        charts_icon = charts_icon,
+	wheel = wheel
+   })
 end
 
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
@@ -116,6 +127,7 @@ local country_title = nil
 local mac_title = nil
 local vlan_title = nil
 local pool_title = nil
+local vlan_alias = nil
 
 if((protocol ~= nil) and (protocol ~= "")) then
    protocol_name = interface.getnDPIProtoName(tonumber(protocol))
@@ -157,7 +169,8 @@ if(asn ~= nil) then
    asninfo = " " .. i18n("hosts_stats.asn_title",{asn=asn}) ..
       "<small>&nbsp;<i class='fas fa-info-circle fa-sm' aria-hidden='true'></i> <A HREF='https://stat.ripe.net/AS"..
       asn .. "'><i class='fas fa-external-link-alt fa-sm' title=\\\"".. i18n("hosts_stats.more_info_about_as_popup_msg") ..
-      "\\\"></i></A></small>"
+      "\\\"></i></A> "..charts_icon.."&nbsp; <a href='".. ntop.getHttpPrefix() .."/lua/as_details.lua?asn="..
+      asn .. "&page=historical'><i class='fas fa-sm fa-chart-area'></i></a> </small>"
 end
 
 if(os_ ~= nil) then
@@ -177,7 +190,12 @@ if(vlan ~= nil) then
    local link_service_map = generate_map_url(interface.serviceMap(nil, tonumber(vlan)), "service_map.lua", "vlan=" .. vlan, "fas fa-concierge-bell")
    local link_periodicity_map = generate_map_url(interface.periodicityMap(nil, tonumber(vlan)), "periodicity_map.lua", "vlan=" .. vlan, "fas fa-clock")
 
-   vlan_title = " [".. i18n("hosts_stats.vlan_title", {vlan=vlan}) .."] " .. link_service_map .. " " .. link_periodicity_map
+   vlan_title = " [".. i18n("hosts_stats.vlan_title", {vlan=vlan}) .."] <A HREF='".. ntop.getHttpPrefix().. "/lua/vlan_details.lua?vlan=".. vlan .."&page=config" .."'><i class='fas fa-cog fa-sm'></i></A>" .. link_service_map .. " " .. link_periodicity_map
+   if(vlan==getVlanAlias(vlan)) then
+      vlan_alias=""
+   else
+      vlan_alias = getVlanAlias(vlan)
+   end
 end
 
 if(pool ~= nil) then
@@ -216,23 +234,23 @@ if(pool ~= nil) then
       "</small>"
 end
 
-page_utils.print_page_title(getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipver_title, os_title, country_title, asninfo, mac_title, pool_title, vlan_title))
+page_utils.print_page_title(getPageTitle(protocol_name, traffic_type_title, network_name, cidr, ipver_title, os_title, country_title, asninfo, mac_title, pool_title, vlan_title,vlan_alias))
 
 if (_GET["page"] ~= "historical") then
    if(asn ~= nil) then
       print [[
    <div class='card'><div class='card-header'>
   <ul class="nav nav-tabs card-header-tabs">
-    <li class="nav-item" class="active"><a class="nav-link active" data-toggle="tab" href="#home">]] print(i18n("hosts_stats.hosts")) print[[</a></li>
+    <li class="nav-item" class="active"><a class="nav-link active" data-bs-toggle="tab" href="#home">]] print(i18n("hosts_stats.hosts")) print[[</a></li>
 ]]
 
       if(asn ~= "0") then
 	 print [[
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#asinfo">]] print(i18n("hosts_stats.as_info")) print[[</a></li>
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#aspath">]] print(i18n("hosts_stats.as_path")) print[[</a></li>
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#geoloc">]] print(i18n("hosts_stats.as_geolocation")) print[[</a></li>
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#prefix">]] print(i18n("hosts_stats.as_prefixes")) print[[</a></li>
-    <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#bgp">]] print(i18n("hosts_stats.bgp_updates")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#asinfo">]] print(i18n("hosts_stats.as_info")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#aspath">]] print(i18n("hosts_stats.as_path")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#geoloc">]] print(i18n("hosts_stats.as_geolocation")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#prefix">]] print(i18n("hosts_stats.as_prefixes")) print[[</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#bgp">]] print(i18n("hosts_stats.bgp_updates")) print[[</a></li>
 ]]
       end
    end
@@ -371,7 +389,7 @@ if (_GET["page"] ~= "historical") then
    -- table.clone needed to modify some parameters while keeping the original unchanged
    local hosts_filter_params = table.clone(page_params)
 
-   print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-toggle="dropdown">'..i18n("hosts_stats.filter_hosts")..hosts_filter..'<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" style="min-width: 90px;"><li"><a class="dropdown-item" href="')
+   print(', \'<div class="btn-group"><button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">'..i18n("hosts_stats.filter_hosts")..hosts_filter..'<span class="caret"></span></button> <ul class="dropdown-menu scrollable-dropdown" role="menu" style="min-width: 90px;"><li"><a class="dropdown-item" href="')
 
    hosts_filter_params.mode = nil
    hosts_filter_params.pool = nil
@@ -644,7 +662,7 @@ print[[
          loaded_widgets[widget] = true;
       }
 
-      $('a[data-toggle="tab"]').on('shown.bs.tab', function (e) {
+      $('a[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
          var target = $(e.target).attr("href") // activated tab
          load_widget(target);
       });

@@ -27,12 +27,12 @@
 class NedgeBlockedFlowAlert : public FlowAlert {
  public:
   static FlowAlertType getClassType() { return { flow_alert_flow_blocked, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_WARNING; };
 
- NedgeBlockedFlowAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ NedgeBlockedFlowAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~NedgeBlockedFlowAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_flow_blocked"); }
 };
 
 #endif /* _NEDGE_BLOCKED_FLOW_ALERT_H_ */

@@ -127,9 +127,9 @@ if auth.has_capability(auth.capabilities.preferences) then
    prefs = ntop.getPrefs()
 
    if not isEmptyString(message_info) then
-      print[[<div class="alert ]] print(message_severity) print[[" role="alert">]]
-      print[[<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>]]
+      print[[<div class="alert alert-dismissable ]] print(message_severity) print[[" role="alert">]]
       print(message_info)
+      print[[<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>]]
       print[[</div>]]
    end
 
@@ -172,7 +172,7 @@ function printInterfaces()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.zmq_interfaces")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.zmq_interfaces")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["ignored_interfaces"].title,
 		       subpage_active.entries["ignored_interfaces"].description,
@@ -202,78 +202,59 @@ end
 -- ================================================================================
 
 function printAlerts()
-  print('<form method="post">')
-  print('<table class="table">')
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("show_alerts.alerts")..'</th></tr></thead>')
+   print('<form method="post">')
+   print('<table class="table">')
+   print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("show_alerts.alerts")..'</th></tr></thead>')
 
- if ntop.getPref("ntopng.prefs.disable_alerts_generation") == "1" then
-      showElements = true
-  else
+   local elementToSwitch = {
+      "row_toggle_emit_flow_alerts", "row_toggle_emit_host_alerts",
+      "max_entity_alerts",
+      "max_num_secs_before_delete_alert",
+   }
+
+   prefsToggleButton(subpage_active, {
+			field = "disable_alerts_generation",
+			default = "0",
+			to_switch = elementToSwitch,
+			on_value = "0",     -- On  means alerts enabled and thus disable_alerts_generation == 0
+			off_value = "1",    -- Off for enabled alerts implies 1 for disable_alerts_generation
+   })
+
+   if ntop.getPref("ntopng.prefs.disable_alerts_generation") == "1" then
       showElements = false
-  end
+   else
+      showElements = true
+   end
 
- local elementToSwitch = { "dont_emit_flow_alerts", "max_entity_alerts", 
-			   "row_alerts_retention_header", "row_alerts_settings_header", "row_alerts_security_header",
-			   "row_alerts_informative_header",
-			   "row_toggle_device_first_seen_alert", "row_toggle_device_activation_alert", "row_toggle_pool_activation_alert", "row_toggle_quota_exceeded_alert",
-			}
+   prefsToggleButton(subpage_active, {
+			field = "toggle_emit_flow_alerts",
+			default = "1",
+			pref = "emit_flow_alerts",
+			on_value = "1",     -- On  flow alerts are generated
+			off_value = "0",    -- Off NO flow alerts are generated
+			hidden = not showElements,
+   })
 
- if not subpage_active.entries["toggle_mysql_check_open_files_limit"].hidden then
-    elementToSwitch[#elementToSwitch+1] = "row_toggle_mysql_check_open_files_limit"
-  end
+   prefsToggleButton(subpage_active, {
+			field = "toggle_emit_host_alerts",
+			default = "1",
+			pref = "emit_host_alerts",
+			on_value = "1",     -- On  alerts are generated
+			off_value = "0",    -- Off NO alerts are generated
+			hidden = not showElements,
+   })
 
-  prefsToggleButton(subpage_active, {
-    field = "disable_alerts_generation",
-    default = "0",
-    to_switch = elementToSwitch,
-    on_value = "0",     -- On  means alerts enabled and thus disable_alerts_generation == 0
-    off_value = "1",    -- Off for enabled alerts implies 1 for disable_alerts_generation
-  })
+   prefsInputFieldPrefs(subpage_active.entries["max_entity_alerts"].title, subpage_active.entries["max_entity_alerts"].description,
+			"ntopng.prefs.", "max_entity_alerts", prefs.max_entity_alerts, "number", showElements, false, nil, {min=1, --[[ TODO check min/max ]]})
 
-  if ntop.getPrefs().are_alerts_enabled == true then
-     showElements = true
-  else
-     showElements = false
-  end
+   prefsInputFieldPrefs(subpage_active.entries["max_num_secs_before_delete_alert"].title, subpage_active.entries["max_num_secs_before_delete_alert"].description,
+			"ntopng.prefs.", "max_num_secs_before_delete_alert", prefs.max_num_secs_before_delete_alert, "number", showElements, false, nil, {min=1, tformat="d"--[[ TODO check min/max ]]})
 
-  prefsToggleButton(subpage_active, {
-    field = "toggle_mysql_check_open_files_limit",
-    default = "1",
-    pref = "alerts.mysql_check_open_files_limit",
-    hidden = not showElements or subpage_active.entries["toggle_mysql_check_open_files_limit"].hidden,
-  })
-
-  print('<thead class="thead-light"><tr id="row_alerts_retention_header" ')
-  if (showElements == false) then print(' style="display:none;"') end
-  print('><th colspan=2 class="info">'..i18n("prefs.alerts_retention")..'</th></tr></thead>')
-
-  prefsToggleButton(subpage_active, {
-    field = "toggle_emit_flow_alerts",
-    default = "1",
-    pref = "emit_flow_alerts",
-    on_value = "1",     -- On  flow alerts are generated
-    off_value = "0",    -- Off NO flow alerts are generated
-  })
-
-  prefsToggleButton(subpage_active, {
-    field = "toggle_emit_host_alerts",
-    default = "1",
-    pref = "emit_host_alerts",
-    on_value = "1",     -- On  alerts are generated
-    off_value = "0",    -- Off NO alerts are generated
-  })
-
-  prefsInputFieldPrefs(subpage_active.entries["max_entity_alerts"].title, subpage_active.entries["max_entity_alerts"].description,
-		       "ntopng.prefs.", "max_entity_alerts", prefs.max_entity_alerts, "number", showElements, false, nil, {min=1, --[[ TODO check min/max ]]})
-  
-  prefsInputFieldPrefs(subpage_active.entries["max_num_secs_before_delete_alert"].title, subpage_active.entries["max_num_secs_before_delete_alert"].description,
-        "ntopng.prefs.", "max_num_secs_before_delete_alert", prefs.max_num_secs_before_delete_alert, "number", showElements, false, nil, {min=1, tformat="d"--[[ TODO check min/max ]]})
-
-  print('<tr><th colspan=2 style="text-align:right;">')
-  print('<button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button>')
-  print('</th></tr>')
-  print('</table>')
-  print [[<input name="csrf" type="hidden" value="]] print(ntop.getRandomCSRFValue()) print [[" />
+   print('<tr><th colspan=2 style="text-align:right;">')
+   print('<button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button>')
+   print('</th></tr>')
+   print('</table>')
+   print [[<input name="csrf" type="hidden" value="]] print(ntop.getRandomCSRFValue()) print [[" />
   </form>
   ]]
 end
@@ -285,7 +266,7 @@ function printProtocolPrefs()
 
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">HTTP / TLS / QUIC / DNS</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">HTTP / TLS / QUIC / DNS</th></tr></thead>')
 
   prefsToggleButton(subpage_active, {
     field = "toggle_top_sites",
@@ -315,7 +296,7 @@ function printNetworkDiscovery()
    print('<form method="post">')
    print('<table class="table">')
 
-   print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.network_discovery")..'</th></tr></thead>')
+   print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.network_discovery")..'</th></tr></thead>')
 
    local elementToSwitch = {"network_discovery_interval"}
 
@@ -355,7 +336,7 @@ function printTelemetry()
    print('<form method="post">')
    print('<table class="table">')
 
-   print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.telemetry")..'</th></tr></thead>')
+   print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.telemetry")..'</th></tr></thead>')
 
    local t_labels = {i18n("prefs.telemetry_do_not_contribute")..' <i class="fas fa-frown-o"></i>',
 		     i18n("prefs.telemetry_contribute")..' <i class="fas fa-heart"></i>'}
@@ -394,7 +375,7 @@ function printRecording()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.license")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.license")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["n2disk_license"].title, subpage_active.entries["n2disk_license"].description
       ..i18n("prefs.n2disk_license_description_enterprise_l").."<br>"
@@ -405,7 +386,7 @@ function printRecording()
     false, nil, nil, nil, {style={width="25em;"}, min = 50, max = 64,
     pattern = getLicensePattern(), disabled = ntop.isEnterpriseL() })
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("traffic_recording.settings")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("traffic_recording.settings")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["max_extracted_pcap_bytes"].title,
      subpage_active.entries["max_extracted_pcap_bytes"].description,
@@ -426,7 +407,7 @@ function printDataRetention()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.data_retention")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.data_retention")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["data_retention"].title,
 		       subpage_active.entries["data_retention"].description,
@@ -444,7 +425,7 @@ function printGUI()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.web_user_interface")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.web_user_interface")..'</th></tr></thead>')
 
   if prefs.is_autologout_enabled == true then
     prefsToggleButton(subpage_active, {
@@ -463,7 +444,7 @@ function printGUI()
   multipleTableButtonPrefs(subpage_active.entries[label].title,
 			   subpage_active.entries[label].description,
 			   t_labels, t_values, "default", "primary",
-			   label, "ntopng.prefs.theme")
+			   label, "ntopng.user." .. _SESSION["user"] .. ".theme")
 
   -- ######################
 
@@ -490,7 +471,7 @@ function printMisc()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.report")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.report")..'</th></tr></thead>')
 
   local t_labels = {i18n("bytes"), i18n("packets")}
   local t_values = {"bps", "pps"}
@@ -515,8 +496,8 @@ function printMisc()
 
   -- ######################
 
-  if(haveAdminPrivileges()) then
-     print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("hosts")..'</th></tr></thead>')
+  if(isAdministratorOrPrintErr()) then
+     print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("hosts")..'</th></tr></thead>')
 
      local h_labels = {i18n("prefs.no_host_mask"), i18n("prefs.local_host_mask"), i18n("prefs.remote_host_mask")}
      local h_values = {"0", "1", "2"}
@@ -525,6 +506,15 @@ function printMisc()
 			      subpage_active.entries["toggle_host_mask"].description,
 			      h_labels, h_values, "0", "primary", "toggle_host_mask", "ntopng.prefs.host_mask")
   end
+
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.flow_table")..'</th></tr></thead>')
+
+  local h_labels = {i18n("prefs.duration"), i18n("prefs.last_seen")}
+  local h_values = {"0", "1"}
+
+  multipleTableButtonPrefs(subpage_active.entries["flow_table_time"].title,
+          subpage_active.entries["flow_table_time"].description,
+          h_labels, h_values, "0", "primary", "flow_table_time", "ntopng.prefs.flow_table_time")
 
   print('<tr><th colspan=2 style="text-align:right;"><button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button></th></tr>')
   print('</table>')
@@ -538,7 +528,7 @@ function printUpdates()
   print('<form method="post">')
   print('<table class="table">')
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.updates")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.updates")..'</th></tr></thead>')
     prefsToggleButton(subpage_active, {
       field = "toggle_autoupdates",
       default = "0",
@@ -557,7 +547,7 @@ end
 -- ================================================================================
 
 local function printAuthDuration()
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.authentication_duration")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.authentication_duration")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["authentication_duration"].title, subpage_active.entries["authentication_duration"].description,
 		       "ntopng.prefs.","auth_session_duration",
@@ -578,7 +568,7 @@ end
 local function printLdapAuth()
   if not ntop.isPro() then return end
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.ldap_authentication")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.ldap_authentication")..'</th></tr></thead>')
 
   local elementToSwitch = {"row_multiple_ldap_account_type", "row_toggle_ldap_anonymous_bind","server","bind_dn", "bind_pwd", "ldap_server_address", "search_path", "user_group", "admin_group", "row_toggle_ldap_referrals"}
 
@@ -652,7 +642,7 @@ local function printRadiusAuth()
     return
   end
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.radius_auth")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.radius_auth")..'</th></tr></thead>')
 
   local elementToSwitch = {"radius_server_address", "radius_secret", "radius_admin_group"}
 
@@ -682,7 +672,7 @@ end
 -- #####################
 
 local function printHttpAuth()
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.http_auth")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.http_auth")..'</th></tr></thead>')
 
   local elementToSwitch = {"http_auth_url"}
 
@@ -703,7 +693,7 @@ end
 -- #####################
 
 local function printLocalAuth()
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.local_auth")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.local_auth")..'</th></tr></thead>')
 
   prefsToggleButton(subpage_active, {
 	      field = auth_toggles["local"],
@@ -723,7 +713,7 @@ function printAuthentication()
   printAuthDuration()
 
   -- Note: order must correspond to evaluation order in Ntop.cpp
-  print('<thead class="thead-light"><tr><th class="info" colspan="2">'..i18n("prefs.client_x509_auth")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th class="info" colspan="2">'..i18n("prefs.client_x509_auth")..'</th></tr></thead>')
   prefsToggleButton(subpage_active,{
 	field = "toggle_client_x509_auth",
 	default = "0",
@@ -772,13 +762,14 @@ function printNetworkBehaviour()
 
    -- ######################
 
-   print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.behaviour")..'</th></tr></thead>')
-
+   print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.traffic_behaviour")..'</th></tr></thead>')
+   -- Behavior analysis for asn, network and l7proto (iface)
+ 
    prefsToggleButton(subpage_active, {
 			field = "toggle_behaviour_analysis",
 			default = "0",
 			pref = "is_behaviour_analysis_enabled", -- redis preference
-			to_switch = {"learning-status-thead", "behaviour_analysis_learning_period", "row_behaviour_analysis_learning_status_during_learning", "row_behaviour_analysis_learning_status_post_learning", "iec60870_learning_period"},
+			to_switch = {"learning-status-thead", "behaviour_analysis_learning_period", "row_behaviour_analysis_learning_status_during_learning", "row_behaviour_analysis_learning_status_post_learning"},
    })
 
    local is_behaviour_analysis_enabled = ntop.getPref("ntopng.prefs.is_behaviour_analysis_enabled") == "1"
@@ -836,14 +827,14 @@ function printInMemory()
   print('<form id="localRemoteTimeoutForm" method="post">')
 
   print('<table class="table">')
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.stats_reset")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.stats_reset")..'</th></tr></thead>')
   prefsToggleButton(subpage_active, {
     field = "toggle_midnight_stats_reset",
     default = "0",
     pref = "midnight_stats_reset_enabled",
   })
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.local_hosts_cache_settings")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.local_hosts_cache_settings")..'</th></tr></thead>')
 
   prefsToggleButton(subpage_active, {
     field = "toggle_local_host_cache_enabled",
@@ -889,7 +880,7 @@ function printInMemory()
   print('</table>')
 
   print('<table class="table">')
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.idle_timeout_settings")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.idle_timeout_settings")..'</th></tr></thead>')
 
   prefsInputFieldPrefs(subpage_active.entries["local_host_max_idle"].title, subpage_active.entries["local_host_max_idle"].description,
 		       "ntopng.prefs.","local_host_max_idle", prefs.local_host_max_idle, "number", nil, nil, nil,
@@ -955,7 +946,7 @@ function printStatsTimeseries()
   local force_rrd = false --ntop.isWindows()
 
   if not force_rrd then
-    print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.timeseries_database')..'</th></tr></thead>')
+    print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.timeseries_database')..'</th></tr></thead>')
   end
 
   local elementToSwitch = {"ts_post_data_url", "influx_dbname", "influx_retention", "row_toggle_influx_auth", "influx_username", "influx_password", "row_ts_high_resolution"}
@@ -1044,7 +1035,7 @@ function printStatsTimeseries()
   prefsInputFieldPrefs(subpage_active.entries["influxdb_query_timeout"].title, subpage_active.entries["influxdb_query_timeout"].description,
             "ntopng.prefs.", "influx_query_timeout", "10", "number", influx_active, nil, nil, {min=1})
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.interfaces_timeseries')..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.interfaces_timeseries')..'</th></tr></thead>')
 
   -- TODO: make also per-category interface RRDs
   local l7_rrd_labels = {i18n("prefs.none"),
@@ -1079,7 +1070,7 @@ function printStatsTimeseries()
 				    elementToSwitch, showElementArray, nil, showElement)
 
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.local_hosts_timeseries')..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.local_hosts_timeseries')..'</th></tr></thead>')
 
   local hosts_rrd_labels = {i18n("off"), i18n("light"), i18n("full")}
   local hosts_rrd_values = {"off", "light", "full"}
@@ -1114,7 +1105,7 @@ function printStatsTimeseries()
 				    "ntopng.prefs.host_ndpi_timeseries_creation", nil,
 				    elementToSwitch, showElementArray, nil, show_host_l7)
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.l2_devices_timeseries')..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.l2_devices_timeseries')..'</th></tr></thead>')
 
   prefsToggleButton(subpage_active, {
     field = "toggle_l2_devices_traffic_rrd_creation",
@@ -1139,7 +1130,15 @@ function printStatsTimeseries()
 				    "ntopng.prefs.l2_device_ndpi_timeseries_creation", nil,
 				    elementToSwitch, showElementArray, nil, showElement)
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.system_probes_timeseries')..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.observation_points')..'</th></tr></thead>')
+
+  prefsToggleButton(subpage_active, {
+    field = "toggle_observation_points_rrd_creation",
+    default = "0",
+    pref = "observation_points_rrd_creation",
+  })
+
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.system_probes_timeseries')..'</th></tr></thead>')
 
   prefsToggleButton(subpage_active, {
     field = "toggle_system_probes_timeseries",
@@ -1147,7 +1146,7 @@ function printStatsTimeseries()
     pref = "system_probes_timeseries",
   })
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n('prefs.other_timeseries')..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n('prefs.other_timeseries')..'</th></tr></thead>')
 
   if ntop.isPro() then
     prefsToggleButton(subpage_active, {
@@ -1210,13 +1209,13 @@ function printStatsTimeseries()
 
   print('<table class="table">')
 if show_advanced_prefs and false --[[ hide these settings for now ]] then
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">Network Interface Timeseries</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">Network Interface Timeseries</th></tr></thead>')
   prefsInputFieldPrefs("Days for raw stats", "Number of days for which raw stats are kept. Default: 1.", "ntopng.prefs.", "intf_rrd_raw_days", prefs.intf_rrd_raw_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
   prefsInputFieldPrefs("Days for 1 min resolution stats", "Number of days for which stats are kept in 1 min resolution. Default: 30.", "ntopng.prefs.", "intf_rrd_1min_days", prefs.intf_rrd_1min_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
   prefsInputFieldPrefs("Days for 1 hour resolution stats", "Number of days for which stats are kept in 1 hour resolution. Default: 100.", "ntopng.prefs.", "intf_rrd_1h_days", prefs.intf_rrd_1h_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
   prefsInputFieldPrefs("Days for 1 day resolution stats", "Number of days for which stats are kept in 1 day resolution. Default: 365.", "ntopng.prefs.", "intf_rrd_1d_days", prefs.intf_rrd_1d_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
 
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">Protocol/Networks Timeseries</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">Protocol/Networks Timeseries</th></tr></thead>')
   prefsInputFieldPrefs("Days for raw stats", "Number of days for which raw stats are kept. Default: 1.", "ntopng.prefs.", "other_rrd_raw_days", prefs.other_rrd_raw_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
   --prefsInputFieldPrefs("Days for 1 min resolution stats", "Number of days for which stats are kept in 1 min resolution. Default: 30.", "ntopng.prefs.", "other_rrd_1min_days", prefs.other_rrd_1min_days)
   prefsInputFieldPrefs("Days for 1 hour resolution stats", "Number of days for which stats are kept in 1 hour resolution. Default: 100.", "ntopng.prefs.", "other_rrd_1h_days", prefs.other_rrd_1h_days, "number", nil, nil, nil, {min=1, max=365*5, --[[ TODO check min/max ]]})
@@ -1235,7 +1234,7 @@ function printLogging()
   if prefs.has_cmdl_trace_lvl then return end
   print('<form method="post">')
   print('<table class="table">')
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.logging")..'</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.logging")..'</th></tr></thead>')
 
   loggingSelector(subpage_active.entries["toggle_logging_level"].title,
      subpage_active.entries["toggle_logging_level"].description,
@@ -1271,7 +1270,7 @@ function printSnmp()
 
   print('<form method="post">')
   print('<table class="table">')
-  print('<thead class="thead-light"><tr><th colspan=2 class="info">SNMP</th></tr></thead>')
+  print('<thead class="table-primary"><tr><th colspan=2 class="info">SNMP</th></tr></thead>')
   local disabled = not info["version.enterprise_edition"]
 
   prefsToggleButton(subpage_active, {
@@ -1317,7 +1316,7 @@ end
 function printDumpSettings()
    print('<form method="post">')
    print('<table class="table">')
-   print('<thead class="thead-light"><tr><th colspan=2 class="info">'..i18n("prefs.flows_dump")..'</th></tr></thead>')
+   print('<thead class="table-primary"><tr><th colspan=2 class="info">'..i18n("prefs.flows_dump")..'</th></tr></thead>')
 
    prefsToggleButton(subpage_active, {
     field = "toggle_enable_runtime_flows_dump",
@@ -1423,7 +1422,7 @@ print([[
            </div>
 ]])
 print[[
-        </td><td colspan=2 style="padding-left: 14px;border-left-style: groove; border-width:1px; border-color: #e0e0e0;">]]
+        </td><td colspan=2>]]
 
 if(tab == "report") then
    printReportVisualization()
@@ -1510,4 +1509,4 @@ aysHandleForm("form", {
 $("form[id!='search-host-form']").validator({disable:true});
 </script>]])
 
-end --[[ haveAdminPrivileges ]]
+end --[[ isAdministratorOrPrintErr ]]

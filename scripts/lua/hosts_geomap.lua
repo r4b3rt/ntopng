@@ -29,10 +29,8 @@ if (num > 0) then
   page_utils.print_page_title(i18n("geo_map.hosts_geomap"))
   print([[
           <div id='geomap-alert' style="display: none" role="alert" class='alert alert-danger'>
-            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-              <span aria-hidden="true">&times;</span>
-            </button>
             <span id='error-message'></span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
           </div>
           <div class="d-flex justify-content-center align-items-center" style="height: 720px" id="map-canvas">
               <div class="spinner-border text-primary" role="status">
@@ -66,9 +64,8 @@ if (num > 0) then
     </script>
     <script src="]].. ntop.getHttpPrefix() ..[[/js/osm-maps.js?]].. ntop.getStaticFileEpoch() ..[[" type='text/javascript'></script>
   ]])
-
 else
-   print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> " .. i18n("no_results_found") .. "</div>")
+   print("<div class=\"alert alert-danger\">".. "<i class='fas fa-exclamation-triangle fa-lg' style='color: #B94A48;'></i> " .. i18n("no_results_found") .. "</div>")
 end
 
 dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")

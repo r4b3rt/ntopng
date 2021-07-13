@@ -26,13 +26,16 @@
 
 class FlowRiskTLSSuspiciousESNIUsageAlert : public FlowRiskTLSAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_TLS_SUSPICIOUS_ESNI_USAGE; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_tls_suspicious_esni_usage, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskTLSSuspiciousESNIUsageAlert(FlowCallback *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
+ FlowRiskTLSSuspiciousESNIUsageAlert(FlowCheck *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
   ~FlowRiskTLSSuspiciousESNIUsageAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_tls_suspicious_esni_usage"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_TLS_SUSPICIOUS_ESNI_USAGE_ALERT_H_ */

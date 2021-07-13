@@ -48,8 +48,8 @@
 #define	ETHERTYPE_ARP		0x0806	/* Address Resolution Protocol */
 #endif
 
-#ifndef ETHERTYPE_PPOE
-#define ETHERTYPE_PPOE          0x8864
+#ifndef ETHERTYPE_PPPoE
+#define ETHERTYPE_PPPoE         0x8864
 #endif
 
 #ifndef IPPROTO_ICMPV6
@@ -190,7 +190,7 @@
 #define MIN_NUM_VISITED_ENTRIES  1024
 #define MAX_NUM_QUEUED_ADDRS    500 /* Maximum number of queued address for resolution */
 #define MAX_NUM_QUEUED_CONTACTS 25000
-#define NTOP_COPYRIGHT          "(C) 1998-20 ntop.org"
+#define NTOP_COPYRIGHT          "(C) 1998-21 ntop.org"
 #define DEFAULT_PID_PATH        "/var/run/ntopng.pid"
 #define SYSTEM_INTERFACE_NAME   "__system__"
 #define SYSTEM_INTERFACE_ID     -1
@@ -210,6 +210,10 @@
 #define TRAFFIC_FILTERING_TO_RESOLVE       "ntopng.trafficfiltering.toresolve"
 #define PREFS_CHANGED            "ntopng.cache.prefs_changed"
 #define DROP_HOST_TRAFFIC        "ntopng.prefs.drop_host_traffic"
+#define DROP_HOST_POOL_NAME      "Jailed hosts pool"
+#define DROP_HOST_POOL_LIST      "ntopng.cache.drop_host_list"
+#define DROP_TMP_ADD_HOST_LIST   "ntopng.cache.tmp_add_host_list"
+#define DROP_HOST_POOL_EXPIRATION_TIME    1800 /*  30 m */
 #define HOST_TRAFFIC_QUOTA       "ntopng.prefs.hosts_quota"
 #define HTTP_ACL_MANAGEMENT_PORT "ntopng.prefs.http_acl_management_port"
 #define TEMP_ADMIN_PASSWORD      "ntopng.prefs.temp_admin_password"
@@ -258,8 +262,10 @@
 #define CONST_STR_NTOPNG_KEY           "ntopng.key"
 #define CONST_STR_PRODUCT_NAME_KEY     "ntopng.product_name"
 #define CONST_STR_USER_GROUP           NTOPNG_USER_PREFIX".%s.group"
+#define CONST_STR_USER_ID              NTOPNG_USER_PREFIX".%s.user_id"
 #define CONST_STR_USER_FULL_NAME       NTOPNG_USER_PREFIX".%s.full_name"
 #define CONST_STR_USER_PASSWORD        NTOPNG_USER_PREFIX".%s.password"
+#define CONST_STR_USER_THEME           NTOPNG_USER_PREFIX".%s.theme"
 #define CONST_STR_USER_NETS            NTOPNG_USER_PREFIX".%s.allowed_nets"
 #define CONST_STR_USER_ALLOWED_IFNAME  NTOPNG_USER_PREFIX".%s.allowed_ifname"
 #define CONST_STR_USER_HOST_POOL_ID    NTOPNG_USER_PREFIX".%s.host_pool_id"
@@ -304,11 +310,18 @@
 #define CONST_EST_MAX_FLOWS            200000
 #define CONST_EST_MAX_HOSTS            200000
 #define MIN_HOST_RESOLUTION_FREQUENCY  60  /* 1 min */
+#define NDPI_TRAFFIC_BEHAVIOR_REFRESH  60  /* 1 min */
 #define HOST_SITES_REFRESH             300 /* 5 min */
+#define IFACE_BEHAVIOR_REFRESH         300 /* 5 min */
+#define ASES_BEHAVIOR_REFRESH          300 /* 5 min */
+#define NETWORK_BEHAVIOR_REFRESH       300 /* 5 min */
 #define TRAFFIC_MAP_REFRESH            30  /* 30 sec */
 #define HOST_SITES_TOP_NUMBER          10
 #define HOST_MAX_SERIALIZED_LEN        1048576 /* 1MB, use only when allocating memory in the heap */
-#define POOL_MAX_SERIALIZED_LEN        32768 /* bytes */
+#define POOL_MAX_SERIALIZED_LEN        32768   /* bytes */
+#define POOL_MAX_NAME_LEN              33      /* Characters */
+#define HOST_MAX_SCORE                 500
+#define FLOW_MAX_SCORE_BREAKDOWN       8 /* Maximum number of alerts for the flow score breadkown. Additional alerts will fall under 'other' */
 
 #define CONST_MAX_NUM_NETWORKS         255
 #define CONST_MAX_NUM_CHECKPOINTS      4
@@ -497,23 +510,25 @@
 #define CONST_DEFAULT_INSTALL_DIR    (DATA_DIR "/ntopng")
 #if defined(__FreeBSD__)
 #define CONST_BIN_DIR                "/usr/local/bin"
-#define CONST_ALT_INSTALL_DIR        "/usr/local/share/ntopng"
-#define CONST_ALT2_INSTALL_DIR       "/usr/share/ntopng"
+#define CONST_SHARE_DIR              "/usr/local/share"
+#define CONST_SHARE_DIR_2            "/usr/share"
 #define CONST_ETC_DIR                "/usr/local/etc"
 #define CONST_DEFAULT_DATA_DIR       "/var/db/ntopng"
 #else
 #define CONST_BIN_DIR                "/usr/bin"
-#define CONST_ALT_INSTALL_DIR        "/usr/share/ntopng"
-#define CONST_ALT2_INSTALL_DIR       "/usr/local/share/ntopng"
+#define CONST_SHARE_DIR              "/usr/share"
+#define CONST_SHARE_DIR_2            "/usr/local/share"
 #define CONST_ETC_DIR                "/etc"
 #define CONST_DEFAULT_DATA_DIR       "/var/lib/ntopng"
 #endif
+#define CONST_ALT_INSTALL_DIR        CONST_SHARE_DIR   "/ntopng"
+#define CONST_ALT2_INSTALL_DIR       CONST_SHARE_DIR_2 "/usr/share/ntopng"
 #define CONST_HTTP_PREFIX_STRING     "@HTTP_PREFIX@"
 #define CONST_NTOP_STARTUP_EPOCH     "@NTOP_STARTUP_EPOCH@"
 #define CONST_NTOP_PRODUCT_NAME      "@NTOP_PRODUCT_NAME@"
 #define CONST_OLD_DEFAULT_NTOP_USER  "nobody"
 #define CONST_DEFAULT_NTOP_USER      "ntopng"
-#define CONST_TOO_EARLY              "(Too Early)"
+#define CONST_TOO_EARLY              "TooEarly"
 
 #define CONST_LUA_OK                  1
 #define CONST_LUA_ERROR               0
@@ -560,6 +575,7 @@
 #define CONST_PREFS_ENABLE_ACCESS_LOG      NTOPNG_PREFS_PREFIX".enable_access_log"
 #define CONST_PREFS_ENABLE_SQL_LOG         NTOPNG_PREFS_PREFIX".enable_sql_log"
 #define CONST_TOP_TALKERS_ENABLED          NTOPNG_PREFS_PREFIX".host_top_sites_creation"
+#define CONST_FLOW_TABLE_TIME              NTOPNG_PREFS_PREFIX".flow_table_time"
 #define CONST_MIRRORED_TRAFFIC_PREFS       NTOPNG_PREFS_PREFIX".ifid_%d.is_traffic_mirrored"
 #define CONST_SHOW_DYN_IFACE_TRAFFIC_PREFS NTOPNG_PREFS_PREFIX".ifid_%d.show_dynamic_interface_traffic"
 #define CONST_DISABLED_FLOW_DUMP_PREFS     NTOPNG_PREFS_PREFIX".ifid_%d.is_flow_dump_disabled"
@@ -607,6 +623,10 @@
 #define CONST_PREFS_EMIT_FLOW_ALERTS        NTOPNG_PREFS_PREFIX".emit_flow_alerts"
 #define CONST_PREFS_EMIT_HOST_ALERTS        NTOPNG_PREFS_PREFIX".emit_host_alerts"
 
+
+#define CONST_PREFS_ASN_BEHAVIOR_ANALYSIS              NTOPNG_PREFS_PREFIX".is_asn_behavior_analysis_enabled"
+#define CONST_PREFS_NETWORK_BEHAVIOR_ANALYSIS          NTOPNG_PREFS_PREFIX".is_network_behavior_analysis_enabled"
+#define CONST_PREFS_IFACE_L7_BEHAVIOR_ANALYSIS         NTOPNG_PREFS_PREFIX".is_iface_l7_behavior_analysis_enabled"
 #define CONST_PREFS_BEHAVIOUR_ANALYSIS                  NTOPNG_PREFS_PREFIX".is_behaviour_analysis_enabled"
 #define CONST_PREFS_BEHAVIOUR_ANALYSIS_LEARNING_PERIOD  NTOPNG_PREFS_PREFIX".behaviour_analysis_learning_period"
 #define CONST_PREFS_BEHAVIOUR_ANALYSIS_STATUS_DURING_LEARNING  NTOPNG_PREFS_PREFIX".behaviour_analysis_learning_status_during_learning"
@@ -877,7 +897,7 @@
 #define STATS_MANAGER_STORE_NAME             "top_talkers.db"
 
 #define ALERTS_STORE_SCHEMA_FILE_NAME        "alert_store_schema.sql"
-#define ALERTS_STORE_DB_FILE_NAME            "alert_store_v03.db"
+#define ALERTS_STORE_DB_FILE_NAME            "alert_store_v11.db"
 
 #define NTOPNG_DATASOURCE_KEY                "ntopng.datasources"
 #define NTOPNG_DATASOURCE_URL                "/datasources/"
@@ -897,14 +917,13 @@
 #define SECOND_SCRIPT_PATH                   "second.lua"
 #define MINUTE_SCRIPT_PATH                   "minute.lua"
 #define STATS_UPDATE_SCRIPT_PATH             "stats_update.lua"
-#define PERIODIC_USER_SCRIPTS_PATH           "periodic_user_scripts.lua"
+#define PERIODIC_CHECKS_PATH           "periodic_checks.lua"
 #define THIRTY_SECONDS_SCRIPT_PATH           "30sec.lua"
 #define FIVE_MINUTES_SCRIPT_PATH             "5min.lua"
 #define HOURLY_SCRIPT_PATH                   "hourly.lua"
 #define DAILY_SCRIPT_PATH                    "daily.lua"
 
-#define CALLBACKS_CONFIG                     "ntopng.prefs.user_scripts.configset_v3"  /* Sync with user_scripts.lua CONFIGSET_KEY  */
-#define ALERTS_CONFIG                        "ntopng.prefs.alerts_config.configset_v3" /* Sync with alerts_config.lua CONFIGSET_KEY */
+#define CHECKS_CONFIG                        "ntopng.prefs.checks.configset_v1"  /* Sync with checks.lua CONFIGSET_KEY  */
 #define SYSLOG_SCRIPT_PATH                   "callbacks/system/syslog.lua"
 #define SYSLOG_SCRIPT_CALLBACK_EVENT         "handleEvent"
 
@@ -925,12 +944,14 @@
 
 #define HOST_LOW_GOODPUT_THRESHOLD  25 /* No more than X low goodput flows per host */
 
+#define NTOP_MAX_NUM_USERS          63 /* Maximum number of ntopng users */
 #define NTOP_USERNAME_MAXLEN        33 /* NOTE: do not change, is this bound to mg_md5 ? */
 #define NTOP_GROUP_MAXLEN           33
 #define NTOP_SESSION_ID_LENGTH      33
 #define NTOP_CSRF_TOKEN_LENGTH      33
 #define NTOP_CSRF_TOKEN_NO_SESSION  "CSRF_TOKEN_NO_SESSION"
 #define NTOP_UNKNOWN_GROUP "unknown"
+#define PREF_NTOP_USER_IDS            NTOPNG_PREFS_PREFIX".user_ids"
 #define PREF_NTOP_LDAP_AUTH           NTOPNG_PREFS_PREFIX".ldap.auth_enabled"
 #define PREF_LDAP_ACCOUNT_TYPE        NTOPNG_PREFS_PREFIX".ldap.account_type"
 #define PREF_LDAP_SERVER              NTOPNG_PREFS_PREFIX".ldap.ldap_server_address"
@@ -1028,7 +1049,8 @@
 #define MARKER_PASS                     1
 #define MARKER_DROP                     2
 
-#define NO_HOST_POOL_ID                 0
+#define NO_HOST_POOL_ID                 0          /* Keep in sync with pools.lua pools.DEFAULT_POOL_ID   */
+#define DEFAULT_POOL_NAME               "Default"  /* Keep in sync with pools.lua pools.DEFAULT_POOL_NAME */
 
 extern struct ntopngLuaContext* getUserdata(struct lua_State *vm);
 #define getLuaVMContext(a)      (a ? getUserdata(a) : NULL)
@@ -1064,8 +1086,8 @@ extern struct ntopngLuaContext* getUserdata(struct lua_State *vm);
 /*
   Queue lengths for user-script queues
  */
-#define MAX_FLOW_CALLBACKS_QUEUE_LEN       131072
-#define MAX_HOST_CALLBACKS_QUEUE_LEN       131072
+#define MAX_FLOW_CHECKS_QUEUE_LEN       131072
+#define MAX_HOST_CHECKS_QUEUE_LEN       131072
 
 /*
   user-script lua engine lifetime 
@@ -1093,21 +1115,25 @@ extern struct ntopngLuaContext* getUserdata(struct lua_State *vm);
 #define MAX_NUM_FINGERPRINT               25
 
 #define MAX_ENTROPY_BYTES                 4096
+#define MAX_NUM_OBSERVATION_POINTS        256
 
 #define ALERT_ACTION_ENGAGE           "engage"
 #define ALERT_ACTION_RELEASE          "release"
 #define ALERT_ACTION_STORE            "store"
 
-#define SCORE_MAX_VALUE               128    /* Maximum client/server score. Flow score is 2 * SCORE_MAX_VALUE. */
+#define SCORE_LEVEL_INFO                1
+#define SCORE_LEVEL_NOTICE              NDPI_SCORE_RISK_LOW
+#define SCORE_LEVEL_WARNING             NDPI_SCORE_RISK_MEDIUM
+#define SCORE_LEVEL_ERROR               NDPI_SCORE_RISK_HIGH
+#define SCORE_LEVEL_SEVERE              NDPI_SCORE_RISK_SEVERE
 
-#define SCORE_LEVEL_INFO                0 /*  0-19 info */
-#define SCORE_LEVEL_NOTICE             20 /* 20-49 notice */
-#define SCORE_LEVEL_WARNING            50 /* 50-99 warning */
-#define SCORE_LEVEL_ERROR             100 /*  100+ error */
+#define SCORE_MAX_VALUE                 SCORE_LEVEL_SEVERE /* Maximum client/server score. Flow score is 2 * SCORE_MAX_VALUE. */
 
 #ifndef WIN32
 #define CONST_DEFAULT_DUMP_SYSLOG_FACILITY LOG_DAEMON
 #endif
+
+#define UNKNOWN_FLOW_DIRECTION          2
 
 //#define PROFILING
 #ifdef PROFILING

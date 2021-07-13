@@ -343,38 +343,26 @@ function format_utils.formatConnectionIssues(info)
    return res
 end
 
-function format_utils.formatAddressCategory(host)
+function format_utils.formatFullAddressCategory(host)
    local addr_category = ""
 
-   if host ~= nil then      
-      if(host["country"] and not isEmptyString(host["country"])) then
-	 addr_category = addr_category .. " <a href='".. ntop.getHttpPrefix() .. "/lua/hosts_stats.lua?country="..host.country.."'><img src='".. ntop.getHttpPrefix() .. "/img/blank.gif' class='flag flag-".. string.lower(host.country) .."'></a>"
-      end
-
+   if host ~= nil then
+      addr_category = format_utils.formatMainAddressCategory(host)
+      
       if(host["is_blacklisted"] == true) then
          addr_category = addr_category .. " <i class=\'fas fa-ban fa-sm\' title=\'"..i18n("hosts_stats.blacklisted").."\'></i>"
       end
-
-      if(host["localhost"] == true) then
-         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_local_host") ..'\"><span class="badge badge-success">'..i18n("details.label_short_local_host")..'</span></abbr>'
-      else 
-         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_remote") ..'\"><span class="badge badge-secondary">'..i18n("details.label_short_remote")..'</span></abbr>'
-      end
-
-      if(host["is_multicast"] == true) then 
-         addr_category = addr_category .. " <abbr title=\"".. i18n("multicast") .."\"><span class='badge badge-primary'>" ..i18n("short_multicast").. "</span></abbr>"
-      end
       
       if(host["is_broadcast"] == true) then 
-         addr_category = addr_category .. " <abbr title=\"".. i18n("broadcast") .."\"><span class='badge badge-dark'>" ..i18n("short_broadcast").. "</span></abbr>"
+         addr_category = addr_category .. " <abbr title=\"".. i18n("broadcast") .."\"><span class='badge bg-dark'>" ..i18n("short_broadcast").. "</span></abbr>"
       end
       
       if(host["broadcast_domain_host"] == true) then
-         addr_category = addr_category .. " <span class='badge badge-info'><i class='fas fa-sitemap' title='"..i18n("hosts_stats.label_broadcast_domain_host").."'></i></span>"
+         addr_category = addr_category .. " <span class='badge bg-info'><i class='fas fa-sitemap' title='"..i18n("hosts_stats.label_broadcast_domain_host").."'></i></span>"
       end
       
       if(host["privatehost"] == true) then 
-         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_private_ip") ..'\"><span class="badge badge-warning">'..i18n("details.label_short_private_ip")..'</span></abbr>'
+         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_private_ip") ..'\"><span class="badge bg-warning">'..i18n("details.label_short_private_ip")..'</span></abbr>'
       end
 
       if(host["dhcpHost"] == true) then
@@ -385,5 +373,24 @@ function format_utils.formatAddressCategory(host)
    return addr_category
 end
 
+function format_utils.formatMainAddressCategory(host)
+   local addr_category = ""
 
+   if host ~= nil then      
+      if(host["country"] and not isEmptyString(host["country"])) then
+	 addr_category = addr_category .. " <a href='".. ntop.getHttpPrefix() .. "/lua/hosts_stats.lua?country="..host.country.."'><img src='".. ntop.getHttpPrefix() .. "/img/blank.gif' class='flag flag-".. string.lower(host.country) .."'></a>"
+      end
+
+      if(host["is_multicast"] == true) then 
+         addr_category = addr_category .. " <abbr title=\"".. i18n("multicast") .."\"><span class='badge bg-primary'>" ..i18n("short_multicast").. "</span></abbr>"
+      elseif(host["localhost"] == true) then
+         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_local_host") ..'\"><span class="badge bg-success">'..i18n("details.label_short_local_host")..'</span></abbr>'
+      else 
+         addr_category = addr_category .. ' <abbr title=\"'.. i18n("details.label_remote") ..'\"><span class="badge bg-secondary">'..i18n("details.label_short_remote")..'</span></abbr>'
+      end
+   end
+
+   return addr_category
+end
+   
 return format_utils

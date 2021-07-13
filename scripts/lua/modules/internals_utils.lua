@@ -6,7 +6,7 @@ local format_utils = require("format_utils")
 local internals_utils = {}
 local json = require "dkjson"
 local dirs = ntop.getDirs()
-local user_scripts = require "user_scripts"
+local checks = require "checks"
 local periodic_activities_utils = require "periodic_activities_utils"
 local ts_utils = require "ts_utils_core"
 local graph_utils = require "graph_utils"
@@ -27,7 +27,7 @@ local function printHashTablesDropdown(base_url, page_params)
    hash_table_params["hash_table"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("internals.hash_table")) print[[]] print(hash_table_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("internals.hash_table")) print[[]] print(hash_table_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\]]
 
    print[[<li><a class="dropdown-item" href="]] print(getPageUrl(base_url, hash_table_params)) print[[">]] print(i18n("internals.all_hash_tables")) print[[</a></li>\]]
@@ -210,7 +210,7 @@ local function printPeriodicactivityIssuesDropdown(base_url, page_params)
    periodic_activity_issue_params["periodic_script_issue"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("internals.periodic_activity_issues")) print[[]] print(periodic_activity_issue_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("internals.periodic_activity_issues")) print[[]] print(periodic_activity_issue_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\]]
 
    print[[<li><a class="dropdown-item" href="]] print(getPageUrl(base_url, periodic_activity_issue_params)) print[[">]] print(i18n("internals.all_periodic_activities")) print[[</a></li>\]]
@@ -239,7 +239,7 @@ local function printPeriodicactivityDropdown(base_url, page_params)
    periodic_activity_params["periodic_script"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("internals.periodic_activity")) print[[]] print(periodic_activity_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("internals.periodic_activity")) print[[]] print(periodic_activity_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu scrollable-dropdown" role="menu" id="flow_dropdown">\]]
 
    print[[<li><a class="dropdown-item" href="]] print(getPageUrl(base_url, periodic_activity_params)) print[[">]] print(i18n("internals.all_periodic_activities")) print[[</a></li>\]]
@@ -264,9 +264,9 @@ local function printPeriodicActivitiesTable(base_url, ifid, ts_creation)
 <b>]] print(i18n("notes")) print[[</b>
 <ul>
    <li>]] print(i18n("internals.status_description")) print[[</li><ul>
-      <li><span class="badge badge-secondary">]] print(i18n("internals.sleeping")) print[[</span> ]] print(i18n("internals.status_sleeping_descr")) print[[</li>
-      <li><span class="badge badge-warning">]] print(i18n("internals.queued")) print[[</span> ]] print(i18n("internals.status_queued_descr")) print[[</li>
-      <li><span class="badge badge-success">]] print(i18n("running")) print[[</span> ]] print(i18n("internals.status_running_descr")) print[[</li>
+      <li><span class="badge bg-secondary">]] print(i18n("internals.sleeping")) print[[</span> ]] print(i18n("internals.status_sleeping_descr")) print[[</li>
+      <li><span class="badge bg-warning">]] print(i18n("internals.queued")) print[[</span> ]] print(i18n("internals.status_queued_descr")) print[[</li>
+      <li><span class="badge bg-success">]] print(i18n("running")) print[[</span> ]] print(i18n("internals.status_running_descr")) print[[</li>
    </ul>
    <li>]] print(i18n("internals.periodic_activities_descr")) print[[</li>
    <li>]] print(i18n("internals.periodic_activities_periodicity_descr")) print[[</li>
@@ -281,7 +281,7 @@ local function printPeriodicActivitiesTable(base_url, ifid, ts_creation)
 </ul>
 <script type='text/javascript'>
 $(document).ready(function(){
-    $('[data-toggle="popover"]').popover({
+    $('[data-bs-toggle="popover"]').popover({
         placement : 'top',
         trigger : 'hover'
     });
@@ -452,33 +452,33 @@ end
 -- ###########################################
 
 local function printUserScriptsDropdown(base_url, page_params)
-   local user_script_target = _GET["user_script_target"]
-   local user_script_target_filter
-   if not isEmptyString(user_script_target) then
-      user_script_target_filter = '<span class="fas fa-filter"></span>'
+   local check_target = _GET["check_target"]
+   local check_target_filter
+   if not isEmptyString(check_target) then
+      check_target_filter = '<span class="fas fa-filter"></span>'
    else
-      user_script_target_filter = ''
+      check_target_filter = ''
    end
 
    -- table.clone needed to modify some parameters while keeping the original unchanged
-   local user_script_target_params = table.clone(page_params)
-   user_script_target_params["user_script_target"] = nil
+   local check_target_params = table.clone(page_params)
+   check_target_params["check_target"] = nil
 
    print[[\
-      <button class="btn btn-link dropdown-toggle" data-toggle="dropdown">]] print(i18n("internals.user_script_target")) print[[]] print(user_script_target_filter) print[[<span class="caret"></span></button>\
+      <button class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">]] print(i18n("internals.check_target")) print[[]] print(check_target_filter) print[[<span class="caret"></span></button>\
       <ul class="dropdown-menu" role="menu" id="flow_dropdown">\]]
 
-   print[[<li><a class="dropdown-item" href="]] print(getPageUrl(base_url, user_script_target_params)) print[[">]] print(i18n("internals.all_user_script_targets")) print[[</a></li>\]]
+   print[[<li><a class="dropdown-item" href="]] print(getPageUrl(base_url, check_target_params)) print[[">]] print(i18n("internals.all_check_targets")) print[[</a></li>\]]
 
-   for _, subdir in pairsByKeys(user_scripts.listSubdirs(), asc) do
-      print[[ <li><a class="dropdown-item ]] if user_script_target == subdir["label"] then print('active') end print[[" href="]] user_script_target_params["user_script_target"] = subdir["label"]; print(getPageUrl(base_url, user_script_target_params)); print[[">]] print(subdir["label"]) print[[</a></li>\]]
+   for _, subdir in pairsByKeys(checks.listSubdirs(), asc) do
+      print[[ <li><a class="dropdown-item ]] if check_target == subdir["label"] then print('active') end print[[" href="]] check_target_params["check_target"] = subdir["label"]; print(getPageUrl(base_url, check_target_params)); print[[">]] print(subdir["label"]) print[[</a></li>\]]
    end
 end
 
 -- ###########################################
 
 local function printUserScriptsTable(base_url, ifid, ts_creation)
-   local page_params = {user_script_target = _GET["user_script_target"], tab = _GET["tab"], iffilter = ifid}
+   local page_params = {check_target = _GET["check_target"], tab = _GET["tab"], iffilter = ifid}
 
    print[[
 <div id="table-internals-periodic-activities"></div>
@@ -500,7 +500,7 @@ $("#table-internals-periodic-activities").datatable({
    print[[</div>']]
 
    print[[ ],
-   url: "]] print(getPageUrl(ntop.getHttpPrefix().."/lua/get_internals_user_scripts_stats.lua", page_params)) print[[",
+   url: "]] print(getPageUrl(ntop.getHttpPrefix().."/lua/get_internals_checks_stats.lua", page_params)) print[[",
    columns: [
      {
        field: "column_key",
@@ -518,23 +518,23 @@ $("#table-internals-periodic-activities").datatable({
 	 width: '5%',
        }
      }, {
-       title: "]] print(i18n("internals.user_script")) print[[",
-       field: "column_user_script_name",
+       title: "]] print(i18n("internals.check")) print[[",
+       field: "column_check_name",
        sortable: true,
        css: {
 	 textAlign: 'left',
 	 width: '5%',
        }
      }, {
-       title: "]] print(i18n("internals.user_script_target")) print[[",
-       field: "column_user_script_target",
+       title: "]] print(i18n("internals.check_target")) print[[",
+       field: "column_check_target",
        sortable: true,
        css: {
 	 textAlign: 'left',
 	 width: '5%',
        }
      }, {
-       title: "]] print(i18n("flow_callbacks.callback_function")) print[[",
+       title: "]] print(i18n("flow_checks.callback_function")) print[[",
        field: "column_hook",
        sortable: true,
        css: {
@@ -584,7 +584,7 @@ end
 
 -- ###########################################
 
-function internals_utils.printInternals(ifid, print_hash_tables, print_periodic_activities, print_user_scripts, print_queues)
+function internals_utils.printInternals(ifid, print_hash_tables, print_periodic_activities, print_checks, print_queues)
    local tab = _GET["tab"]
 
    local ts_creation = areInternalTimeseriesEnabled(ifid or getSystemInterfaceId()) and ntop.getPref("ntopng.prefs.internals_rrd_creation") == "1"
@@ -610,10 +610,10 @@ function internals_utils.printInternals(ifid, print_hash_tables, print_periodic_
     <a class="nav-link ]] if tab == "periodic_activities" then print[[active]] end print[[" href="?page=internals&tab=periodic_activities"]] print[[">]] print(i18n("internals.periodic_activities")) print[[</a></li>]]
    end
 
-   if print_user_scripts then
-      if not tab then tab = "user_scripts" end
+   if print_checks then
+      if not tab then tab = "checks" end
       print[[<li class="nav-item">
-    <a class="nav-link ]] if tab == "user_scripts" then print[[active]] end print[[" href="?page=internals&tab=user_scripts"]] print[[">]] print(i18n("internals.user_scripts")) print[[</a></li>]]
+    <a class="nav-link ]] if tab == "checks" then print[[active]] end print[[" href="?page=internals&tab=checks"]] print[[">]] print(i18n("internals.checks")) print[[</a></li>]]
    end
 
    print[[</ul>]]
@@ -628,10 +628,10 @@ function internals_utils.printInternals(ifid, print_hash_tables, print_periodic_
       printQueuesTable(base_url.."&tab=queues", ifid, ts_creation)
    elseif tab == "periodic_activities" and print_periodic_activities then
       printPeriodicActivitiesTable(base_url.."&tab=periodic_activities", ifid, ts_creation)
-   elseif tab == "user_scripts" and print_user_scripts then
-      -- Reuse the same function that prints user scripts for the Developers
-      user_scripts.printUserScripts()
-      -- printUserScriptsTable(base_url.."&tab=user_scripts", ifid, ts_creation)
+   elseif tab == "checks" and print_checks then
+      -- Reuse the same function that prints checks for the Developers
+      checks.printUserScripts()
+      -- printUserScriptsTable(base_url.."&tab=checks", ifid, ts_creation)
    end
    print[[</div>]]
    print[[</div>]]
@@ -649,7 +649,7 @@ function internals_utils.getHashTablesFillBar(first_fill_pct, second_fill_pct, t
    end
 
    if second_fill_pct > 0 then
-      code = code..[[<div class="progress-bar bg-info" role="progressbar" title="]] ..i18n("flow_callbacks.idle").. [[" style="width: ]]..second_fill_pct..[[%" aria-valuenow="]]..second_fill_pct..[[" aria-valuemin="0" aria-valuemax="100">]]..i18n("flow_callbacks.idle")..[[</div>]]
+      code = code..[[<div class="progress-bar bg-success" role="progressbar" title="]] ..i18n("flow_checks.idle").. [[" style="width: ]]..second_fill_pct..[[%" aria-valuenow="]]..second_fill_pct..[[" aria-valuemin="0" aria-valuemax="100">]]..i18n("flow_checks.idle")..[[</div>]]
    end
 
    if third_fill_pct > 0 then
@@ -706,7 +706,7 @@ function internals_utils.printPeriodicActivityDetails(ifId, url)
 	 schema = "periodic_script:duration",
 	 label = i18n("internals.chart_script_duration", {script = script}),
 	 extra_params = {periodic_script = script},
-	 metrics_labels = {i18n("flow_callbacks.last_duration"), },
+	 metrics_labels = {i18n("flow_checks.last_duration"), },
 
 	 -- Horizontal line with max duration
 	 extra_series = {
@@ -746,7 +746,7 @@ function internals_utils.printPeriodicActivityDetails(ifId, url)
 
    local timeseries = periodic_scripts_ts
 
-   if tostring(ifId) ~= getSystemInterfaceId() and ntop.getPref("ntopng.prefs.user_scripts_rrd_creation") == "1" then
+   if tostring(ifId) ~= getSystemInterfaceId() and ntop.getPref("ntopng.prefs.checks_rrd_creation") == "1" then
       timeseries = table.merge(timeseries,
 			       {
 				  {

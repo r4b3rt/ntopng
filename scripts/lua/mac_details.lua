@@ -83,16 +83,17 @@ page_utils.set_active_menu_entry(page_utils.menu_entries.devices)
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 
 if(mac == nil) then
-   print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png>" .. " " .. i18n("mac_details.mac_parameter_missing_message") .. "</div>")
+   print("<div class=\"alert alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i>" .. " " .. i18n("mac_details.mac_parameter_missing_message") .. "</div>")
+   dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
    return
 end
 
 if isAdministrator() then
    if _POST["action"] == "reset_stats" then
       if interface.resetMacStats(mac) then
-         print("<div class=\"alert alert alert-success\">")
-         print[[<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>]]
+         print("<div class=\"alert alert alert-dismissable alert-success\">")
          print(i18n("mac_details.reset_stats_in_progress"))
+         print([[<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>]])
          print("</div>")
       end
    end
@@ -105,7 +106,7 @@ local mac_info = interface.getMacInfo(mac)
 local only_historical = (mac_info == nil) and (page == "historical")
 
 if(mac_info == nil) and not only_historical then
-   print('<div class=\"alert alert-danger\"><i class="fas fa-exclamation-triangle fa-lg"></i>'..' '..i18n("mac_details.mac_cannot_be_found_message",{mac=mac}))
+   print('<div class=\"alert alert-danger\"><i class="fas fa-exclamation-triangle fa-lg fa-ntopng-warning"></i>'..' '..i18n("mac_details.mac_cannot_be_found_message",{mac=mac}))
    print("</div>")
    dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
    return

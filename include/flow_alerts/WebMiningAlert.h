@@ -29,12 +29,12 @@ class WebMiningAlert : public FlowAlert {
   
  public:
   static FlowAlertType getClassType() { return { flow_alert_web_mining_detected, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_WARNING; };
 
- WebMiningAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ WebMiningAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~WebMiningAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("web_mining"); }
 };
 
 #endif /* _WEBMINING_ALERT_H_ */

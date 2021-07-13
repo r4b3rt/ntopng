@@ -14,12 +14,12 @@ local format_utils = require("format_utils")
 local os_utils = require "os_utils"
 local host_pools_nedge = require "host_pools_nedge"
 
-if not haveAdminPrivileges() then
+if not isAdministratorOrPrintErr() then
    sendHTTPContentTypeHeader('text/html')
 
    page_utils.print_header()
    dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
-   print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png>"..i18n("error_not_granted").."</div>")
+   print("<div class=\"alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "..i18n("error_not_granted").."</div>")
   return
 end
 

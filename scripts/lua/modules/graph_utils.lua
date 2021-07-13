@@ -19,6 +19,8 @@ local have_nedge = ntop.isnEdge()
 
 local ts_utils = require("ts_utils")
 
+local iface_behavior_update_freq = 300 --Seconds
+
 -- ########################################################
 
 local graph_utils = {}
@@ -160,7 +162,7 @@ function graph_utils.breakdownBar(sent, sentLabel, rcvd, rcvdLabel, thresholdLow
     elseif(sent2rcvd > thresholdHigh) then rcvdLabel = '<i class="fas fa-exclamation-triangle fa-lg""></i> '..rcvdLabel end
 
       print('<div class="progress"><div class="progress-bar bg-warning" aria-valuenow="'.. sent2rcvd..'" aria-valuemin="0" aria-valuemax="100" style="width: ' .. sent2rcvd.. '%;">'..sentLabel)
-      print('</div><div class="progress-bar bg-info" aria-valuenow="'.. (100-sent2rcvd)..'" aria-valuemin="0" aria-valuemax="100" style="width: ' .. (100-sent2rcvd) .. '%;">' .. rcvdLabel .. '</div></div>')
+      print('</div><div class="progress-bar bg-success" aria-valuenow="'.. (100-sent2rcvd)..'" aria-valuemin="0" aria-valuemax="100" style="width: ' .. (100-sent2rcvd) .. '%;">' .. rcvdLabel .. '</div></div>')
 
    else
       print('&nbsp;')
@@ -264,7 +266,7 @@ function graph_utils.stackedProgressBars(total, bars, other_label, formatter, cs
       res[#res + 1] = [[<span>]]
       if(num > 0) then res[#res + 1] = [[<br>]] end
       if bar.link ~= nil then res[#res + 1] = [[<a href="]] .. bar.link .. [[">]] end
-      res[#res + 1] = [[<span class="badge badge-]].. (bar.class) ..[[" style="]] .. bar.style .. [[">&nbsp;</span>]]
+      res[#res + 1] = [[<span class="badge bg-]].. (bar.class) ..[[" style="]] .. bar.style .. [[">&nbsp;</span>]]
       if bar.link ~= nil then res[#res + 1] = [[</a>]] end
       res[#res + 1] = [[<span> ]] .. bar.title .. " (".. formatter(bar.value) ..")</span></span>"
       num = num + 1
@@ -417,13 +419,13 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
    <div class='card'>
       <div class='card-header'>
          <ul class="nav nav-tabs card-header-tabs" role="tablist" id="historical-tabs-container">
-            <li class="nav-item active"> <a class="nav-link active" href="#historical-tab-chart" role="tab" data-toggle="tab"> Chart </a> </li>
+            <li class="nav-item active"> <a class="nav-link active" href="#historical-tab-chart" role="tab" data-bs-toggle="tab"> Chart </a> </li>
 ]]
 
    local show_historical_tabs = ntop.getPrefs().is_dump_flows_to_mysql_enabled and options.show_historical
 
    if show_historical_tabs then
-      print('<li class="nav-item"><a class="nav-link" href="#historical-flows" role="tab" data-toggle="tab" id="tab-flows-summary"> Flows </a> </li>\n')
+      print('<li class="nav-item"><a class="nav-link" href="#historical-flows" role="tab" data-bs-toggle="tab" id="tab-flows-summary"> Flows </a> </li>\n')
    end
 
    print[[
@@ -446,7 +448,7 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
    if(options.timeseries) then
       print [[
    <div class="dropdown d-inline">
-      <button class="btn btn-light btn-sm dropdown-toggle" data-toggle="dropdown">Timeseries <span class="caret"></span></button>
+      <button class="btn btn-light btn-sm dropdown-toggle" data-bs-toggle="dropdown">Timeseries <span class="caret"></span></button>
       <div class="dropdown-menu scrollable-dropdown">
       ]]
 
@@ -459,7 +461,7 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
       ]]
    end -- options.timeseries
 
-   print('<span class="mx-1">Timeframe:</span><div class="btn-group btn-group-toggle" data-toggle="buttons" id="graph_zoom">\n')
+   print('<span class="mx-1">Timeframe:</span><div class="btn-group" role="group" id="graph_zoom">\n')
 
    for k,v in ipairs(graph_common.zoom_vals) do
       -- display 1 minute button only for networks and interface stats
@@ -470,13 +472,7 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
       elseif graph_common.zoom_vals[k][1] == '5m' and min_zoom ~= '1m' and min_zoom ~= '5m' then
          goto continue
       end
-
-      if(graph_common.zoom_vals[k][1] == zoomLevel) then
-         print([[<label class="btn bg-primary text-white">]])
-      else
-         print([[<label class="btn btn-link">]])
-      end
-
+      
       local params = table.merge(page_params, {zoom=graph_common.zoom_vals[k][1]})
 
       -- Additional parameters
@@ -488,8 +484,15 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
       end
 
       local url = getPageUrl(baseurl, params)
+      print('<input type="radio" class="btn-check" name="options" id="zoom_level_'..k..'" value="'..url..'">')
 
-      print('<input type="radio" name="options" id="zoom_level_'..k..'" value="'..url..'">'.. graph_common.zoom_vals[k][1] ..'</input></label>\n')
+      if(graph_common.zoom_vals[k][1] == zoomLevel) then
+         print([[<label class="btn bg-primary text-white" for='zoom_level_]].. k ..[['>]]..  graph_common.zoom_vals[k][1] ..[[</label>]])
+      else
+         print([[<label class="btn btn-outline-secondary" for='zoom_level_]].. k ..[['>]]..  graph_common.zoom_vals[k][1] ..[[</label>]])
+      end
+
+
       ::continue::
    end
 
@@ -525,6 +528,17 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
 
    local label = data.series[1].label
 
+   -- Attempt at reading the formatter from the options using the schema
+   local formatter
+   if options and options.timeseries then
+      for _, cur_ts in pairs(options.timeseries or {}) do
+	 if cur_ts.schema == schema and cur_ts.value_formatter then
+	    formatter = cur_ts.value_formatter[1] or cur_ts.value_formatter
+	    break
+	 end
+      end
+   end
+   
    if label == "load_percentage" then
       formatter_fctn = "NtopUtils.ffloat"
       format_as_bps = false
@@ -545,6 +559,11 @@ function graph_utils.drawGraphs(ifid, schema, tags, zoomLevel, baseurl, selected
       format_as_bps = false
    elseif string.contains(label, "packets") or string.contains(label, "flows") or label:starts("num_") or label:contains("alerts") then
       formatter_fctn = "NtopUtils.fint"
+      format_as_bytes = false
+      format_as_bps = false
+   elseif formatter then
+      -- The formatter specified in the options
+      formatter_fctn = formatter
       format_as_bytes = false
       format_as_bps = false
    else
@@ -820,7 +839,7 @@ $("#chart").click(function() {
 
 ]]
    else
-      print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> No data found</div>")
+      print("<div class=\"alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> No data found</div>")
    end -- if(data)
 end
 
@@ -869,7 +888,7 @@ function graph_utils.printProtocolQuota(proto, ndpi_stats, category_stats, quota
       if not traffic_quota_ratio then traffic_quota_ratio = 0 end
 
       if show_td then
-        output[#output + 1] = [[<td class='text-right']]..ternary(bytes_exceeded, ' style=\'color:red;\'', '').."><span>"..lb_bytes..ternary(hide_limit, "", " / "..lb_bytes_quota).."</span>"
+        output[#output + 1] = [[<td class='text-end']]..ternary(bytes_exceeded, ' style=\'color:red;\'', '').."><span>"..lb_bytes..ternary(hide_limit, "", " / "..lb_bytes_quota).."</span>"
       end
 
       output[#output + 1] = [[
@@ -891,7 +910,7 @@ function graph_utils.printProtocolQuota(proto, ndpi_stats, category_stats, quota
       local duration_quota_ratio = round(duration_taken * 100 / (duration_taken+duration_remaining), 0) or 0
 
       if show_td then
-        output[#output + 1] = [[<td class='text-right']]..ternary(time_exceeded, ' style=\'color:red;\'', '').."><span>"..lb_duration..ternary(hide_limit, "", " / "..lb_duration_quota).."</span>"
+        output[#output + 1] = [[<td class='text-end']]..ternary(time_exceeded, ' style=\'color:red;\'', '').."><span>"..lb_duration..ternary(hide_limit, "", " / "..lb_duration_quota).."</span>"
       end
 
       output[#output + 1] = ([[
@@ -954,7 +973,7 @@ function graph_utils.printPoolChangeDropdown(ifId, pool_id, have_nedge)
    output[#output + 1] = [[<tr>
       <th>]] .. i18n(ternary(have_nedge, "nedge.user", "host_config.host_pool")) .. [[</th>
       <td>
-            <select name="pool" class="form-control" style="width:20em; display:inline;">]]
+            <select name="pool" class="form-select" style="width:20em; display:inline;">]]
 
    output[#output + 1] = graph_utils.poolDropdown(ifId, pool_id)
 
@@ -962,7 +981,7 @@ function graph_utils.printPoolChangeDropdown(ifId, pool_id, have_nedge)
 
    output[#output + 1] = [[
             </select>
-        <a class='ml-1' href="]] .. ntop.getHttpPrefix() .. edit_pools_link .. [["><i class="fas fa-edit" aria-hidden="true" title="]]
+        <a class='ms-1' href="]] .. ntop.getHttpPrefix() .. edit_pools_link .. [["><i class="fas fa-edit" aria-hidden="true" title="]]
       ..(have_nedge and i18n("edit") or '')
       .. [["></i></a>
    </tr>]]
@@ -982,7 +1001,7 @@ function graph_utils.printCategoryDropdownButton(by_id, cat_id_or_name, base_url
    count_callback = count_callback or count_all
 
    -- 'Category' button
-   print('\'<div class="btn-group float-right"><div class="btn btn-link dropdown-toggle" data-toggle="dropdown">'..
+   print('\'<div class="btn-group float-right"><div class="btn btn-link dropdown-toggle" data-bs-toggle="dropdown">'..
          i18n("category") .. ternary(not isEmptyString(cat_id_or_name), '<span class="fas fa-filter"></span>', '') ..
          '<span class="caret"></span></div> <ul class="dropdown-menu scrollable-dropdown" role="menu" style="min-width: 90px;">')
 
@@ -1037,13 +1056,12 @@ local default_timeseries = {
    {schema="iface:devices",               label=i18n("graphs.active_devices")},
    {schema="iface:http_hosts",            label=i18n("graphs.active_http_servers"), nedge_exclude=1},
    {schema="iface:traffic",               label=i18n("traffic")},
-   {schema="iface:score",                 label=i18n("score"), enterprise_only=true, metrics_labels = { i18n("graphs.cli_score"), i18n("graphs.srv_score")}},
-   {schema="iface:traffic_rxtx",          label=i18n("graphs.traffic_rxtx"), layout={ ["bytes_sent"] = "area", ["bytes_rcvd"] = "line" } },
-   {schema="iface:hosts_anomalies",       label=i18n("graphs.hosts_anomalies"), layout={ ["num_local_hosts_anomalies"] = "area", ["num_remote_hosts_anomalies"] = "area" }, metrics_labels = { i18n("graphs.loc_host_anomalies"), i18n("graphs.rem_host_anomalies")}  },
-
+   {schema="iface:score",                 label=i18n("score"), metrics_labels = { i18n("graphs.cli_score"), i18n("graphs.srv_score")}},
+   {schema="iface:traffic_rxtx",          label=i18n("graphs.traffic_rxtx"), split_directions = true, layout={ ["bytes_sent"] = "area", ["bytes_rcvd"] = "line" }, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"} },
    {schema="iface:packets_vs_drops",      label=i18n("graphs.packets_vs_drops")},
    {schema="iface:nfq_pct",               label=i18n("graphs.num_nfq_pct"), nedge_only=1},
-
+   {schema="iface:hosts_anomalies",       label=i18n("graphs.hosts_anomalies"), layout={ ["num_local_hosts_anomalies"] = "area", ["num_remote_hosts_anomalies"] = "area" }, metrics_labels = { i18n("graphs.loc_host_anomalies"), i18n("graphs.rem_host_anomalies")}  },
+      
    {schema="iface:disc_prob_bytes",       label=i18n("graphs.discarded_probing_bytes"), nedge_exclude=1},
    {schema="iface:disc_prob_pkts",        label=i18n("graphs.discarded_probing_packets"), nedge_exclude=1},
 
@@ -1065,6 +1083,18 @@ local default_timeseries = {
    {schema="iface:tcp_finack",            label=i18n("graphs.tcp_finack_packets"), nedge_exclude=1},
    {schema="iface:tcp_rst",               label=i18n("graphs.tcp_rst_packets"), nedge_exclude=1},
 }
+
+if ntop.isPro() then
+   local pro_timeseries = {
+      {schema="iface:score_anomalies",       label=i18n("graphs.iface_score_anomalies")},
+      {schema="iface:score_behavior",        label=i18n("graphs.iface_score_behavior"), split_directions = true --[[ split RX and TX directions ]], first_timeseries_only = true, metrics_labels = {i18n("graphs.score"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+      {schema="iface:traffic_anomalies",     label=i18n("graphs.iface_traffic_anomalies")},
+      {schema="iface:traffic_rx_behavior_v2",   label=i18n("graphs.iface_traffic_rx_behavior"), split_directions = true --[[ split RX and TX directions ]], first_timeseries_only = true, time_elapsed = iface_behavior_update_freq, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_rcvd"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+      {schema="iface:traffic_tx_behavior_v2",   label=i18n("graphs.iface_traffic_tx_behavior"), split_directions = true --[[ split RX and TX directions ]], first_timeseries_only = true, time_elapsed = iface_behavior_update_freq, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_sent"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+   }
+
+   default_timeseries = table.merge(pro_timeseries, default_timeseries)
+end
 
 -- #################################################
 

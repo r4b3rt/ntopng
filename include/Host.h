@@ -26,7 +26,7 @@
 
 class HostAlert;
 
-class Host : public GenericHashEntry, public HostAlertableEntity, public Score, public HostCallbacksStatus {
+class Host : public GenericHashEntry, public HostAlertableEntity, public Score, public HostChecksStatus {
  protected:
   IpAddress ip;
   Mac *mac;
@@ -38,7 +38,9 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   } fingerprints;
   
   bool stats_reset_requested, name_reset_requested, data_delete_requested;
-  u_int16_t vlan_id, host_pool_id, host_services_bitmap;
+  u_int16_t host_pool_id, host_services_bitmap;
+  VLANid vlan_id;
+  u_int16_t observationPointId;
   u_int8_t num_remote_access;
   HostStats *stats, *stats_shadow;
   time_t last_stats_reset;
@@ -50,7 +52,7 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
     *mdns_txt /* name from a TXT MDNS reply after "nm=" field (most accurate) */,
     *mdns_info /* name from a TXT MDNS reply */;
     char *resolved; /* The name as resolved by ntopng DNS requests */
-    char *netbios; /* The Netbios name */
+    char *netbios; /* The NetBIOS name */
   } names;
 
   char *ssdpLocation;
@@ -68,10 +70,6 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
     u_int32_t syn_sent_last_min, synack_recvd_last_min; /* (attacker) */
     u_int32_t syn_recvd_last_min, synack_sent_last_min; /* (victim) */
   } syn_scan; 
-  struct {
-    u_int32_t current /* computing */, last /* in the last interval */;
-  } max_score;
-  
   std::atomic<u_int32_t> num_active_flows_as_client, num_active_flows_as_server; /* Need atomic as inc/dec done on different threads */
   u_int32_t asn;
   struct {
@@ -102,7 +100,7 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   Bitmap128 disabled_flow_alerts;
   time_t disabled_alerts_tstamp;
 
-  void initialize(Mac *_mac, u_int16_t _vlan_id);
+  void initialize(Mac *_mac, VLANid _vlan_id, u_int16_t observation_point_id);
   void inlineSetOS(OSType _os);
   bool statsResetRequested();
   void checkStatsReset();
@@ -119,8 +117,8 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   char* get_mac_based_tskey(Mac *mac, char *buf, size_t bufsize);
   
  public:
-  Host(NetworkInterface *_iface, char *ipAddress, u_int16_t _vlanId);
-  Host(NetworkInterface *_iface, Mac *_mac, u_int16_t _vlanId, IpAddress *_ip);
+  Host(NetworkInterface *_iface, char *ipAddress, VLANid _vlanId, u_int16_t observation_point_id);
+  Host(NetworkInterface *_iface, Mac *_mac, VLANid _vlanId, u_int16_t observation_point_id, IpAddress *_ip);
 
   virtual ~Host();
 
@@ -185,8 +183,11 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   u_int16_t incScoreValue(u_int16_t score_incr, ScoreCategory score_category, bool as_client);
   u_int16_t decScoreValue(u_int16_t score_decr, ScoreCategory score_category, bool as_client);
 
-  inline u_int16_t get_host_pool()    const { return(host_pool_id);   };
-  inline u_int16_t get_vlan_id()      const { return(vlan_id);        };
+  inline u_int16_t get_host_pool()         const { return(host_pool_id);                      };
+  inline VLANid get_raw_vlan_id()          const { return(vlan_id);                           }; /* vlanId + observationPointId */
+  inline VLANid get_vlan_id()              const { return(filterVLANid(vlan_id));             };
+  inline VLANid get_observation_point_id() const { return(observationPointId); };
+  
   char* get_name(char *buf, u_int buf_len, bool force_resolution_if_not_found);
 
   inline void incSentTcp(u_int32_t ooo_pkts, u_int32_t retr_pkts, u_int32_t lost_pkts, u_int32_t keep_alive_pkts) {
@@ -214,6 +215,9 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   virtual HTTPstats* getHTTPstats()           { return(NULL);                  };
   virtual DnsStats*  getDNSstats()            { return(NULL);                  };
   virtual ICMPstats* getICMPstats()           { return(NULL);                  };
+  inline u_int8_t getConsecutiveHighScore()   { return(stats->getConsecutiveHighScore()); };
+  inline void resetConsecutiveHighScore()     { stats->resetConsecutiveHighScore(); };
+  inline void incrConsecutiveHighScore()      { stats->incrConsecutiveHighScore(); };
   inline void set_ipv4(u_int32_t _ipv4)             { ip.set(_ipv4);                 };
   inline void set_ipv6(struct ndpi_in6_addr *_ipv6) { ip.set(_ipv6);                 };
   inline u_int32_t key()                            { return(ip.key());              };
@@ -274,7 +278,7 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   char* get_hostkey(char *buf, u_int buf_len, bool force_vlan=false);
   char* get_tskey(char *buf, size_t bufsize);
 
-  bool is_hash_entry_state_idle_transition_ready() const;
+  bool is_hash_entry_state_idle_transition_ready();
   void periodic_stats_update(const struct timeval *tv);
   virtual void custom_periodic_stats_update(const struct timeval *tv) { ; }
   
@@ -342,10 +346,6 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   inline u_int32_t syn_scan_attacker_hits() const { return syn_scan.syn_sent_last_min > syn_scan.synack_recvd_last_min ? syn_scan.syn_sent_last_min - syn_scan.synack_recvd_last_min : 0; };
   inline void reset_syn_scan_hits() { syn_scan.syn_sent_last_min = syn_scan.synack_recvd_last_min = syn_scan.syn_recvd_last_min = syn_scan.synack_sent_last_min = 0; };
 
-  void update_max_score() { u_int32_t curr = getScore(); if (curr > max_score.current) max_score.current = curr; }
-  void reset_max_score() { max_score.last = max_score.current; max_score.current = 0; }
-  u_int32_t get_max_score() { return max_score.last; }
-
   void incNumFlows(time_t t, bool as_client);
   void decNumFlows(time_t t, bool as_client);
   inline void incNumAlertedFlows(bool as_client) { active_alerted_flows++; if(stats) stats->incNumAlertedFlows(as_client); }
@@ -389,7 +389,7 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   inline u_int32_t getTotalNumUnreachableIncomingFlows() const { return stats->getTotalUnreachableNumFlowsAsServer(); };
   inline u_int32_t getTotalNumHostUnreachableOutgoingFlows() const { return stats->getTotalHostUnreachableNumFlowsAsClient(); };
   inline u_int32_t getTotalNumHostUnreachableIncomingFlows() const { return stats->getTotalHostUnreachableNumFlowsAsServer(); };
-  void splitHostVLAN(const char *at_sign_str, char *buf, int bufsize, u_int16_t *vlan_id);
+  void splitHostVLAN(const char *at_sign_str, char *buf, int bufsize, VLANid *vlan_id);
   char* get_country(char *buf, u_int buf_len);
   char* get_city(char *buf, u_int buf_len);
   void get_geocoordinates(float *latitude, float *longitude);
@@ -465,7 +465,7 @@ class Host : public GenericHashEntry, public HostAlertableEntity, public Score, 
   bool enqueueAlertToRecipients(HostAlert *alert, bool released);
   void alert2JSON(HostAlert *alert, bool released, ndpi_serializer *serializer);
 
-  /* Callbacks API */
+  /* Checks API */
   bool triggerAlert(HostAlert *alert);
   void releaseAlert(HostAlert* alert);
 

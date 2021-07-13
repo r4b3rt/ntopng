@@ -109,8 +109,7 @@ class Widget {
     }
 
     async update(datasourceParams = {}) {
-
-        // build the new endpoint
+	// build the new endpoint
         const u = new URL(`${location.origin}${this._datasource.name}`);
         for (const [key, value] of Object.entries(datasourceParams)) {
             u.searchParams.set(key, value);
@@ -239,7 +238,7 @@ class ChartWidget extends Widget {
     }
 
     _buildTooltipFormatter(config) {
-        // do we need a custom tooltip?
+	// do we need a custom tooltip?
         if (config.tooltip && config.tooltip.widget_tooltips_formatter) {
             const formatterName = config.tooltip.widget_tooltips_formatter;
             config.tooltip.custom = WidgetTooltips[formatterName] || WidgetTooltips.unknown;
@@ -293,9 +292,12 @@ class ChartWidget extends Widget {
     async update(datasourceParams = {}) {
         await super.update(datasourceParams);
         if (this._chart != null) {
-            // expecting that rsp contains an object called series
-            const { series } = this._fetchedData.rsp;
-            this._chart.updateSeries(series);
+	    // expecting that rsp contains an object called series
+        const { colors, series } = this._fetchedData.rsp;
+	    // update the colors list
+	    this._chartConfig.colors = colors;
+	    this._chartConfig.series = series;
+	    this._chart.updateOptions(this._chartConfig, true);
         }
     }
 

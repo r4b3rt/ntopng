@@ -4,12 +4,12 @@
  * This script implements the logic for the system_alerts_stats.lua script
  */
 
-$(document).ready(function () {
+$(function () {
     let last_queues;
     const systemAlertsStatsrefresh = function() {
 	$.ajax({
 	    type: 'GET',
-	    url: `${http_prefix}/lua/rest/v1/get/system/stats.lua`,
+	    url: `${http_prefix}/lua/rest/v2/get/system/stats.lua`,
 	    success: function(content) {
 		if(content["rc_str"] != "OK") {
 		    return;

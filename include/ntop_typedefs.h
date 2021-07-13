@@ -63,7 +63,7 @@ typedef struct {
   struct timeval *tv;
   time_t deadline;
   bool no_time_left;
-  bool skip_user_scripts;
+  bool skip_checks;
   ThreadedActivityStats *thstats;
   u_int32_t cur_entries;
   u_int32_t tot_entries;
@@ -94,13 +94,13 @@ typedef enum {
 } ScriptPeriodicity;
 
 typedef enum {
-  script_category_other = 0,
-  script_category_security = 1,
-  script_category_internals = 2,
-  script_category_network = 3,
-  script_category_system = 4,
+  check_category_other = 0,
+  check_category_security = 1,
+  check_category_internals = 2,
+  check_category_network = 3,
+  check_category_system = 4,
   MAX_NUM_SCRIPT_CATEGORIES = 5
-} ScriptCategory; /* Keep in sync with user_scripts.script_categories in scripts/lua/modules/user_scripts.lua  */
+} CheckCategory; /* Keep in sync with checks.check_categories in scripts/lua/modules/checks.lua  */
 
 typedef enum {
   alert_category_other = 0,
@@ -109,10 +109,10 @@ typedef enum {
   alert_category_network = 3,
   alert_category_system = 4,
   MAX_NUM_ALERT_CATEGORIES = 5
-} AlertCategory; /* TODO: keep in sync with ScriptCategory until we remove ScriptCategory */
+} AlertCategory; /* TODO: keep in sync with CheckCategory until we remove CheckCategory */
 
 /*
-  This is a subset of ScriptCategory as flow scripts fall only in this subset
+  This is a subset of CheckCategory as flow scripts fall only in this subset
  */
 typedef enum {
   score_category_network = 0,
@@ -134,6 +134,8 @@ typedef enum {
   location_local_only,
   location_remote_only,
   location_broadcast_domain_only,
+  location_private_only, /* Only 192.168.0.0/16 and other private */
+  location_public_only,  /* Only non-private */
   location_all,
 } LocationPolicy;
 
@@ -190,6 +192,19 @@ typedef enum {
 } AlertLevelGroup;
 
 /*
+  Used to filter engaged alerts according to the role
+  NOTE: Keep in sync with Lua alert_roles.lua
+ */
+typedef enum {
+  alert_role_is_any = 0,
+  alert_role_is_attacker = 1,
+  alert_role_is_victim = 2,
+  alert_role_is_client = 3,
+  alert_role_is_server = 4,
+  alert_role_is_none = 5,
+} AlertRole;
+
+/*
   Keep in sync with alert_entities.lua entity_id
  */
 typedef enum {
@@ -205,6 +220,8 @@ typedef enum {
   alert_entity_am_host             =  8,
   alert_entity_system              =  9,
   alert_entity_test                = 10,
+  alert_entity_asn                 = 11,
+  alert_entity_l7                  = 12,
 
   /* Add new entities above ^ and do not exceed alert_entity_other */
   alert_entity_other               = 15,
@@ -330,12 +347,18 @@ typedef struct zmq_remote_stats {
   char remote_ifname[32], remote_ifaddress[64];
   char remote_probe_address[64], remote_probe_public_address[64];
   char remote_probe_version[64], remote_probe_os[64];
+  char remote_probe_license[64], remote_probe_edition[64];
+  char remote_probe_maintenance[64];
   u_int8_t  source_id, num_exporters;
   u_int64_t remote_bytes, remote_pkts, num_flow_exports;
   u_int32_t remote_ifspeed, remote_time, local_time, avg_bps, avg_pps;
   u_int32_t remote_lifetime_timeout, remote_idle_timeout, remote_collected_lifetime_timeout;
   u_int32_t export_queue_full, too_many_flows, elk_flow_drops,
     sflow_pkt_sample_drops, flow_collection_drops, flow_collection_udp_socket_drops;
+  struct {
+    u_int64_t nf_ipfix_flows;
+    u_int64_t sflow_samples;
+  } flow_collection;
 } ZMQ_RemoteStats;
 
 typedef struct zmq_template {
@@ -375,11 +398,11 @@ struct string_list {
 };
 
 typedef enum {
-  flow_callback_protocol_detected = 0,
-  flow_callback_periodic_update,
-  flow_callback_flow_end,
-  flow_callback_flow_none /* Flow callback not bound to protoDetected, periodicUpdate, flowEnd */
-} FlowCallbacks;
+  flow_check_protocol_detected = 0,
+  flow_check_periodic_update,
+  flow_check_flow_end,
+  flow_check_flow_none /* Flow check not bound to protoDetected, periodicUpdate, flowEnd */
+} FlowChecks;
 
 /* NOTE: Throw modules/alert_keys.lua as it has been merged with modules/alert_keys.lua */
 /* NOTE: keep in sync with modules/alert_keys.lua */
@@ -401,8 +424,8 @@ typedef enum {
   flow_alert_internals                        = 14,
   flow_alert_potentially_dangerous            = 15,
   flow_alert_remote_to_remote                 = 16,
-  flow_alert_suspicious_tcp_probing           = 17,
-  flow_alert_suspicious_tcp_syn_probing       = 18,
+  flow_alert_suspicious_tcp_probing           = 17, /* No longer used, can be recycled */
+  flow_alert_suspicious_tcp_syn_probing       = 18, /* No longer used, can be recycled */
   flow_alert_tcp_connection_issues            = 19, /* No longer used, can be recycled */
   flow_alert_tcp_connection_refused           = 20,
   flow_alert_tcp_severe_connection_issues     = 21, /* No longer used, merged with flow_alert_tcp_connection_issues */
@@ -442,6 +465,8 @@ typedef enum {
   flow_alert_iec_unexpected_type_id           = 55, /* To be implemented */
   flow_alert_tcp_no_data_exchanged            = 56,
   flow_alert_remote_access                    = 57,
+  flow_alert_lateral_movement                 = 58,
+  flow_alert_periodicity_changed              = 59,
   
   MAX_DEFINED_FLOW_ALERT_TYPE, /* Leave it as last member */
 
@@ -453,9 +478,10 @@ typedef struct {
   AlertCategory category;
 } FlowAlertType;
 
+
 /* 
-   Each C++ host callback must have an entry here,
-   returned with HostCallbackID getID()
+   Each C++ host check must have an entry here,
+   returned with HostCheckID getID()
 */
 typedef enum {
   host_alert_normal                      =  0,
@@ -472,6 +498,7 @@ typedef enum {
   host_alert_score_anomaly               = 11,
   host_alert_remote_connection           = 12,
   host_alert_host_log                    = 13,
+  host_alert_dangerous_host              = 14,
 
   MAX_DEFINED_HOST_ALERT_TYPE, /* Leave it as last member */ 
   MAX_HOST_ALERT_TYPE = 16 /* Constrained by Bitmap16 engaged_alerts_map inside HostAlertableEntity */
@@ -486,23 +513,24 @@ class HostAlert;
 typedef std::pair<HostAlert *, bool> HostAlertReleasedPair;
 
 typedef enum {
-  host_callback_http_replies_requests_ratio = 0,
-  host_callback_dns_replies_requests_ratio,
-  host_callback_syn_flood,
-  host_callback_syn_scan,
-  host_callback_flow_flood,
-  host_callback_ntp_server_contacts,
-  host_callback_smtp_server_contacts,
-  host_callback_dns_server_contacts,
-  host_callback_score_host,
-  host_callback_p2p_traffic,
-  host_callback_dns_traffic,
-  host_callback_flow_anomaly,
-  host_callback_score_anomaly,
-  host_callback_remote_connection,
+  host_check_http_replies_requests_ratio = 0,
+  host_check_dns_replies_requests_ratio,
+  host_check_syn_flood,
+  host_check_syn_scan,
+  host_check_flow_flood,
+  host_check_ntp_server_contacts,
+  host_check_smtp_server_contacts,
+  host_check_dns_server_contacts,
+  host_check_score_host,
+  host_check_p2p_traffic,
+  host_check_dns_traffic,
+  host_check_flow_anomaly,
+  host_check_score_anomaly,
+  host_check_remote_connection,
+  host_check_dangerous_host,
 
-  NUM_DEFINED_HOST_CALLBACKS, /* Leave it as last member */ 
-} HostCallbackID;
+  NUM_DEFINED_HOST_CHECKS, /* Leave it as last member */ 
+} HostCheckID;
 
 typedef enum {
   flow_lua_call_exec_status_ok = 0,                             /* Call executed successfully                                */
@@ -574,7 +602,8 @@ typedef enum {
   column_device_type,
   column_arp_total,
   column_arp_sent,
-  column_arp_rcvd
+  column_arp_rcvd,
+  column_last_seen
 } sortField;
 
 typedef struct {
@@ -591,13 +620,6 @@ typedef struct {
   const char *class_name;
   const luaL_Reg *class_methods;
 } ntop_class_reg;
-
-typedef enum {
-  callback_flow_create,
-  callback_flow_delete,
-  callback_flow_update,
-  callback_flow_proto_callback
-} LuaCallback;
 
 typedef enum {
   walker_hosts = 0,
@@ -779,7 +801,8 @@ struct ntopngLuaContext {
   NetworkStats *network;
   Flow *flow;
   bool localuser;
-
+  u_int16_t observationPointId;
+  
   /* Capabilities bitmap */
   u_int64_t capabilities;
 
@@ -880,9 +903,11 @@ typedef enum {
   capability_active_monitoring = 3,
   capability_preferences = 4,
   capability_developer = 5,
-  capability_user_scripts = 6,
+  capability_checks = 6,
   capability_flowdevices = 7,
-  MAX_NUM_USER_CAPABILITIES = 8 /* Do NOT go above 63 */
+  capability_alerts = 8,
+  capability_historical_flows = 9,
+  MAX_NUM_USER_CAPABILITIES = 10 /* Do NOT go above 63 */
 } UserCapabilities;
 
 typedef struct {

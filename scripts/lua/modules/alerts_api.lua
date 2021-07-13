@@ -115,7 +115,7 @@ function alerts_api.addAlertGenerationInfo(alert_json, current_script)
     }
   else
     -- NOTE: there are currently some internally generated alerts which
-    -- do not use the user_scripts api (e.g. the ntopng startup)
+    -- do not use the checks api (e.g. the ntopng startup)
     --tprint(debug.traceback())
   end
 end
@@ -529,9 +529,9 @@ end
 
 -- TODO document
 function alerts_api.checkThresholdAlert(params, alert_type, value, attacker, victim)
-  local user_scripts = require "user_scripts"
-  local script = params.user_script
-  local threshold_config = params.user_script_config
+  local checks = require "checks"
+  local script = params.check
+  local threshold_config = params.check_config
   local alarmed = false  
   local threshold = threshold_config.threshold or threshold_config.default_contacts
 
@@ -539,19 +539,19 @@ function alerts_api.checkThresholdAlert(params, alert_type, value, attacker, vic
   -- The function depends on the operator, i.e., "gt", or "lt".
   -- When there's no operator, the default "gt" function is taken from the available
   -- operation functions
-  local op_fn = user_scripts.operator_functions[threshold_config.operator] or user_scripts.operator_functions.gt
+  local op_fn = checks.operator_functions[threshold_config.operator] or checks.operator_functions.gt
   if op_fn and op_fn(value, threshold) then alarmed = true end
 
   -- tprint({params.cur_alerts, alert_type.meta, params.granularity, script.key --[[ the subtype--]], alarmed})
 
   local alert = alert_type.new(
-    params.user_script.key,
+    params.check.key,
     value,
     threshold_config.operator,
     threshold
   )
 
-  alert:set_score(100)
+  alert:set_score_error()
   alert:set_granularity(params.granularity)
   alert:set_subtype(script.key)
 
@@ -588,9 +588,9 @@ function alerts_api.handlerPeerBehaviour(params, stats, tot_anomalies, host_ip, 
 
    -- Setting score (TODO check the score value)
    if threshold and tot_anomalies and tot_anomalies > threshold then
-      alert_unexpected_behaviour:set_score(100)
+      alert_unexpected_behaviour:set_score_error()
    else
-      alert_unexpected_behaviour:set_score(50)
+      alert_unexpected_behaviour:set_score_warning()
    end
       
    alert_unexpected_behaviour:set_granularity(params.granularity)
@@ -609,14 +609,14 @@ end
 -- ##############################################
 
 -- An alert check function which checks for anomalies.
--- The user_script key is the type of the anomaly to check.
--- The user_script must implement a anomaly_type_builder(anomaly_key) function
+-- The check key is the type of the anomaly to check.
+-- The check must implement a anomaly_type_builder(anomaly_key) function
 -- which returns a type_info for the given anomaly.
 function alerts_api.anomaly_check_function(params)
-  local anomal_key = params.user_script.key
-  local type_info = params.user_script.anomaly_type_builder()
+  local anomal_key = params.check.key
+  local type_info = params.check.anomaly_type_builder()
 
-  type_info:set_score(100) -- TODO check the score value
+  type_info:set_score_error() -- TODO check the score value
   type_info:set_granularity(params.granularity)
   type_info:set_subtype(anomal_key)
 
@@ -694,8 +694,8 @@ end
 
 -- ##############################################
 
-function alerts_api.invokeScriptHook(user_script, configset, hook_fn, p1, p2, p3)
-  current_script = user_script
+function alerts_api.invokeScriptHook(check, configset, hook_fn, p1, p2, p3)
+  current_script = check
   current_configset = configset
 
   return(hook_fn(p1, p2, p3))

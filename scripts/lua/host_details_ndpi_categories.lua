@@ -25,7 +25,7 @@ local ago1h  = now - 3600
 local protos = interface.getnDPIProtocols()
 
 if(host == nil) then
-   print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "..i18n("ndpi_page.unable_to_find_host",{host_ip=host_ip}).."</div>")
+   print("<div class=\"alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "..i18n("ndpi_page.unable_to_find_host",{host_ip=host_ip}).."</div>")
    return
 end
 
@@ -34,7 +34,7 @@ for k, v in pairs(host["ndpi_categories"]) do
    total = total + v["bytes"]
 end
 
-print("<tr><td colspan=2>Total</td><td class=\"text-right\">".. secondsToTime(host["total_activity_time"]) .."</td><td colspan=2 class=\"text-right\">" ..  bytesToSize(total).. "</td></tr>\n")
+print("<tr><td colspan=2>Total</td><td class=\"text-end\">".. secondsToTime(host["total_activity_time"]) .."</td><td colspan=2 class=\"text-end\">" ..  bytesToSize(total).. "</td></tr>\n")
 
 for k, v in pairsByKeys(host["ndpi_categories"], desc) do
    print("<tr><td>")
@@ -55,8 +55,8 @@ for k, v in pairsByKeys(host["ndpi_categories"], desc) do
    print(categories_utils.get_category_protocols_list(v.category))
    print("</td>")
 
-   print("<td class=\"text-right\">" .. secondsToTime(v["duration"]) .. "</td>")
+   print("<td class=\"text-end\">" .. secondsToTime(v["duration"]) .. "</td>")
 
-   print("<td class=\"text-right\">" .. bytesToSize(t).. "</td><td class=\"text-right\">" .. round((t * 100)/total, 2).. " %</td></tr>\n")
+   print("<td class=\"text-end\">" .. bytesToSize(t).. "</td><td class=\"text-end\">" .. round((t * 100)/total, 2).. " %</td></tr>\n")
 
 end

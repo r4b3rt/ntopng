@@ -4,15 +4,15 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">{{ i18n('current_filter') }}: <span class="alert_label"></span></h5>
-          <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body {{dialog.custom_dialog_class}}">
-	  <div class="form-group">
+	  <div class="form-group mb-3 ">
 	    <label>{{ i18n('current_filter') }} "<b><span class="alert_label"></b>". {{ i18n('current_filter_for') }}:</span></label>
 	    <div class="form-check">
 	      <input class="form-check-input" type="radio" name="alert_addr" id="all_radio" value="" checked>
 	      <label class="form-check-label" for="all_radio">
-		<span id="all_addr"> {{ i18n('all') }} </span>
+		<span id="all_addr"> {{ i18n('show_alerts.filter_disable_check') }} </span>
 	      </label>
 	    </div>
 	    <div class="form-check">
@@ -29,36 +29,32 @@
 	    </div>
 	  </div>
 
-	  <hr class="separator">
-
 	  <div class="message {{dialog.custom_alert_class or "alert alert-danger"}} -1" id="flow_alerts_danger_msg">
             {*dialog.delete_message*}
           </div>
         <hr class="separator">
 
-	  <div class="form-group">
+	  <div class="form-group mb-3 ">
             <div class="custom-control custom-switch">
 	      <input type="checkbox" class="custom-control-input" id="delete_alerts_switch" checked="checked">
 	      <label class="custom-control-label" for="delete_alerts_switch">{*dialog.delete_alerts*}</label>
 	    </div>
 	  </div>
-    <div id="script-description" class="alert alert-light border" role="alert">
+    <div id="script-description" class="alert alert-warning border" role="alert">
       {*dialog.message*}
 </div>
 	</div>
-        {% if dialog.no_footer then %}
-          {# empty #}
-        {% else %}
-
         <div class="modal-footer">
 	  <span class="invalid-feedback" id="{{dialog.id}}_error"></span>
-          {% if dialog.action ~= nil then %}
-            <button type="submit" class="btn {{dialog.confirm_button or "btn-primary"}}" onclick="{{dialog.action}}">{*dialog.confirm*}</button>
-          {% else %}
-            <button id="btn-confirm-action" type="submit" class="btn {{dialog.confirm_button or "btn-primary"}}">{*dialog.confirm*}</button>
-          {% end %}
+	  {% if ntop.isEnterpriseM() or ntop.getInfo()["oem"] then %}
+          <button id="btn-confirm-action" type="submit" class="btn {{dialog.confirm_button or "btn-primary"}}">{*dialog.confirm*}</button>
+	  {% else %}
+	  <div id="script-description" class="alert alert-warning border" role="alert">
+	    {* i18n("show_alerts.disabled_alerts_not_available") *}
+	  </div>
+	  <button id="btn-confirm-action" type="submit" class="btn {{dialog.confirm_button or "btn-primary"}} disabled">{*dialog.confirm*}</button>
+	  {% end %}
         </div>
-        {% end %}
       </div>
     </div>
   </form>

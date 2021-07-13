@@ -19,8 +19,8 @@
  *
  */
 
-#ifndef _NOT_PURGED_FLOW_CALLBACK_ALERT_H_
-#define _NOT_PURGED_FLOW_CALLBACK_ALERT_H_
+#ifndef _NOT_PURGED_FLOW_ALERT_H_
+#define _NOT_PURGED_FLOW_ALERT_H_
 
 #include "ntop_includes.h"
 
@@ -29,12 +29,12 @@ class NotPurgedAlert : public FlowAlert {
   
  public:
   static FlowAlertType getClassType() { return { flow_alert_internals, alert_category_internals }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_WARNING; };
 
- NotPurgedAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ NotPurgedAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~NotPurgedAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("not_purged"); }
 };
 
-#endif /* _NOT_PURGED_FLOW_CALLBACK_ALERT_H_ */
+#endif /* _NOT_PURGED_FLOW_ALERT_H_ */

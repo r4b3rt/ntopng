@@ -13,14 +13,18 @@ end
 require "lua_utils"
 local graph_utils = require "graph_utils"
 local alert_utils = require "alert_utils"
+local tag_utils = require("tag_utils")
 local page_utils = require("page_utils")
 local ts_utils = require("ts_utils")
 local ui_utils = require("ui_utils")
 local local_network_pools = require ("local_network_pools")
+local auth = require "auth"
 
 local network        = _GET["network"]
 local network_name   = _GET["network_cidr"]
 local page           = _GET["page"]
+
+local network_behavior_update_freq = 300 -- Seconds
 
 local ifstats = interface.getStats()
 local ifId = ifstats.id
@@ -45,8 +49,9 @@ page_utils.set_active_menu_entry(page_utils.menu_entries.networks)
 dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
 
 if(network == nil) then
-    print("<div class=\"alert alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> ".. i18n("network_details.network_parameter_missing_message") .. "</div>")
-    return
+   print("<div class=\"alert alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> ".. i18n("network_details.network_parameter_missing_message") .. "</div>")
+   dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")
+   return
 end
 
 --[[
@@ -63,10 +68,10 @@ page_utils.print_navbar(title, nav_url,
 			      label = "<i class='fas fa-lg fa-chart-area'></i>",
 			   },
 			   {
-			      hidden = interface.isPcapDumpInterface() or not areAlertsEnabled(),
+			      hidden = not areAlertsEnabled() or  not auth.has_capability(auth.capabilities.alerts),
 			      active = page == "alerts",
 			      page_name = "alerts",
-			      url = ntop.getHttpPrefix() .. "/lua/alert_stats.lua?&page=network&network_name=" .. network_name .. ",eq",
+			      url = ntop.getHttpPrefix() .. "/lua/alert_stats.lua?&page=network&network_name=" .. network_name .. tag_utils.SEPARATOR .. "eq",
 			      label = "<i class=\"fas fa-exclamation-triangle fa-lg\"></i>",
 			   },
 			   {
@@ -97,16 +102,30 @@ if page == "historical" then
       subnet = network_name,
     }
 
-    graph_utils.drawGraphs(ifId, schema, tags, _GET["zoom"], url, selected_epoch, {
-      timeseries = {
-	 {schema="subnet:traffic",             label=i18n("traffic"), split_directions = true --[[ split RX and TX directions ]]},
-	 {schema="subnet:broadcast_traffic",   label=i18n("broadcast_traffic")},
-	 {schema="subnet:engaged_alerts",      label=i18n("show_alerts.engaged_alerts")},
-	 {schema="subnet:tcp_retransmissions", label=i18n("graphs.tcp_packets_retr"), nedge_exclude=1},
-	 {schema="subnet:tcp_out_of_order",    label=i18n("graphs.tcp_packets_ooo"), nedge_exclude=1},
-	 {schema="subnet:tcp_lost",            label=i18n("graphs.tcp_packets_lost"), nedge_exclude=1},
-	 {schema="subnet:tcp_keep_alive",      label=i18n("graphs.tcp_packets_keep_alive"), nedge_exclude=1},
+    local all_timeseries = {
+      {schema="subnet:traffic",             label=i18n("traffic"), split_directions = true --[[ split RX and TX directions ]]},
+      {schema="subnet:broadcast_traffic",   label=i18n("broadcast_traffic")},
+      {schema="subnet:engaged_alerts",      label=i18n("show_alerts.engaged_alerts")},
+      {schema="subnet:score",               label=i18n("score"), split_directions = true},
+      {schema="subnet:tcp_retransmissions", label=i18n("graphs.tcp_packets_retr"), nedge_exclude=1},
+      {schema="subnet:tcp_out_of_order",    label=i18n("graphs.tcp_packets_ooo"), nedge_exclude=1},
+      {schema="subnet:tcp_lost",            label=i18n("graphs.tcp_packets_lost"), nedge_exclude=1},
+      {schema="subnet:tcp_keep_alive",      label=i18n("graphs.tcp_packets_keep_alive"), nedge_exclude=1},
+    }
+
+    if ntop.isPro() then
+      local pro_timeseries = {
+        {schema="subnet:score_anomalies",     label=i18n("graphs.iface_score_anomalies")},
+        {schema="subnet:score_behavior",      label=i18n("graphs.iface_score_behavior"), split_directions = true, first_timeseries_only = true, metrics_labels = {i18n("graphs.score"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+        {schema="subnet:traffic_anomalies",   label=i18n("graphs.iface_traffic_anomalies")},
+        {schema="subnet:traffic_rx_behavior_v2", label=i18n("graphs.iface_traffic_rx_behavior"), split_directions = true, first_timeseries_only = true, time_elapsed = network_behavior_update_freq, value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_rcvd"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
+        {schema="subnet:traffic_tx_behavior_v2", label=i18n("graphs.iface_traffic_tx_behavior"), split_directions = true, first_timeseries_only = true, time_elapsed = network_behavior_update_freq,value_formatter = {"NtopUtils.fbits_from_bytes", "NtopUtils.bytesToSize"}, metrics_labels = {i18n("graphs.traffic_sent"), i18n("graphs.lower_bound"), i18n("graphs.upper_bound")}},
       }
+      all_timeseries = table.merge(all_timeseries, pro_timeseries)
+    end
+
+    graph_utils.drawGraphs(ifId, schema, tags, _GET["zoom"], url, selected_epoch, {
+      timeseries = all_timeseries,
     })
 elseif (page == "config") then
     if(not isAdministrator()) then
@@ -132,7 +151,7 @@ elseif (page == "config") then
    print [[<tr>
 	 <th>]] print(i18n("network_details.network_alias")) print[[</th>
 	 <td>
-         <input type="text" name="custom_name" class="form-control" placeholder="Custom Name" style="width: 280px;" value="]] print(custom_name) print[[ "
+         <input type="text" name="custom_name" class="form-control" placeholder="Custom Name" style="width: 280px;" value="]] print(custom_name) print[["
          ]] 
          local option_name = ntop.getLocalNetworkAlias(network_name) or nil
          if option_name then
@@ -171,7 +190,10 @@ elseif (page == "config") then
   ]])
 
 elseif page == "traffic_report" then
-    dofile(dirs.installdir .. "/pro/scripts/lua/enterprise/traffic_report.lua")
+   package.path = dirs.installdir .. "/pro/scripts/lua/enterprise/?.lua;" .. package.path
+   local traffic_report = require "traffic_report"
+
+   traffic_report.generate_traffic_report()
 end
 
 dofile(dirs.installdir .. "/scripts/lua/inc/footer.lua")

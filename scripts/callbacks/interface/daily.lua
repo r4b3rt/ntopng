@@ -26,8 +26,8 @@ local _ifname = ifstats.name
 
 local interface_id = getInterfaceId(_ifname)
 
--- Setting up periodic user scripts
-local k = string.format("ntopng.cache.ifid_%i.user_scripts.request.granularity_day", interface.getId())
+-- Setting up periodic checks
+local k = string.format("ntopng.cache.ifid_%i.checks.request.granularity_day", interface.getId())
 ntop.setCache(k, "1")
 
 local data_retention = data_retention_utils.getDataRetentionDays()

@@ -11,8 +11,15 @@ local template_utils = require("template_utils")
 
 local ui_utils = {}
 
-function ui_utils.render_configuration_footer(item)
-    return template_utils.gen('pages/components/manage-configuration-link.template', {item = item})
+function ui_utils.render_configuration_footer(item,page)
+   local ret = template_utils.gen('pages/components/manage-configuration-link.template', {item = item})
+
+   if(((page == "host") or (page == nil))
+      and (item == "pool") and (ntop.isPro() or ntop.isEnterpriseM() or ntop.isEnterpriseL())) then
+      ret = ret .. template_utils.gen('pages/components/export-policy-configuration-link.template')
+   end
+   
+   return ret
 end
 
 --- Single note element: { content = 'note description', hidden = true|false }
@@ -93,6 +100,7 @@ function ui_utils.render_datetime_range_picker(options)
     options.max_delta_out = ternary(options.max_delta_in ~= nil, options.max_delta_in, 43200)
     options.tags = ternary(options.tags ~= nil, table.merge(tags, options.tags), tags)
     options.tags.localization = ternary(options.tags.i18n ~= nil, table.merge(tags_localization, options.tags.i18n), tags_localization)
+    options.tags.view_only = ternary(options.tags.view_only ~= nil, options.tags.view_only, false)
 
     return template_utils.gen("pages/components/range-picker.template", options)
 end
@@ -115,6 +123,20 @@ function ui_utils.render_table_picker(name, context, modals)
             js_columns = context.table.js_columns, -- a custom javascript code to format the columns
         }
     })
+end
+
+---Render a Tags Input box.
+--@param name The component unique name
+---@param tags A table containing the values
+---@return string
+function ui_utils.render_tag_input(name, tags)
+    local options = {
+       instance_name = name,
+       json = json,
+       tags = tags or {}, -- initial tags
+    }
+
+    return template_utils.gen("pages/components/tag-input.template", options)
 end
 
 return ui_utils

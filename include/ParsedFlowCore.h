@@ -30,7 +30,7 @@ class ParsedFlowCore {
   u_int8_t src_tos, dst_tos;
   IpAddress src_ip, dst_ip;
   u_int32_t first_switched, last_switched;
-  u_int16_t deviceId;
+  u_int16_t observationPointId;
   u_int8_t version; /* 0 so far */
   u_int8_t l4_proto;
   u_int32_t device_ip;
@@ -38,7 +38,8 @@ class ParsedFlowCore {
   u_int16_t src_port, dst_port;
   u_int32_t inIndex, outIndex;
   ndpi_proto l7_proto;
-  u_int16_t vlan_id, pkt_sampling_rate;
+  VLANid vlan_id;
+  u_int16_t pkt_sampling_rate;
   u_int32_t in_pkts, in_bytes, out_pkts, out_bytes, vrfId;
   u_int32_t in_fragments, out_fragments;
   u_int32_t src_as, dst_as, prev_adjacent_as, next_adjacent_as;

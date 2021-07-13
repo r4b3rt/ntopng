@@ -9,6 +9,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 local plugins_utils = require("plugins_utils")
 local template_utils = require("template_utils")
 local recording_utils = require("recording_utils")
+local alert_entities = require("alert_entities")
 
 local page_utils = {}
 
@@ -33,6 +34,7 @@ page_utils.menu_sections = {
    if_stats      = {key = "if_stats", i18n_title = "interface", icon = "fas fa-ethernet"},
    system_stats  = {key = "system_stats", i18n_title = "system", icon = "fas fa-desktop"},
    admin         = {key = "admin", i18n_title = "settings", icon = "fas fa-cog"},
+   alert_exclusions = {key = "alert_exclusions", i18n_title = "edit_check.exclusion_list", icon = "fas fa-bell-slash"},
    dev           = {key = "dev", i18n_title = "developer", icon = "fas fa-code"},
    about         = {key = "about", i18n_title = "help", icon = "fas fa-life-ring"},
    health        = {key = "health", i18n_title = "health", icon = "fas fa-laptop-medical"},
@@ -40,16 +42,12 @@ page_utils.menu_sections = {
    tools         = {key = "tools", i18n_title = "tools", icon = "fas fa-cogs"},
    pools         = {key = "pools", i18n_title = "pools.pools", icon = "fas fa-users"},
    notifications = {key = "notifications", i18n_title = "endpoint_notifications.notifications", icon = "fas fa-bell"},
-   user_scripts  = {key = "user_scripts", i18n_title = "about.user_scripts" },
+   checks  = {key = "checks", i18n_title = "about.checks" },
    -- nEdge
    views         = {key = "hosts", i18n_title = "views", icon = "fas fa-bars"},
 }
 
 -- #################################
-
--- visible_iface: this flag is true when the page belong to interface view
--- visible_system: this flags is true when the page belong to system view
--- if both flags are true it means the pages are shared between views
 
 -- help_link: this variable contains the contextual link to the documentation
 
@@ -58,105 +56,109 @@ page_utils.menu_entries = {
    active_monitoring = {key = "active_monitor", i18n_title = "active_monitoring_stats.active_monitoring"},
 
    -- Dashboard
-    traffic_dashboard     = {key = "traffic_dashboard", i18n_title = "dashboard.traffic_dashboard", section = "dashboard", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/dashboard.html"},
-    network_discovery     = {key = "network_discovery", i18n_title = "discover.network_discovery",  section = "dashboard", visible_iface = true},
-    traffic_report        = {key = "traffic_report",    i18n_title = "report.traffic_report",    section = "dashboard", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/report.html"},
-    db_explorer           = {key = "db_explorer", i18n_title = "db_explorer.historical_data_explorer", section = "dashboard", visible_iface = true},
+    traffic_dashboard     = {key = "traffic_dashboard", i18n_title = "dashboard.traffic_dashboard", section = "dashboard", help_link = "https://www.ntop.org/guides/ntopng/web_gui/dashboard.html"},
+    network_discovery     = {key = "network_discovery", i18n_title = "discover.network_discovery",  section = "dashboard"},
+    traffic_report        = {key = "traffic_report",    i18n_title = "report.traffic_report",    section = "dashboard", help_link = "https://www.ntop.org/guides/ntopng/web_gui/report.html"},
+    db_explorer           = {key = "db_explorer", i18n_title = "db_explorer.historical_data_explorer", section = "dashboard"},
 
     -- Alerts
-    detected_alerts       = {key = "detected_alerts", i18n_title = "show_alerts.detected_alerts", section = "alerts", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/alerts.html"},
-    alerts_dashboard      = {key = "alerts_dashboard", i18n_title = "alerts_dashboard.alerts_dashboard", section = "alerts", visible_iface = true},
-    flow_alerts_explorer  = {key = "flow_alerts_explorer", i18n_title = "flow_alerts_explorer.label", section = "alerts", visible_iface = true},
+    detected_alerts       = {key = "detected_alerts", i18n_title = "show_alerts.detected_alerts", section = "alerts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/alerts.html"},
+    alerts_dashboard      = {key = "alerts_dashboard", i18n_title = "alerts_dashboard.alerts_dashboard", section = "alerts"},
+    flow_alerts_explorer  = {key = "flow_alerts_explorer", i18n_title = "flow_alerts_explorer.label", section = "alerts"},
 
     -- Flows
-    flows                 = {key = "flows", i18n_title = "flows", section = "flows", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/flows.html"},
-    flow_details          = {key = "flow_details", i18n_title = "flow_details.flow_details", section = "flows", visible_iface = true},
+    flows                 = {key = "flows", i18n_title = "flows", section = "flows", help_link = "https://www.ntop.org/guides/ntopng/web_gui/flows.html"},
+    flow_details          = {key = "flow_details", i18n_title = "flow_details.flow_details", section = "flows"},
 
     -- Hosts
-    hosts                 = {key = "hosts", i18n_title = "hosts", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html#"},
-    devices               = {key = "devices", i18n_title = "layer_2", section = "hosts", visible_iface = true},
-    networks              = {key = "networks", i18n_title = "networks", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#networks"},
-    vlans                 = {key = "vlans", i18n_title = "vlan_stats.vlans", section = "hosts", visible_iface = true},
-    host_pools            = {key = "host_pools", i18n_title = "host_pools.host_pools", section = "hosts", visible_iface = true},
-    autonomous_systems    = {key = "autonomous_systems", i18n_title = "as_stats.autonomous_systems", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#autonomous-systems"},
-    countries             = {key = "countries", i18n_title = "countries", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#countries"},
-    operating_systems     = {key = "operating_systems", i18n_title = "operating_systems", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#operating-systems"},
-    http_servers          = {key = "http_servers", i18n_title = "http_servers_stats.http_servers", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#http-servers-local"},
-    top_hosts             = {key = "top_hosts", i18n_title = "processes_stats.top_hosts", section = "hosts", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#top-hosts-local"},
-    hosts_treemap         = {key = "hosts_treemap", i18n_title = "tree_map.hosts_treemap", section = "hosts", visible_iface = true},
-    containers            = {key = "containers", i18n_title = "containers_stats.containers", section = "hosts", visible_iface = true},
-    pods                  = {key = "pods", i18n_title = "containers_stats.pods", section = "hosts", visible_iface = true},
+    hosts                 = {key = "hosts", i18n_title = "hosts", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html#"},
+    devices               = {key = "devices", i18n_title = "layer_2", section = "hosts"},
+    networks              = {key = "networks", i18n_title = "networks", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#networks"},
+    vlans                 = {key = "vlans", i18n_title = "vlan_stats.vlans", section = "hosts"},
+    host_pools            = {key = "host_pools", i18n_title = "host_pools.host_pools", section = "hosts"},
+    autonomous_systems    = {key = "autonomous_systems", i18n_title = "as_stats.autonomous_systems", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#autonomous-systems"},
+    countries             = {key = "countries", i18n_title = "countries", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#countries"},
+    operating_systems     = {key = "operating_systems", i18n_title = "operating_systems", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#operating-systems"},
+    http_servers          = {key = "http_servers", i18n_title = "http_servers_stats.http_servers", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#http-servers-local"},
+    top_hosts             = {key = "top_hosts", i18n_title = "processes_stats.top_hosts", section = "hosts", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#top-hosts-local"},
+    hosts_treemap         = {key = "hosts_treemap", i18n_title = "tree_map.hosts_treemap", section = "hosts"},
+    containers            = {key = "containers", i18n_title = "containers_stats.containers", section = "hosts"},
+    pods                  = {key = "pods", i18n_title = "containers_stats.pods", section = "hosts"},
 
     -- Interface
-    interface             = {key = "interface", i18n_title = "interface_ifname", section = "if_stats", visible_iface = true},
+    interface             = {key = "interface", i18n_title = "interface_ifname", section = "if_stats"},
 
     -- Pollers
-    snmp                  = {key = "snmp", i18n_title = "prefs.snmp", section = "pollers", visible_system = true},
-    infrastructure_dashboard = {key = "infrastructure_dashboard", i18n_title = "infrastructure_dashboard.infrastructure_dashboard", section = "pollers", visible_iface = false, visible_system = true},
+    snmp                  = {key = "snmp", i18n_title = "prefs.snmp", section = "pollers"},
+    infrastructure_dashboard = {key = "infrastructure_dashboard", i18n_title = "infrastructure_dashboard.infrastructure_dashboard", section = "pollers"},
 
     -- Status (Health)
-    system_status         = {key = "system_status", i18n_title = "system_status", section = "health", visible_system = true},
-    interfaces_status     = {key = "interfaces_status", i18n_title = "system_interfaces_status", section = "health", visible_system = true},
-    alerts_status         = {key = "alerts_status", i18n_title = "system_alerts_status", section = "health", visible_system = true},
+    system_status         = {key = "system_status", i18n_title = "system_status", section = "health"},
+    interfaces_status     = {key = "interfaces_status", i18n_title = "system_interfaces_status", section = "health"},
+    alerts_status         = {key = "alerts_status", i18n_title = "system_alerts_status", section = "health"},
 
     -- Exporters
     event_exporters       = {key = "event_exporters", i18n_title = "event_exporters.event_exporters", section = "exporters"},
     sflow_exporters       = {key = "sflow_exporters", i18n_title = "flows_page.sflow_devices", section = "exporters"},
-    flow_exporters        = {key = "flow_exporters", i18n_title = "flow_devices.exporters", section = "exporters", visible_iface = true, visible_system = false, help_link = "https://www.ntop.org"},
+    flow_exporters        = {key = "flow_exporters", i18n_title = "flow_devices.probe_exporters", section = "exporters", help_link = "https://www.ntop.org"},
+    observation_points    = {key = "observation_points", i18n_title = "flow_devices.observation_points", section = "exporters", help_link = "https://www.ntop.org"},
 
    -- Map
-   service_map            = {key = "service_map", i18n_title="service", section = "maps", visible_iface = true, visible_system = false},
-   periodicity_map        = {key = "periodicity_map", i18n_title="periodicity", section = "maps", visible_iface = true, visible_system = false},
-   geo_map                = {key = "geo_map", i18n_title = "geo_map.geo_map", section = "maps", visible_iface = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#geo-map"},
-   hosts_map              = {key = "hosts_map", i18n_title = "flows_page.hosts", section = "maps", visible_iface = true},
+   service_map            = {key = "service_map", i18n_title="service", section = "maps"},
+   periodicity_map        = {key = "periodicity_map", i18n_title="periodicity", section = "maps"},
+   geo_map                = {key = "geo_map", i18n_title = "geo_map.geo_map", section = "maps", help_link = "https://www.ntop.org/guides/ntopng/web_gui/hosts.html?#geo-map"},
+   hosts_map              = {key = "hosts_map", i18n_title = "flows_page.hosts", section = "maps"},
    
    -- Settings
    nedge_users            = {key = "nedge_users", i18n_title = "manage_users.manage_users", section = "admin", help_link = "https://www.ntop.org/guides/nedge/users.html#"},
-   manage_users           = {key = "manage_users", i18n_title = ternary(is_nedge, "nedge.system_users", "manage_users.manage_users"), section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#manage-users"},
-   preferences            = {key = "preferences", i18n_title = "prefs.preferences", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#preferences"},
-   scripts_config         = {key = "scripts_config", i18n_title = "about.user_scripts", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_hosts   = {key = "scripts_config", subkey="hosts", i18n_title = "hosts", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_interfaces = {key = "scripts_config", subkey="interfaces", i18n_title = "interfaces", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_networks = {key = "scripts_config", subkey="networks", i18n_title = "report.local_networks", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_snmp_devices = {key = "scripts_config", subkey="snmp_devices", i18n_title = "snmp.snmp_devices", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_flows   = {key = "scripts_config", subkey="flows", i18n_title = "flows", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_system  = {key = "scripts_config", subkey="system", i18n_title = "system", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   scripts_config_syslog  = {key = "scripts_config", subkey="syslog", i18n_title = "syslog.syslog", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/user_scripts.html"},
-   license                = {key = "license", i18n_title = "license_page.license", section = "admin", visible_iface = true, visible_system = true},
-   profiles               = {key = "profiles", i18n_title = "traffic_profiles.traffic_profiles", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/advanced_features/traffic_profiles.html"},
-   categories             = {key = "categories", i18n_title = "custom_categories.apps_and_categories", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/categories.html#custom-applications"},
-   category_lists         = {key = "category_lists", i18n_title = "category_lists.category_lists", section = "admin", visible_iface = true, visible_system = true},
-   device_protocols       = {key = "device_protocols", i18n_title = "device_protocols.device_protocols", section = "admin", visible_iface = true, visible_system = true},
-   conf_backup            = {key = "conf_backup", i18n_title = "conf_backup.conf_backup", section = "admin", visible_iface = true, visible_system = true},
-   conf_restore           = {key = "conf_restore", i18n_title = "conf_backup.conf_restore", section = "admin", visible_iface = true, visible_system = true},
-   manage_data            = {key = "manage_data", i18n_title = "manage_data.manage_data", section = "admin", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#manage-data"},
-   manage_configurations  = {key = "manage_configurations", i18n_title = "manage_configurations.manage_configurations", section = "admin", visible_iface = false, visible_system = true},
+   manage_users           = {key = "manage_users", i18n_title = ternary(is_nedge, "nedge.system_users", "manage_users.manage_users"), section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#manage-users"},
+   preferences            = {key = "preferences", i18n_title = "prefs.preferences", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#preferences"},
+   scripts_config         = {key = "scripts_config", i18n_title = "about.checks", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_hosts   = {key = "scripts_config", subkey="hosts", i18n_title = alert_entities.host.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_interfaces = {key = "scripts_config", subkey="interfaces", i18n_title = alert_entities.interface.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_networks = {key = "scripts_config", subkey="networks", i18n_title = alert_entities.network.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_snmp_devices = {key = "scripts_config", subkey="snmp_devices", i18n_title = alert_entities.snmp_device.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_flows   = {key = "scripts_config", subkey="flows", i18n_title = alert_entities.flow.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_system  = {key = "scripts_config", subkey="system", i18n_title = alert_entities.system.i18n_label, section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   scripts_config_syslog  = {key = "scripts_config", subkey="syslog", i18n_title = "syslog.syslog", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   alert_exclusions       = {key = "alert_exclusions", i18n_title = "edit_check.exclusion_list", section = "alert_exclusions", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   alert_exclusions_hosts = {key = "alert_exclusions", subkey="hosts", i18n_title = alert_entities.host.i18n_label, section = "alert_exclusions", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   alert_exclusions_flows = {key = "alert_exclusions", subkey="flows", i18n_title = alert_entities.flow.i18n_label, section = "alert_exclusions", help_link = "https://www.ntop.org/guides/ntopng/web_gui/checks.html"},
+   license                = {key = "license", i18n_title = "license_page.license", section = "admin"},
+   profiles               = {key = "profiles", i18n_title = "traffic_profiles.traffic_profiles", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/advanced_features/traffic_profiles.html"},
+   categories             = {key = "categories", i18n_title = "custom_categories.apps_and_categories", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/categories.html#custom-applications"},
+   category_lists         = {key = "category_lists", i18n_title = "category_lists.category_lists", section = "admin"},
+   device_protocols       = {key = "device_protocols", i18n_title = "device_protocols.device_protocols", section = "admin"},
+   conf_backup            = {key = "conf_backup", i18n_title = "conf_backup.conf_backup", section = "admin"},
+   conf_restore           = {key = "conf_restore", i18n_title = "conf_backup.conf_restore", section = "admin"},
+   manage_data            = {key = "manage_data", i18n_title = "manage_data.manage_data", section = "admin", help_link = "https://www.ntop.org/guides/ntopng/web_gui/settings.html#manage-data"},
+   manage_configurations  = {key = "manage_configurations", i18n_title = "manage_configurations.manage_configurations", section = "admin"},
 
    -- Notifications
-   endpoint_notifications = {key = "endpoint_notifications", i18n_title = "endpoint_notifications.endpoint_list", section="notifications", visible_iface = false, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_endpoints.html"},
-   endpoint_recipients    = {key = "endpoint_recipients", i18n_title = "endpoint_notifications.enpoint_recipients_list", section="notifications", visible_iface = false, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_endpoints.html"},
+   endpoint_notifications = {key = "endpoint_notifications", i18n_title = "endpoint_notifications.endpoint_list", section="notifications", help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_endpoints.html"},
+   endpoint_recipients    = {key = "endpoint_recipients", i18n_title = "endpoint_notifications.enpoint_recipients_list", section="notifications", help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_endpoints.html"},
 
    -- Tools
    export_data            = {key = "export_data", i18n_title = "manage_data.export", section = "tools"},
 
    -- Pools
-   host_members           = {key = "host_members", i18n_title = "host_pools.host_members", section = "pools", visible_iface = false, visible_system = true},
-   manage_pools           = {key = "manage_pools", i18n_title = "pools.pools", section = "pools", visible_iface = false, visible_system = true},
+   host_members           = {key = "host_members", i18n_title = "host_pools.host_members", section = "pools"},
+   manage_pools           = {key = "manage_pools", i18n_title = "pools.pools", section = "pools"},
 
    -- Home
    live_capture           = {key = "live_capture", i18n_title = "live_capture.active_live_captures", section = "home"},
 
    -- Developer
-   directories            = {key = "directories", i18n_title = "about.directories", section = "dev", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/plugins/distributing_plugins.html"},
-   plugins                = {key = "plugins", i18n_title = "plugins", section = "dev", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/basic_concepts/plugins.html"},
-   user_scripts_dev       = {key = "user_scripts_dev", i18n_title = "about.user_scripts", section = "dev", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/plugins/user_scripts.html"},
-   plugin_browser         = {key = "plugin_browser", i18n_title = "plugin_browser", section = "dev", visible_iface = true, visible_system = true},
-   alert_definitions      = {key = "alert_definitions", i18n_title = "about.alert_defines", section = "dev", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_definitions.html"},
+   directories            = {key = "directories", i18n_title = "about.directories", section = "dev", help_link = "https://www.ntop.org/guides/ntopng/plugins/distributing_plugins.html"},
+   plugins                = {key = "plugins", i18n_title = "plugins", section = "dev", help_link = "https://www.ntop.org/guides/ntopng/basic_concepts/plugins.html"},
+   checks_dev       = {key = "checks_dev", i18n_title = "about.checks", section = "dev", help_link = "https://www.ntop.org/guides/ntopng/plugins/checks.html"},
+   plugin_browser         = {key = "plugin_browser", i18n_title = "plugin_browser", section = "dev"},
+   alert_definitions      = {key = "alert_definitions", i18n_title = "about.alert_defines", section = "dev", help_link = "https://www.ntop.org/guides/ntopng/plugins/alert_definitions.html"},
    api                    = {key = "api", i18n_title = "lua_c_api", section = "dev"},
    
    -- Help
-   about                  = {key = "about", i18n_title = "about.about", section = "about", visible_iface = true, visible_system = true, help_link = "https://www.ntop.org/guides/ntopng/web_gui/help_menu.html?#about"},
-   telemetry              = {key = "telemetry", i18n_title = "telemetry", section = "about", visible_iface = true, visible_system = true},
+   about                  = {key = "about", i18n_title = "about.about", section = "about", help_link = "https://www.ntop.org/guides/ntopng/web_gui/help_menu.html?#about"},
+   telemetry              = {key = "telemetry", i18n_title = "telemetry", section = "about"},
    blog                   = {key = "blog", i18n_title = "about.ntop_blog", section = "about"},
    telegram               = {key = "telegram", i18n_title = "about.telegram", section = "about"},
    report_issue           = {key = "report_issue", i18n_title = "about.report_issue", section = "about"},
@@ -189,12 +191,11 @@ end
 
 -- NOTE: this function must be called after page_utils.set_active_menu_entry
 function page_utils.print_page_title(title)
-
    local help_link = page_utils.menu_entries[active_entry].help_link or ""
    print("<header class='mb-3 d-flex align-items-center'>")
    print("<h2 class='d-inline-block'>".. title .."</h2>")
    if (not isEmptyString(help_link)) then
-      print("<a data-toggle='tooltip' title='".. i18n("open_documentation") .."' target='_newtab' href='".. help_link .."' class='text-muted ml-auto'><i class='fas fa-question-circle'></i></a>")
+      print("<a data-bs-toggle='tooltip' title='".. i18n("open_documentation") .."' target='_newtab' href='".. help_link .."' class='text-muted ms-auto'><i class='fas fa-question-circle'></i></a>")
    end
    print("</header>")
 
@@ -259,7 +260,7 @@ end
 function page_utils.is_dark_mode_enabled(theme)
 
    local dark_mode
-   local theme = theme or ntop.getPref("ntopng.prefs.theme")
+   local theme = theme or ntop.getPref("ntopng.user." .. _SESSION["user"] .. ".theme")
 
    if (isEmptyString(theme)) then
       dark_mode = false
@@ -283,22 +284,23 @@ function page_utils.print_header(title)
     page_title = info.product .. " - " .. title
   end
 
-  print [[<!DOCTYPE html>
-<html>
-  <head>
+  print [[
+   <!DOCTYPE html>
+   <html>
+   <head>
     <title>]] print(page_title) print[[</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-   ]]
+
+    <link href="]] print(http_prefix) print[[/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="]] print(http_prefix) print[[/css/minified/ntopng.min.css?]] print(static_file_epoch) print[[" rel="stylesheet"> ]]
+
     if (dark_mode) then
-      print[[<link href="]] print(http_prefix) print[[/css/minified/bootstrap-orange.min.css" rel="stylesheet">]]
       print[[<link href="]] print(http_prefix) print[[/css/minified/dark-mode.min.css?]] print(static_file_epoch) print[[" rel="stylesheet">]]
-    else
-      print[[ <link href="]] print(http_prefix) print[[/bootstrap-4.4.0-dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-SI27wrMjH3ZZ89r4o+fGIJtnzkAnFs3E4qz9DIYioCQ5l9Rd/7UAa8DHcaL8jkWt" crossorigin="anonymous">]]
     end
+
     print[[
-    <link href="]] print(http_prefix) print[[/css/minified/ntopng.min.css?]] print(static_file_epoch) print[[" rel="stylesheet">
-    <link href="]] print(http_prefix) print[[/css/minified/fontawesome-custom.min.css" rel="stylesheet">
+    <link href="]] print(http_prefix) print[[/fontawesome-free-5.11.2-web/css/all.min.css" rel="stylesheet">
     <link href="]] print(http_prefix) print[[/css/minified/tempusdominus.min.css" rel="stylesheet">
     <link href="]] print(http_prefix) print[[/css/minified/heatmap.min.css" rel="stylesheet">
     <link href="]] print(http_prefix) print[[/css/minified/rickshaw.min.css" type="text/css" rel="stylesheet">
@@ -306,12 +308,12 @@ function page_utils.print_header(title)
     <link href="]] print(http_prefix) print[[/selectpicker/css/bootstrap-select.min.css" rel="stylesheet">
 
    <style>
-   .flag {
-      width: 16px;
-      height: 11px;
-      margin-top: -5px;
-      background:url(]] print(http_prefix) print[[/img/flags.png) no-repeat
-   }
+      .flag {
+         width: 16px;
+         height: 11px;
+         margin-top: -5px;
+         background:url(]] print(http_prefix) print[[/img/flags.png) no-repeat
+      }
    </style>
     <link href="]] print(http_prefix) print[[/css/flags.css" rel="stylesheet">
     <link href="]] print(http_prefix) print[[/css/pie-chart.css" rel="stylesheet">
@@ -322,12 +324,10 @@ function page_utils.print_header(title)
       <script src="]] print(http_prefix) print[[/js/html5shiv.js"></script>
     <![endif]-->
     <script type="text/javascript" src="]] print(http_prefix) print[[/js/jquery_bootstrap.min.js?]] print(static_file_epoch) print[["></script>
-    <script type="text/javascript" src="]] print(http_prefix) print[[/popper-1.12.9/js/popper.min.js" crossorigin="anonymous"></script>
-    <script type="text/javascript" src="]] print(http_prefix) print[[/bootstrap-4.4.0-dist/js/bootstrap.min.js?]] print(static_file_epoch) print[[" integrity="sha384-3qaqj0lc6sV/qpzrc1N5DC6i1VRn/HyX4qdPaiEFbn54VjQBEU341pvjz7Dv3n6P" crossorigin="anonymous"></script>
+    <script type="text/javascript" src="]] print(http_prefix) print[[/js/popper/popper.min.js" crossorigin="anonymous"></script>
     <script type="text/javascript" src="]] print(http_prefix) print[[/js/deps.min.js?]] print(static_file_epoch) print[["></script>
     <script type="text/javascript" src="]] print(http_prefix) print[[/js/ntop.min.js?]] print(static_file_epoch) print[["></script>
     <script type="text/javascript" src="]] print(http_prefix) print[[/js/tempusdominus.min.js?]] print(static_file_epoch) print[["></script>
-    <script type="text/javascript" src="]] print(http_prefix) print[[/selectpicker/js/bootstrap-select.min.js?]] print(static_file_epoch) print[["></script>
   </head>]]
   print([[
      <body class="body ]].. (dark_mode and "dark" or "") ..[[">
@@ -351,7 +351,7 @@ function page_utils.print_header_minimal(title)
         <title>]] print(page_title) print[[</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <link href="]] print(http_prefix) print[[/bootstrap-4.4.0-dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-SI27wrMjH3ZZ89r4o+fGIJtnzkAnFs3E4qz9DIYioCQ5l9Rd/7UAa8DHcaL8jkWt" crossorigin="anonymous">
+        <link href="]] print(http_prefix) print[[/bootstrap/css/bootstrap.min.css" rel="stylesheet">
         <link href="]] print(http_prefix) print[[/fontawesome-free-5.11.2-web/css/fontawesome.css" rel="stylesheet">
         <link href="]] print(http_prefix) print[[/fontawesome-free-5.11.2-web/css/brands.css" rel="stylesheet">
         <link href="]] print(http_prefix) print[[/fontawesome-free-5.11.2-web/css/solid.css" rel="stylesheet">
@@ -454,7 +454,7 @@ local function print_submenu(section, container_list_name)
 	    print[["]]
 
             if section_has_submenu then
-               print[[ data-toggle="collapse" ]]
+               print[[ data-bs-toggle="collapse" ]]
             end
 
             print[[ href="]]
@@ -475,7 +475,7 @@ local function print_submenu(section, container_list_name)
             print[["]]
 
             if section_entry.entry.is_modal then
-               print(' data-toggle="modal"')
+               print(' data-bs-toggle="modal"')
             end
 
             if external_link then
@@ -551,7 +551,7 @@ local function print_section(section, list_name)
       print[[" ]]
 
      if section_has_submenu then
-        print[[ data-toggle="collapse" ]]
+        print[[ data-bs-toggle="collapse" ]]
      end
 
      print[[href="]]
@@ -583,9 +583,9 @@ function page_utils.print_menubar()
       logo_path = ntop.getHttpPrefix().."/img/custom_logo.png"
    end
 
-   local navbar_style = _POST["toggle_theme"] or ntop.getPref("ntopng.prefs.theme")
+   local navbar_style = _POST["toggle_theme"] or ntop.getPref("ntopng.user." .. _SESSION["user"] .. ".theme")
 
-   if ((navbar_style == nil) or (navbar_style == "")) then
+   if ((navbar_style == nil) or (navbar_style == "white") or (navbar_style == "")) then
       navbar_style = "default"
    end
 
@@ -606,7 +606,7 @@ function page_utils.print_menubar()
                })
                ..[[
             </form>
-            <button data-toggle="]] .. list_name .. [[" class='ml-5'><i class="fas fa-times"></i></button>
+            <button data-bs-toggle="]] .. list_name .. [[" class='ms-5 my-auto btn btn-close'></button>
       </div>
       <div class="mobile-menu-stats">
       ]])
@@ -764,12 +764,12 @@ function page_utils.generate_info_stats()
             <div class='up'>
                <i class="fas fa-arrow-up"></i>
                <span style='display: none;' class="network-load-chart-upload">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
-               <span class="text-right chart-upload-text"></span>
+               <span class="text-end chart-upload-text"></span>
             </div>
             <div class='down'>
                <i class="fas fa-arrow-down"></i>
                <span style='display: none;' class="network-load-chart-download">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
-               <span class="text-right chart-download-text"></span>
+               <span class="text-end chart-download-text"></span>
             </div>
          </a>
       ]])
@@ -777,7 +777,7 @@ function page_utils.generate_info_stats()
       return ([[
          <a href=']].. ntop.getHttpPrefix() ..[[/lua/if_stats.lua'>
             <span style='display: none;' class="network-load-chart-total">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
-            <span class="text-right chart-total-text"></span>
+            <span class="text-end chart-total-text"></span>
          </a>
       ]])
    end

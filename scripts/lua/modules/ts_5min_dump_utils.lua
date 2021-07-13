@@ -13,7 +13,7 @@ local host_pools_instance = host_pools:create()
 local callback_utils = require "callback_utils"
 local ts_utils = require "ts_utils_core"
 local format_utils = require "format_utils"
-local user_scripts = require "user_scripts"
+local checks = require "checks"
 require "ts_5min"
 
 -- Set to true to debug host timeseries points timestamps
@@ -55,6 +55,108 @@ end
 
 -- ########################################################
 
+function ts_dump.subnet_update_rrds(when, ifstats, verbose)
+  local subnet_stats = interface.getNetworksStats()
+
+  for subnet,sstats in pairs(subnet_stats) do
+    if ntop.isPro() then
+      -- Check to see if the values are inserted
+      if not sstats["score_behavior"] or 
+          not sstats["traffic_rx_behavior"] or 
+          not sstats["traffic_tx_behavior"] then
+        goto continue
+      end
+      -- Score Behaviour
+      ts_utils.append("subnet:score_behavior", 
+      {ifid=ifstats.id, subnet=subnet,
+      value=sstats["score_behavior"]["value"], 
+      lower_bound=sstats["score_behavior"]["lower_bound"], 
+      upper_bound = sstats["score_behavior"]["upper_bound"]}, when)
+        
+      -- Score Anomalies
+      local anomaly = 0
+      if sstats["score_behavior"]["anomaly"] == true then
+        anomaly = 1
+      end
+        
+      ts_utils.append("subnet:score_anomalies", 
+      {ifid=ifstats.id, subnet=subnet, 
+      anomaly=anomaly}, when)   
+
+      -- Traffic Behaviour
+      ts_utils.append("subnet:traffic_rx_behavior_v2", 
+      {ifid=ifstats.id, subnet=subnet,
+      value=sstats["traffic_rx_behavior"]["value"], 
+      lower_bound = sstats["traffic_rx_behavior"]["lower_bound"], 
+      upper_bound = sstats["traffic_rx_behavior"]["upper_bound"]}, when)
+
+      ts_utils.append("subnet:traffic_tx_behavior_v2", 
+      {ifid=ifstats.id, subnet=subnet,
+      value=sstats["traffic_tx_behavior"]["value"], 
+      lower_bound=sstats["traffic_tx_behavior"]["lower_bound"], 
+      upper_bound = sstats["traffic_tx_behavior"]["upper_bound"]}, when)
+        
+      -- Traffic Anomalies
+      local anomaly = 0
+      if sstats["traffic_tx_behavior"]["anomaly"] == true or sstats["traffic_rx_behavior"]["anomaly"] == true then
+        anomaly = 1
+      end
+        
+      ts_utils.append("subnet:traffic_anomalies", 
+      {ifid=ifstats.id, subnet=subnet, 
+      anomaly=anomaly}, when)
+
+    ::continue::
+    end
+  end
+end
+
+-- ########################################################
+
+function ts_dump.iface_update_stats_rrds(when, ifstats, verbose)
+  if ntop.isPro() then
+    if not ifstats["score_behavior"] or 
+        not ifstats["traffic_rx_behavior"] or 
+        not ifstats["traffic_tx_behavior"] then
+      goto continue
+    end
+
+    -- Score Behaviour
+    ts_utils.append("iface:score_behavior", {ifid=ifstats.id,
+      value=ifstats["score_behavior"]["value"], lower_bound=ifstats["score_behavior"]["lower_bound"], 
+      upper_bound=ifstats["score_behavior"]["upper_bound"]}, when)
+      
+    -- Score Anomalies
+    local anomaly = 0
+    if ifstats["score_behavior"]["anomaly"] == true then
+      anomaly = 1
+    end
+      
+    ts_utils.append("iface:score_anomalies", {ifid=ifstats.id, anomaly=anomaly}, when)   
+
+    -- Traffic Behaviour
+    ts_utils.append("iface:traffic_rx_behavior_v2", {ifid=ifstats.id,
+      value=ifstats["traffic_rx_behavior"]["value"], lower_bound=ifstats["traffic_rx_behavior"]["lower_bound"], 
+      upper_bound=ifstats["traffic_rx_behavior"]["upper_bound"]}, when)
+
+    ts_utils.append("iface:traffic_tx_behavior_v2", {ifid=ifstats.id,
+      value=ifstats["traffic_tx_behavior"]["value"], lower_bound=ifstats["traffic_tx_behavior"]["lower_bound"], 
+      upper_bound=ifstats["traffic_tx_behavior"]["upper_bound"]}, when)
+      
+    -- Traffic Anomalies
+    local anomaly = 0
+    if ifstats["traffic_tx_behavior"]["anomaly"] == true or ifstats["traffic_rx_behavior"]["anomaly"] == true then
+      anomaly = 1
+    end
+      
+    ts_utils.append("iface:traffic_anomalies", {ifid=ifstats.id, anomaly=anomaly}, when)   
+
+  ::continue::
+  end
+end
+
+-- ########################################################
+
 function ts_dump.asn_update_rrds(when, ifstats, verbose)
   local asn_info = interface.getASesInfo({detailsLevel = "higher"})
 
@@ -63,7 +165,12 @@ function ts_dump.asn_update_rrds(when, ifstats, verbose)
 
     -- Save ASN bytes
     ts_utils.append("asn:traffic", {ifid=ifstats.id, asn=asn,
-              bytes_sent=asn_stats["bytes.sent"], bytes_rcvd=asn_stats["bytes.rcvd"]}, when)
+				    bytes_sent=asn_stats["bytes.sent"], bytes_rcvd=asn_stats["bytes.rcvd"]}, when)
+
+    ts_utils.append("asn:score",
+		     {ifid=ifstats.id, asn=asn,
+		      score=asn_stats["score"], scoreAsClient=asn_stats["score.as_client"], scoreAsServer=asn_stats["score.as_server"]}, when)
+
 
     ts_utils.append("asn:traffic_sent", {ifid=ifstats.id, asn=asn,
               bytes=asn_stats["bytes.sent"]}, when)
@@ -84,25 +191,77 @@ function ts_dump.asn_update_rrds(when, ifstats, verbose)
 		     millis_rtt=asn_stats["round_trip_time"]}, when)
 
     -- Save ASN TCP stats
-    ts_utils.append("asn:tcp_retransmissions",
-		    {ifid=ifstats.id, asn=asn,
-		     packets_sent=asn_stats["tcpPacketStats.sent"]["retransmissions"],
-		     packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["retransmissions"]}, when)
+    if not ifstats.isSampledTraffic then
+       ts_utils.append("asn:tcp_retransmissions",
+		       {ifid=ifstats.id, asn=asn,
+			packets_sent=asn_stats["tcpPacketStats.sent"]["retransmissions"],
+			packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["retransmissions"]}, when)
 
-    ts_utils.append("asn:tcp_out_of_order",
-		    {ifid=ifstats.id, asn=asn,
-		     packets_sent=asn_stats["tcpPacketStats.sent"]["out_of_order"],
-		     packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["out_of_order"]}, when)
+       ts_utils.append("asn:tcp_out_of_order",
+		       {ifid=ifstats.id, asn=asn,
+			packets_sent=asn_stats["tcpPacketStats.sent"]["out_of_order"],
+			packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["out_of_order"]}, when)
 
-    ts_utils.append("asn:tcp_lost",
-		    {ifid=ifstats.id, asn=asn,
-		     packets_sent=asn_stats["tcpPacketStats.sent"]["lost"],
-		     packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["lost"]}, when)
+       ts_utils.append("asn:tcp_lost",
+		       {ifid=ifstats.id, asn=asn,
+			packets_sent=asn_stats["tcpPacketStats.sent"]["lost"],
+			packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["lost"]}, when)
 
-    ts_utils.append("asn:tcp_keep_alive",
-		    {ifid=ifstats.id, asn=asn,
-		     packets_sent=asn_stats["tcpPacketStats.sent"]["keep_alive"],
-		     packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["keep_alive"]}, when)
+       ts_utils.append("asn:tcp_keep_alive",
+		       {ifid=ifstats.id, asn=asn,
+			packets_sent=asn_stats["tcpPacketStats.sent"]["keep_alive"],
+			packets_rcvd=asn_stats["tcpPacketStats.rcvd"]["keep_alive"]}, when)
+    end
+
+    if ntop.isPro() then
+      -- Check to see if the values are inserted
+      if not asn_stats["score_behavior"] or 
+          not asn_stats["traffic_rx_behavior"] or 
+          not asn_stats["traffic_tx_behavior"] then
+        goto continue
+      end
+      -- Score Behaviour
+      ts_utils.append("asn:score_behavior", 
+      {ifid=ifstats.id, asn=asn,
+      value=asn_stats["score_behavior"]["value"], 
+      lower_bound=asn_stats["score_behavior"]["lower_bound"], 
+      upper_bound = asn_stats["score_behavior"]["upper_bound"]}, when)
+        
+      -- Score Anomalies
+      local anomaly = 0
+      if asn_stats["score_behavior"]["anomaly"] == true then
+        anomaly = 1
+      end
+        
+      ts_utils.append("asn:score_anomalies", 
+      {ifid=ifstats.id, asn=asn, 
+      anomaly=anomaly}, when)   
+
+      -- Traffic Behaviour
+      ts_utils.append("asn:traffic_rx_behavior_v2", 
+      {ifid=ifstats.id, asn=asn,
+      value=asn_stats["traffic_rx_behavior"]["value"], 
+      lower_bound=asn_stats["traffic_rx_behavior"]["lower_bound"], 
+      upper_bound = asn_stats["traffic_rx_behavior"]["upper_bound"]}, when)
+
+      ts_utils.append("asn:traffic_tx_behavior_v2", 
+      {ifid=ifstats.id, asn=asn,
+      value=asn_stats["traffic_tx_behavior"]["value"], 
+      lower_bound=asn_stats["traffic_tx_behavior"]["lower_bound"], 
+      upper_bound = asn_stats["traffic_tx_behavior"]["upper_bound"]}, when)
+        
+      -- Traffic Anomalies
+      local anomaly = 0
+      if asn_stats["traffic_tx_behavior"]["anomaly"] == true or asn_stats["traffic_rx_behavior"]["anomaly"] == true then
+        anomaly = 1
+      end
+        
+      ts_utils.append("asn:traffic_anomalies", 
+      {ifid=ifstats.id, asn=asn, 
+      anomaly=anomaly}, when)   
+
+      ::continue::
+    end
   end
 end
 
@@ -117,6 +276,10 @@ function ts_dump.country_update_rrds(when, ifstats, verbose)
     ts_utils.append("country:traffic", {ifid=ifstats.id, country=country,
                 bytes_ingress=country_stats["ingress"], bytes_egress=country_stats["egress"],
                 bytes_inner=country_stats["inner"]}, when)
+   
+    ts_utils.append("country:score",
+		     {ifid=ifstats.id, country=country,
+		      score=country_stats["score"], scoreAsClient=country_stats["score.as_client"], scoreAsServer=country_stats["score.as_server"]}, when)
   end
 end
 
@@ -143,7 +306,11 @@ function ts_dump.vlan_update_rrds(when, ifstats, verbose)
       local vlan_id = vlan_stats["vlan_id"]
 
       ts_utils.append("vlan:traffic", {ifid=ifstats.id, vlan=vlan_id,
-                bytes_sent=vlan_stats["bytes.sent"], bytes_rcvd=vlan_stats["bytes.rcvd"]}, when)
+				       bytes_sent=vlan_stats["bytes.sent"], bytes_rcvd=vlan_stats["bytes.rcvd"]}, when)
+
+    ts_utils.append("vlan:score",
+		     {ifid=ifstats.id, vlan=vlan_id,
+		      score=vlan_stats["score"], scoreAsClient=vlan_stats["score.as_client"], scoreAsServer=vlan_stats["score.as_server"]}, when)
 
       -- Save VLAN ndpi stats
       if vlan_stats["ndpi"] ~= nil then
@@ -547,6 +714,9 @@ function ts_dump.host_update_rrd(when, hostname, host, ifstats, verbose, config)
     ts_utils.append("host:traffic", {ifid=ifstats.id, host=hostname,
 				     bytes_sent=host["bytes.sent"], bytes_rcvd=host["bytes.rcvd"]}, when)
 
+    -- Score
+    ts_utils.append("host:score", {ifid=ifstats.id, host=hostname, score_as_cli = host["score.as_client"], score_as_srv = host["score.as_server"]}, when)
+
     if(config.host_ts_creation == "full") then
       ts_dump.host_update_stats_rrds(when, hostname, host, ifstats, verbose)
 
@@ -565,7 +735,7 @@ end
 
 -- This performs all the 5 minutes tasks execept the timeseries dump
 function ts_dump.run_5min_tasks(_ifname, ifstats)
-  user_scripts.schedulePeriodicScripts("5mins")
+  checks.schedulePeriodicScripts("5mins")
 end
 
 -- ########################################################
@@ -644,6 +814,12 @@ function ts_dump.run_5min_dump(_ifname, ifstats, config, when)
   if config.asn_rrd_creation == "1" then
     ts_dump.asn_update_rrds(when, ifstats, verbose)
   end
+
+  -- Update 5min Network stats
+  ts_dump.subnet_update_rrds(when, ifstats, verbose)
+
+  -- Update 5min Network stats
+  ts_dump.iface_update_stats_rrds(when, ifstats, verbose)
 
   -- create RRD for Countries
   if config.country_rrd_creation == "1" then

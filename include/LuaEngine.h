@@ -102,7 +102,7 @@ class LuaEngine {
 
   inline lua_State* getState() const { return(L); }
  
-  bool switchInterface(struct lua_State *vm, const char *ifid, const char *user, const char *session);
+  bool switchInterface(struct lua_State *vm, const char *ifid, const char *user, const char * group, const char *session);
   void setInterface(const char * user, char * const ifname, u_int16_t ifname_len, bool * const is_allowed) const;
 };
 
@@ -181,6 +181,7 @@ extern void lua_push_bool_table_entry(lua_State *L, const char *key, bool value)
 
 int ntop_lua_check(lua_State* vm, const char* func, int pos, int expected_type);
 
-void get_host_vlan_info(char* lua_ip, char** host_ip, u_int16_t* vlan_id, char *buf, u_int buf_len);
+void get_host_vlan_info(char* lua_ip, char** host_ip,
+			VLANid* vlan_id, char *buf, u_int buf_len);
 
 #endif /* _LUA_H_ */

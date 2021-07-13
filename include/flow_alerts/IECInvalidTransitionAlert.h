@@ -34,8 +34,9 @@ class IECInvalidTransitionAlert : public FlowAlert {
 
  public:
   static FlowAlertType getClassType() { return { flow_alert_iec_invalid_transition, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
-  IECInvalidTransitionAlert(FlowCallback *c, Flow *f, struct timeval *_time, u_int16_t _type_i, u_int8_t _type_id) : FlowAlert(c, f) {
+  IECInvalidTransitionAlert(FlowCheck *c, Flow *f, struct timeval *_time, u_int16_t _type_i, u_int8_t _type_id) : FlowAlert(c, f) {
     type_i = _type_i;
     type_id = _type_id;
     packet_epoch = _time->tv_sec;
@@ -43,7 +44,6 @@ class IECInvalidTransitionAlert : public FlowAlert {
   ~IECInvalidTransitionAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_iec_invalid_transition"); }
 };
 
 #endif /* _IEC_INVALID_TRANSITION_ALERT_H_ */

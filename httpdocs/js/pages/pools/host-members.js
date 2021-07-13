@@ -3,11 +3,20 @@
  * This script manage the GUI for Host Pool Members page
  */
 
-$(document).ready(function () {
+$(function () {
 
     // this is the current filtering type for the datatable
     let currentType = null;
     const INDEX_MEMBER_FILTER = 0;
+
+    let changable_pool = true;
+
+    for(const pool_names of unchangable_pool_names) {
+        if(pool_names === selectedPool.name) {
+            changable_pool = false;
+            break;
+        }
+    }
 
     const filters = [
         {
@@ -33,19 +42,32 @@ $(document).ready(function () {
         },
     ];
 
-    let dtConfig = DataTableUtils.getStdDatatableConfig([
-        {
+    let buttonArray = function() {
+	let buttons = [];
+
+	buttons.push({
             text: '<i class="fas fa-plus"></i>',
             action: () => { $(`#add-member-modal`).modal('show'); }
-        },
-        {
+        });
+
+	buttons.push({
             text: '<i class="fas fa-sync"></i>',
             action: function(e, dt, node, config) {
                 $hostMembersTable.ajax.reload();
             }
-        }
-    ]);
-    dtConfig = DataTableUtils.setAjaxConfig(dtConfig, `${http_prefix}/lua/rest/v1/get/host/pool/members.lua?pool=${queryPoolId}`, `rsp`);
+        });
+
+	if(__IS_PRO__ && changable_pool)
+	    buttons.push({
+	    text: '<i class="fas fa-key"></i>',
+            action: () => { location.href = `${http_prefix}/lua/pro/policy.lua?pool=${selectedPool.id}`; }
+	    });
+
+	return buttons;
+    }
+
+    let dtConfig = DataTableUtils.getStdDatatableConfig(buttonArray());
+    dtConfig = DataTableUtils.setAjaxConfig(dtConfig, `${http_prefix}/lua/rest/v2/get/host/pool/members.lua?pool=${queryPoolId}`, `rsp`);
     dtConfig = DataTableUtils.extendConfig(dtConfig, {
         stateSave: true,
         hasFilters: true,
@@ -99,16 +121,10 @@ $(document).ready(function () {
         const memberRowData = $hostMembersTable.row($(this).parent().parent()).data();
         $removeModalHandler.invokeModalInit(memberRowData);
     });
-
+    
     $(`#select-host-pool`).change(function () {
-        // update selected pool information
-        selectedPool = { name: $(`#select-host-pool option:selected`).text(), id: $(this).val() };
-        // update the datatable
-        $hostMembersTable.ajax.url(`${http_prefix}/lua/rest/v1/get/host/pool/members.lua?pool=${selectedPool.id}`).load().draw(false);
-        // change pool id in edit pool link
-        $(`.edit-pool-link`).attr('href', `${http_prefix}/lua/admin/manage_pools.lua?pool=host&pool_id=${selectedPool.id}`);
-        queryPoolId = selectedPool.id;
-        history.pushState({ pool: queryPoolId }, '', location.href.replace(/pool\=[0-9]+/, `pool=${queryPoolId}`));
+	const poolId = $(this).val();
+	location.href = `${http_prefix}/lua/admin/manage_host_members.lua?pool=${poolId}`;
     });
 
     $(`[href='#import-modal']`).click(function() {
@@ -145,7 +161,7 @@ $(document).ready(function () {
         reader.readAsText(inputFilename, "UTF-8");
 
         reader.onload = (function() {
-            const req = $.post(`${http_prefix}/lua/rest/v1/import/pool/host_pool/members.lua`, {csrf: importCsrf, pool: selectedPool.id, host_pool_members: reader.result});
+            const req = $.post(`${http_prefix}/lua/rest/v2/import/pool/host_pool/members.lua`, {csrf: importCsrf, pool: selectedPool.id, host_pool_members: reader.result});
             req.then(function(response) {
 
                 if (response.rc < 0) {
@@ -172,7 +188,7 @@ $(document).ready(function () {
         method: 'post',
         csrf: addCsrf,
         resetAfterSubmit: false,
-        endpoint: `${http_prefix}/lua/rest/v1/bind/host/pool/member.lua`,
+        endpoint: `${http_prefix}/lua/rest/v2/bind/host/pool/member.lua`,
         onModalShow: function () {
             // hide the fields and select default type entry
             const macAndNetworkFields = "#add-member-modal .mac-fields, #add-member-modal .network-fields";
@@ -243,7 +259,7 @@ $(document).ready(function () {
     const $removeModalHandler = $(`#remove-member-host-pool form`).modalHandler({
         method: 'post',
         csrf: removeCsrf,
-        endpoint: `${http_prefix}/lua/rest/v1/bind/host/pool/member.lua`,
+        endpoint: `${http_prefix}/lua/rest/v2/bind/host/pool/member.lua`,
         onModalShow: function () {
             $(`#remove-modal-feedback`).hide();
         },
@@ -252,7 +268,7 @@ $(document).ready(function () {
             $(`#remove-pool-name`).html(`<b>${selectedPool.name}</b>`);
         },
         beforeSumbit: function (hostMember) {
-            return { pool: defaultPoolId, member: hostMember.member };
+            return { pool: defaultPoolId, member: hostMember.member, pool_name: selectedPool.name };
         },
         onSubmitSuccess: function (response, textStatus, modalHandler) {
 
@@ -264,5 +280,4 @@ $(document).ready(function () {
             $(`#remove-member-host-pool`).modal('hide');
         }
     });
-
 });

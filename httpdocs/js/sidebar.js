@@ -26,7 +26,7 @@ const fixSubMenuPosition = ($submenu, $hoverButton) => {
 
 };
 
-$(window).scroll(function(){
+$(window).on('scroll', function(){
 
     const UPPER_LIMIT = 32;
     const navbarHeight = $(`#n-navbar`).height();
@@ -41,7 +41,7 @@ $(window).scroll(function(){
 
 });
 
-$(document).ready(() => {
+$(() => {
 
     const toggleSidebar = () => {
         // if the layer doesn't exists then create it
@@ -49,7 +49,7 @@ $(document).ready(() => {
 
             const $layer = $(`<div class='sidebar-close-layer' style='display:none'></div>`);
             // when the user clicks on the layer
-            $layer.click(function(){
+            $layer.on('click', function(){
                 // remove active class from sidebar
                 $(`#n-sidebar`).removeClass('active');
                 // hide the layer and remove it from the DOM
@@ -74,43 +74,41 @@ $(document).ready(() => {
         $(`#n-sidebar`).toggleClass('active');
     }
 
-    $(`#n-sidebar a.submenu`).mouseenter(function() {
-
-        const $submenu = $(this).parent().find(`div[id$='submenu']`);
-        fixSubMenuPosition($submenu, $(this));
-        $submenu.collapse('show');
-
-        $(this).attr('aria-expanded', true);
+    $('#n-sidebar a.submenu').bind({
+        mouseenter: function() {
+            let submenu = $(this).parent().find(`div[id$='submenu']`);
+            fixSubMenuPosition(submenu, $(this));
+            submenu.show()
+        },
+        mouseleave: function() {
+            let submenu = $(this).parent().find(`div[id$='submenu']`);
+            submenu.hide();
+        }
     });
 
-    $(`div[id$='submenu']`).mouseenter(function() {
-        $(this).addClass('show');
-    });
-    $(`div[id$='submenu']`).mouseleave(function() {
-        $(this).removeClass('show');
-        $(this).css({'max-height': 'initial'});
-    });
-
-    $(`#n-sidebar a.submenu`).mouseleave(function() {
-        const $submenu = $(this).parent().find(`div[id$='submenu']`);
-        $submenu.removeClass('show');
-        $(this).attr('aria-expanded', false);
+    $(`div[id$='submenu']`).bind({
+        mouseenter: function() {
+            $(this).show()
+        },
+        mouseleave: function() {
+            $(this).hide();
+        }
     });
 
     /* toggle sidebar display */
-    $(`button[data-toggle='sidebar']`).click(function() {
+    $(`button[data-bs-toggle='sidebar']`).on('click', function() {
         toggleSidebar();
     });
 });
 
-$(window).resize(function() {
+$(window).on('resize', function() {
 
     // re-calc submenu height
     const $currentSubmenu = $('#n-sidebar').find(`div.show[id$='submenu']`);
 
     if ($currentSubmenu.length > 0) {
 
-        const $hoverButton = $currentSubmenu.parent().find(`a[data-toggle='collapse']`);
+        const $hoverButton = $currentSubmenu.parent().find(`a[data-bs-toggle='collapse']`);
         fixSubMenuPosition($currentSubmenu, $hoverButton);
     }
 

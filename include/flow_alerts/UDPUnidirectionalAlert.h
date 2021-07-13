@@ -29,12 +29,12 @@ class UDPUnidirectionalAlert : public FlowAlert {
   
  public:
   static FlowAlertType getClassType() { return { flow_alert_udp_unidirectional, alert_category_network }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- UDPUnidirectionalAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ UDPUnidirectionalAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~UDPUnidirectionalAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("udp_unidirectional"); }
 };
 
 #endif /* _UDP_UNIDIRECTIONAL_ALERT_H_ */

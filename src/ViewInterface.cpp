@@ -285,6 +285,17 @@ u_int64_t ViewInterface::getNumActiveAlertedFlows() const {
 
 /* **************************************************** */
 
+u_int64_t ViewInterface::getNumActiveAlertedFlows(AlertLevelGroup alert_level_group) const {
+  u_int64_t tot = 0;
+
+  for(u_int8_t s = 0; s < num_viewed_interfaces; s++)
+    tot += viewed_interfaces[s]->getNumActiveAlertedFlows(alert_level_group);
+
+  return(tot);
+};
+
+/* **************************************************** */
+
 u_int64_t ViewInterface::getNumBytes() {
   u_int64_t tot = 0;
 
@@ -415,7 +426,8 @@ void ViewInterface::sumStats(TcpFlowStats *_tcpFlowStats, EthStats *_ethStats,
 
 /* **************************************************** */
 
-Flow* ViewInterface::findFlowByTuple(u_int16_t vlan_id,
+Flow* ViewInterface::findFlowByTuple(VLANid vlan_id,
+				     u_int16_t observation_point_id,
 				     IpAddress *src_ip,  IpAddress *dst_ip,
 				     u_int16_t src_port, u_int16_t dst_port,
 				     u_int8_t l4_proto,
@@ -423,7 +435,8 @@ Flow* ViewInterface::findFlowByTuple(u_int16_t vlan_id,
   Flow *f = NULL;
 
   for(u_int8_t s = 0; s < num_viewed_interfaces; s++) {
-    if((f = (Flow*)viewed_interfaces[s]->findFlowByTuple(vlan_id, src_ip, dst_ip, src_port, dst_port, l4_proto, allowed_hosts)))
+    if((f = (Flow*)viewed_interfaces[s]->findFlowByTuple(vlan_id, observation_point_id,
+							 src_ip, dst_ip, src_port, dst_port, l4_proto, allowed_hosts)))
       break;
   }
 
@@ -457,7 +470,7 @@ void ViewInterface::viewed_flows_walker(Flow *f, const struct timeval *tv) {
        * is used to call `incNumFlows` and `incUses` on the hosts below, so it is essential that
        * findFlowHosts is called only when first_partial is true. */
       if(first_partial) {
-	findFlowHosts(f->get_vlan_id(),
+	findFlowHosts(f->get_vlan_id(), f->get_observation_point_id(),
 		      NULL /* no src mac yet */, (IpAddress*)cli_ip, &cli_host,
 		      NULL /* no dst mac yet */, (IpAddress*)srv_ip, &srv_host);
 
@@ -510,6 +523,11 @@ void ViewInterface::viewed_flows_walker(Flow *f, const struct timeval *tv) {
 	  srv_host->incScoreValue(srv_score_val, score_category, false /* as server */);
       }
 
+      if(partials.get_is_flow_alerted()) {
+	if(cli_host) cli_host->incNumAlertedFlows(true /* As client */),  cli_host->incTotalAlerts();
+	if(srv_host) srv_host->incNumAlertedFlows(false /* As server */), srv_host->incTotalAlerts();
+      }
+
       incStats(true /* ingressPacket */,
 	       tv->tv_sec, cli_ip && cli_ip->isIPv4() ? ETHERTYPE_IP : ETHERTYPE_IPV6,
 	       f->getStatsProtocol(), f->get_protocol_category(),
@@ -518,6 +536,15 @@ void ViewInterface::viewed_flows_walker(Flow *f, const struct timeval *tv) {
 	       partials.get_srv2cli_packets() + partials.get_cli2srv_packets());
     }
   }
+}
+
+/* **************************************************** */
+
+bool ViewInterface::isSampledTraffic() const {
+  for(u_int8_t s = 0; s < num_viewed_interfaces; s++)
+    if(viewed_interfaces[s]->isSampledTraffic()) return true;
+
+  return false;
 }
 
 /* **************************************************** */

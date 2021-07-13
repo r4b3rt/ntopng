@@ -33,7 +33,6 @@ function live_traffic_utils.printLiveTrafficForm(ifid, host_info)
 
    print[[
 <div class="input-group mb-1">
-  <div class="input-group-prepend">
     <select class="btn border bg-white" id="duration" name=duration>
       <option value=10>10 sec</option>
       <option value=30>30 sec</option>
@@ -41,11 +40,10 @@ function live_traffic_utils.printLiveTrafficForm(ifid, host_info)
       <option value=300>5 min</option>
       <option value=600>10 min</option>
     </select>
-  </div>
 &nbsp;
   <label for="bpf_filter" class="sr-only">]] print(i18n("db_explorer.filter_bpf")) print[[</label>
   <input type="text" class="form-control" id="live-capture-bpf-filter" name="bpf_filter" placeholder="]] print(i18n("db_explorer.filter_bpf")) print[["></input>
-  <button type="submit" class="btn btn-secondary mb-2" onclick="return live_capture_download_show_modal();">]] print(i18n("download_x", {what="pcap"})) print[[</button>
+  <button type="submit" class="btn btn-secondary" onclick="return live_capture_download_show_modal();">]] print(i18n("download_x", {what="pcap"})) print[[</button>
 </div>
 </form>
 

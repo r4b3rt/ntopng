@@ -19,20 +19,18 @@
  *
  */
 
-#include "flow_callbacks_includes.h"
+#include "flow_checks_includes.h"
 
 /* ***************************************************** */
 
 ndpi_serializer *FlowRiskSuspiciousDGADomainAlert::getAlertJSON(ndpi_serializer* serializer) {
-  char buf[128];
   Flow *f = getFlow();
-  char *info = f->getFlowInfo(buf, sizeof(buf));
+  char *info = f->getDGADomain();
   
   if(serializer == NULL)
     return NULL;
 
-  if(info)
-    ndpi_serialize_string_string(serializer, "dga_domain", info);
+  ndpi_serialize_string_string(serializer, "dga_domain", info);
   
   return serializer;
 }

@@ -16,6 +16,7 @@ local alert_consts = require "alert_consts"
 local alert_utils = require "alert_utils"
 local alert_entities = require "alert_entities"
 local alert_severities = require "alert_severities"
+local tag_utils = require "tag_utils"
 local json = require "dkjson"
 
 -- ##############################################
@@ -41,6 +42,12 @@ end
 -- ##############################################
 
 function all_alert_store:delete()
+   traceError(TRACE_ERROR, TRACE_CONSOLE, "Unsupported!")
+end
+
+-- ##############################################
+
+function all_alert_store:acknowledge()
    traceError(TRACE_ERROR, TRACE_CONSOLE, "Unsupported!")
 end
 
@@ -147,7 +154,7 @@ function all_alert_store:select_historical(filter, fields)
       return res
    end
 
-   where_clause = table.concat(self._where, " AND ")
+   where_clause = self:build_where_clause()
 
    -- [OPTIONAL] Add sort criteria
    if self._order_by then
@@ -200,47 +207,72 @@ function all_alert_store:select_request(filter, select_fields)
    -- Add limits and sort criteria
    self:add_request_ranges()
 
-   if self._engaged then -- Engaged
+   if self._status == alert_consts.alert_status.engaged.alert_status_id then -- Engaged
       local alerts, total_rows =  self:select_engaged(filter)
 
       return alerts, total_rows
    else -- Historical
-      local res = self:select_historical(filter, select_fields)
+      local res = self:select_historical(filter, select_fields) or {}
       return res, #res
    end
 end
 
 -- ##############################################
 
+local RNAME = {
+   ENTITY = { name = "entity", export = true},
+   SCORE = { name = "score", export = true},
+   COUNT_GROUP_NOTICE_OR_LOWER = { name = "count_group_notice_or_lower", export = true},
+   COUNT_GROUP_WARNING = { name = "count_group_warning", export = true},
+   COUNT_GROUP_ERROR_OR_HIGHER = { name = "count_group_error_or_higher", export = true},
+}
+
+function alert_store:get_rnames()
+   return RNAME
+end
+
 --@brief Convert an alert coming from the DB (value) to a record returned by the REST API
 function all_alert_store:format_record(value, no_html)
    local href_icon = "<i class='fas fa-laptop'></i>"
-   local record = self:format_record_common(value, alert_entities.host.entity_id, no_html)
+   local record = self:format_json_record_common(value, alert_entities.host.entity_id, no_html)
 
-   record["entity"] = string.format('<a href="%s/lua/alert_stats.lua?page=%s&epoch_begin=%u&epoch_end=%u">%s</a>',
-				    ntop.getHttpPrefix(),
-				    alert_consts.alertEntityRaw(value["entity_id"]),
-				    _GET["epoch_begin"],
-				    _GET["epoch_end"],
-				    alert_consts.alertEntityById(value["entity_id"]).label)
+   local url = string.format('%s/lua/alert_stats.lua?page=%s&epoch_begin=%u&epoch_end=%u&status=%s',
+      ntop.getHttpPrefix(),
+      alert_consts.alertEntityRaw(value["entity_id"]),
+      _GET["epoch_begin"],
+      _GET["epoch_end"],
+      _GET["status"] or "historical"
+   )
+
+   local entity = i18n(alert_consts.alertEntityById(value["entity_id"]).i18n_label)
+   if no_html then
+      record[RNAME.ENTITY.name] = entity
+   else
+      record[RNAME.ENTITY.name] = string.format('<a href="%s">%s</a>', url, entity)   
+   end
 
    local score = tonumber(value["score"])
-   record["score"] = {
+   record[RNAME.SCORE.name] = {
       value = score,
       label = format_utils.formatValue(score),
    }
 
-   record["count_group_notice_or_lower"] = {
+   record[RNAME.COUNT_GROUP_NOTICE_OR_LOWER.name] = {
       value = value["count_group_notice_or_lower"],
       color = alert_severities.notice.color,
+      url = url.."&severity=3" .. tag_utils.SEPARATOR .. "lte",
    }
-   record["count_group_warning"] = {
+
+   record[RNAME.COUNT_GROUP_WARNING.name] = {
       value = value["count_group_warning"],
       color = alert_severities.warning.color,
+      url = url.."&severity=4" .. tag_utils.SEPARATOR .. "eq",
    }
-   record["count_group_error_or_higher"] = {
+
+   record[RNAME.COUNT_GROUP_ERROR_OR_HIGHER.name] = {
       value = value["count_group_error_or_higher"],
       color = alert_severities.error.color,
+      url = url.."&severity=5" .. tag_utils.SEPARATOR .. "gte",
    }
 
    return record

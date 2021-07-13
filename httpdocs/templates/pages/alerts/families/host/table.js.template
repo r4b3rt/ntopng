@@ -1,25 +1,17 @@
 [
     /* Date */
-    {responsivePriority: 1, name: 'tstamp', data: 'tstamp', width: '12%', className: 'text-center', render: DataTableRenders.formatValueLabel, createdCell: DataTableRenders.applyCellStyle},
+    {responsivePriority: 1, name: 'tstamp', data: 'tstamp', width: '8%', className: 'text-center text-nowrap', render: DataTableRenders.formatValueLabel, createdCell: DataTableRenders.applyCellStyle},
     /* Score */
-    {name: 'score', data: 'score', className: 'text-center', width: '3%', render: DataTableRenders.formatValueLabel},
+    {responsivePriority: 2, name: 'score', data: 'score', className: 'text-center', width: '2%', render: DataTableRenders.formatValueLabel},
     /* Duration */
-    {name: 'duration', data: 'duration', width: '5%', className: 'text-center', orderable: false, render: DataTableRenders.secondsToTime},
+    {responsivePriority: 2, name: 'duration', data: 'duration', width: '5%', className: 'text-center', render: DataTableRenders.secondsToTime},
+    /* Alert */
+    {responsivePriority: 2, name: 'alert', data: 'msg', orderable: false, width:'5%', className: 'text-nowrap', render: DataTableRenders.formatNameDescription },
     /* IP Address */
-    {name: 'ip', data: 'ip', orderable: false, width: '16%', className: 'text-nowrap', render: (ipAddress, type, row) => {
-        if (type !== "display") return ipAddress;
-    	let html_ref = '';
-	if (ipAddress.reference !== undefined)
-	   html_ref = ipAddress.reference
-	const label = `${ipAddress.shown_label || ipAddress.label} ${row.is_attacker ? '<i class="fas fa-skull-crossbones"></i>' : ''} ${row.is_victim ? '<i class="fas fa-sad-tear"></i>': ''}`;
-        return DataTableRenders.filterize('ip', ipAddress.value, label) + html_ref;
-    }},
-    /* Description */
-    {name: 'description', data: 'msg', orderable: false, className: 'text-nowrap', render: DataTableRenders.formatNameDescription },
-    /* Attacker */
-    {name: 'is_attacker', data: 'is_attacker', orderable: true, width: '5%', className: 'text-center text-nowrap'},
-    /* Attacker or Victim */
-    {name: 'is_victim', data: 'is_victim', orderable: true, width: '5%', className: 'text-center text-nowrap'},
+    {responsivePriority: 2, name: 'ip', data: 'ip', orderable: false, width: '5%', className: 'text-nowrap', render: DataTableRenders.formatHost},
     /* Counts */
-    {name: 'count', className: 'text-center', width: '3%', data: 'count', visible: false},
+    {responsivePriority: 3, name: 'count', className: 'text-center', data: 'count', visible: false},
+    /* Description */
+    {responsivePriority: 3, name: 'description', data: 'description', orderable: false, className: 'text-nowrap', width:'100%'},
+
 ]

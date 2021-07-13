@@ -36,7 +36,7 @@ HostAlertableEntity::~HostAlertableEntity() {
 /* *************************************** */
 
 void HostAlertableEntity::clearEngagedAlerts() {
-  for (u_int i = 0; i < NUM_DEFINED_HOST_CALLBACKS; i++) {
+  for (u_int i = 0; i < NUM_DEFINED_HOST_CHECKS; i++) {
     HostAlert *alert = engaged_alerts[i];
     if (alert) {
       removeEngagedAlert(alert);
@@ -52,8 +52,8 @@ bool HostAlertableEntity::addEngagedAlert(HostAlert *a) {
 
   engaged_alerts_lock.wrlock(__FILE__, __LINE__);
 
-  if (!engaged_alerts[a->getCallbackType()]) {
-    engaged_alerts[a->getCallbackType()] = a; 
+  if (!engaged_alerts[a->getCheckType()]) {
+    engaged_alerts[a->getCheckType()] = a; 
     engaged_alerts_map.setBit(a->getAlertType().id);
     incNumAlertsEngaged();
     success = true;
@@ -71,8 +71,8 @@ bool HostAlertableEntity::removeEngagedAlert(HostAlert *a) {
  
   engaged_alerts_lock.wrlock(__FILE__, __LINE__);
 
-  if (engaged_alerts[a->getCallbackType()] == a) {
-    engaged_alerts[a->getCallbackType()] = NULL;
+  if (engaged_alerts[a->getCheckType()] == a) {
+    engaged_alerts[a->getCheckType()] = NULL;
     engaged_alerts_map.clearBit(a->getAlertType().id);
     decNumAlertsEngaged();
     success = true;
@@ -85,18 +85,18 @@ bool HostAlertableEntity::removeEngagedAlert(HostAlert *a) {
 
 /* *************************************** */
 
-bool HostAlertableEntity::hasCallbackEngagedAlert(HostCallbackID callback_id) {
-  return (engaged_alerts[callback_id] ? true : false);
+bool HostAlertableEntity::hasCheckEngagedAlert(HostCheckID check_id) {
+  return (engaged_alerts[check_id] ? true : false);
 }
 
 /* *************************************** */
 
-HostAlert *HostAlertableEntity::findEngagedAlert(HostAlertType alert_id, HostCallbackID callback_id) {
+HostAlert *HostAlertableEntity::findEngagedAlert(HostAlertType alert_id, HostCheckID check_id) {
 
   if (isEngagedAlert(alert_id)
-      && engaged_alerts[callback_id]
-      && engaged_alerts[callback_id]->getAlertType().id == alert_id.id)
-    return engaged_alerts[callback_id];
+      && engaged_alerts[check_id]
+      && engaged_alerts[check_id]->getAlertType().id == alert_id.id)
+    return engaged_alerts[check_id];
 
   return NULL;
 }
@@ -106,10 +106,10 @@ HostAlert *HostAlertableEntity::findEngagedAlert(HostAlertType alert_id, HostCal
 void HostAlertableEntity::countAlerts(grouped_alerts_counters *counters) {
   engaged_alerts_lock.rdlock(__FILE__, __LINE__);
 
-  for (u_int i = 0; i < NUM_DEFINED_HOST_CALLBACKS; i++) {
+  for (u_int i = 0; i < NUM_DEFINED_HOST_CHECKS; i++) {
     HostAlert *alert = engaged_alerts[i];
     if (alert) {
-      counters->severities[std::make_pair(getEntityType(), Utils::mapScoreToSeverity(alert->getScore()))]++;
+      counters->severities[std::make_pair(getEntityType(), Utils::mapScoreToSeverity(alert->getAlertScore()))]++;
       counters->types[std::make_pair(getEntityType(), alert->getAlertType().id)]++;
     }
   }
@@ -130,8 +130,8 @@ void HostAlertableEntity::luaAlert(lua_State* vm, HostAlert *alert) {
   */
   lua_push_int32_table_entry(vm,  "alert_id", alert->getAlertType().id);
   lua_push_str_table_entry(vm,    "subtype", "" /* No subtype for hosts */);
-  lua_push_int32_table_entry(vm,  "score", alert->getScore());
-  lua_push_int32_table_entry(vm,  "severity", Utils::mapScoreToSeverity(alert->getScore()));
+  lua_push_int32_table_entry(vm,  "score", alert->getAlertScore());
+  lua_push_int32_table_entry(vm,  "severity", Utils::mapScoreToSeverity(alert->getAlertScore()));
   lua_push_int32_table_entry(vm,  "entity_id", alert_entity_host);
   lua_push_str_table_entry(vm,    "entity_val", alert->getHost()->getEntityValue().c_str());
   lua_push_uint64_table_entry(vm, "tstamp", alert->getEngageTime());
@@ -143,8 +143,10 @@ void HostAlertableEntity::luaAlert(lua_State* vm, HostAlert *alert) {
   lua_push_uint64_table_entry(vm, "vlan_id", alert->getHost()->get_vlan_id());
   lua_push_bool_table_entry(vm, "is_attacker", alert->isAttacker());
   lua_push_bool_table_entry(vm, "is_victim", alert->isVictim());
+  lua_push_bool_table_entry(vm, "is_client", alert->isClient());
+  lua_push_bool_table_entry(vm, "is_server", alert->isServer());
 
-  HostCallback *cb = getAlertInterface()->getCallback(alert->getCallbackType());
+  HostCheck *cb = getAlertInterface()->getCheck(alert->getCheckType());
   lua_push_int32_table_entry(vm,  "granularity", cb ? cb->getPeriod() : 0);
 
   alert_json_serializer = alert->getSerializedAlert();
@@ -162,15 +164,21 @@ void HostAlertableEntity::luaAlert(lua_State* vm, HostAlert *alert) {
 /* ****************************************** */
 
 void HostAlertableEntity::getAlerts(lua_State* vm, ScriptPeriodicity p /* not used */,
-  AlertType type_filter, AlertLevel severity_filter, u_int *idx) {
+				    AlertType type_filter, AlertLevel severity_filter, AlertRole role_filter,
+				    u_int *idx) {
 
   engaged_alerts_lock.rdlock(__FILE__, __LINE__);
 
-  for (u_int i = 0; i < NUM_DEFINED_HOST_CALLBACKS; i++) {
+  for (u_int i = 0; i < NUM_DEFINED_HOST_CHECKS; i++) {
     HostAlert *alert = engaged_alerts[i];
     if (alert) {
-      if ((type_filter == alert_none || type_filter == alert->getAlertType().id) &&
-          (severity_filter == alert_level_none || severity_filter == Utils::mapScoreToSeverity(alert->getScore()))) {
+      if((type_filter == alert_none
+	   || type_filter == alert->getAlertType().id)
+	  && (severity_filter == alert_level_none
+	      || severity_filter == Utils::mapScoreToSeverity(alert->getAlertScore()))
+	  && (role_filter == alert_role_is_any
+	      || (role_filter == alert_role_is_attacker && alert->isAttacker())
+	      || (role_filter == alert_role_is_victim && alert->isVictim()))) {
         lua_newtable(vm);
         luaAlert(vm, alert);
 

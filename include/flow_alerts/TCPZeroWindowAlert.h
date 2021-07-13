@@ -19,8 +19,8 @@
  *
  */
 
-#ifndef _TCP_ZERO_WINDOW_FLOW_CALLBACK_ALERT_H_
-#define _TCP_ZERO_WINDOW_FLOW_CALLBACK_ALERT_H_
+#ifndef _TCP_ZERO_WINDOW_FLOW_ALERT_H_
+#define _TCP_ZERO_WINDOW_FLOW_ALERT_H_
 
 #include "ntop_includes.h"
 
@@ -29,12 +29,12 @@ class TCPZeroWindowAlert : public FlowAlert {
 
  public:
   static FlowAlertType getClassType() { return { flow_alert_zero_tcp_window, alert_category_network }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- TCPZeroWindowAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ TCPZeroWindowAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~TCPZeroWindowAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("zero_tcp_window"); }
 };
 
-#endif /* _TCP_ZERO_WINDOW_FLOW_CALLBACK_ALERT_H_ */
+#endif /* _TCP_ZERO_WINDOW_FLOW_ALERT_H_ */

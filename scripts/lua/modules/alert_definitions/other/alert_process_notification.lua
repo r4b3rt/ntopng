@@ -9,6 +9,7 @@ local other_alert_keys = require "other_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+local alert_entities = require "alert_entities"
 
 -- ##############################################
 
@@ -20,6 +21,9 @@ alert_process_notification.meta = {
   alert_key = other_alert_keys.alert_process_notification,
   i18n_title = "alerts_dashboard.process",
   icon = "fas fa-fw fa-truck",
+  entities = {
+    alert_entities.system
+  },
 }
 
 -- ##############################################
@@ -42,9 +46,9 @@ end
 
 function alert_process_notification.format(ifid, alert, alert_type_params)
   if alert_type_params.event_type == "start" then
-    return string.format("%s %s", i18n("alert_messages.start"), alert_type_params.msg_details)
+    return string.format("%s %s", i18n("alert_messages.ntopng_start"), alert_type_params.msg_details)
   elseif alert_type_params.event_type == "stop" then
-    return string.format("%s %s", i18n("alert_messages.stop"), alert_type_params.msg_details)
+    return string.format("%s %s", i18n("alert_messages.ntopng_stop"), alert_type_params.msg_details)
   elseif alert_type_params.event_type == "update" then
     return string.format("%s %s", i18n("alert_messages.update"), alert_type_params.msg_details)
   elseif alert_type_params.event_type == "anomalous_termination" then

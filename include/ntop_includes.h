@@ -233,6 +233,12 @@ using namespace std;
 #include "NetworkInterfaceAlertableEntity.h"
 #include "NetworkStatsAlertableEntity.h"
 #include "ExternalAlertableEntity.h"
+#include "BehaviouralCounter.h"
+
+#ifdef NTOPNG_PRO
+#include "AnalysisBehavior.h"
+#endif
+
 #include "nDPIStats.h"
 #include "InterarrivalStats.h"
 #include "FlowStats.h"
@@ -256,6 +262,7 @@ using namespace std;
 #include "Profile.h"
 #include "Profiles.h"
 #include "CountMinSketch.h"
+#include "AlertExclusions.h"
 #ifndef HAVE_NEDGE
 #include "FlowProfile.h"
 #include "FlowProfiles.h"
@@ -269,7 +276,6 @@ using namespace std;
 #include "LdapAuthenticator.h"
 #endif
 #endif
-#include "AlertExclusions.h"
 #include "HostPoolStats.h"
 #include "HostPools.h"
 #include "Fingerprint.h"
@@ -335,6 +341,7 @@ using namespace std;
 #include "ServiceMap.h"
 #include "PeriodicityMap.h"
 #endif
+#include "ObservationPointIdTrafficStats.h"
 #include "NetworkInterface.h"
 #ifndef HAVE_NEDGE
 #include "PcapInterface.h"
@@ -376,6 +383,7 @@ using namespace std;
 #ifndef HAVE_NEDGE
 #include "ParserInterface.h"
 #include "ZMQParserInterface.h"
+#include "ZMQPublisher.h"
 #include "ZMQCollectorInterface.h"
 #include "SyslogParserInterface.h"
 #include "SyslogCollectorInterface.h"
@@ -393,10 +401,9 @@ using namespace std;
 #include "Mac.h"
 #include "PartializableFlowTrafficStats.h"
 #include "ViewInterfaceFlowStats.h"
-#include "BehaviouralCounter.h"
 #include "FlowTrafficStats.h"
 #include "HostStats.h"
-#include "HostCallbacksStatus.h"
+#include "HostChecksStatus.h"
 #include "Host.h"
 #include "LocalHostStats.h"
 #include "LocalHost.h"
@@ -418,14 +425,16 @@ using namespace std;
 #include "HTTPserver.h"
 #include "Paginator.h"
 #include "FlowAlert.h"
-#include "FlowCallback.h"
+#include "Check.h"
+#include "FlowCheck.h"
 #include "HostAlert.h"
-#include "HostCallback.h"
-#include "CallbacksLoader.h"
-#include "FlowCallbacksLoader.h"
-#include "FlowCallbacksExecutor.h"
-#include "HostCallbacksLoader.h"
-#include "HostCallbacksExecutor.h"
+#include "HostCheck.h"
+#include "FlowAlertsLoader.h"
+#include "ChecksLoader.h"
+#include "FlowChecksLoader.h"
+#include "FlowChecksExecutor.h"
+#include "HostChecksLoader.h"
+#include "HostChecksExecutor.h"
 #include "Ntop.h"
 
 #ifdef NTOPNG_PRO

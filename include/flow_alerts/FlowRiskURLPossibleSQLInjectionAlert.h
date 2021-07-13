@@ -24,15 +24,18 @@
 
 #include "ntop_includes.h"
 
-class FlowRiskURLPossibleSQLInjectionAlert : public FlowAlert {
+class FlowRiskURLPossibleSQLInjectionAlert : public FlowRiskAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_URL_POSSIBLE_SQL_INJECTION; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_url_possible_sql_injection, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskURLPossibleSQLInjectionAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ FlowRiskURLPossibleSQLInjectionAlert(FlowCheck *c, Flow *f) : FlowRiskAlert(c, f) { };
   ~FlowRiskURLPossibleSQLInjectionAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_url_possible_sql_injection"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_URL_POSSIBLE_SQL_INJECTION_ALERT_H_ */

@@ -11,55 +11,51 @@
 							</span>
 							<div class="btn-group btn-group-sm">
 								<button class="btn btn-secondary cancel" type="button">{{ i18n("cancel") }}</button>
-								<button data-dismiss="modal" class="btn btn-danger confirm" type="button">{{ i18n("abort") }}</button>
+								<button data-bs-dismiss="modal" class="btn btn-danger confirm" type="button">{{ i18n("abort") }}</button>
 							</div>
 						</div>
-						<button type="button" class="close" data-dismiss="modal" aria-label="Close">
-							<span aria-hidden="true">&times;</span>
-						</button>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 					</div>
 				</div>
 				<div class="modal-body container-fluid">
-					<div class="form-group row">
+					<div class="form-group mb-3  row">
 						<label class="col-sm-3 col-form-label">{{ dialog.measurement }}</label>
 						<div class="col-sm-5">
 							{* dialog.edit_measurement_select *}
 						</div>
 					</div>
-					<div class="form-group row">
+					<div class="form-group mb-3  row">
 						<label class="col-sm-3 col-form-label">{{ dialog.am_host }}</label>
 						<div class="col-sm-5">
 							<input placeholder="https://ntop.org" required id="input-edit-host" type="text" name="host"
-								class="form-control measurement-host" />
+								class="form-select measurement-host" />
 						</div>
 					</div>
-					<div class="form-group row">
+					<div class="form-group mb-3  row">
 						<label class="col-sm-3 col-form-label">{{ dialog.periodicity }}</label>
 						<div class="col-sm-5">
 							{* dialog.edit_granularity_select *}
 						</div>
 					</div>
-					<div class="form-group row">
+					<div class="form-group mb-3  row">
 						<label class="col-sm-3 col-form-label">{{ dialog.threshold }}</label>
 						<div class="col-sm-5">
 							<div class="input-group">
-								<div class="input-group-prepend">
-									<span class="input-group-text measurement-operator"></span>
-								</div>
+								<span class="input-group-text measurement-operator"></span>
 								<input required id="input-edit-threshold" name="threshold" type="number"
-									class="form-control rounded-right measurement-threshold" min="1" max="10000">
+									class="form-select rounded-right measurement-threshold" min="1" max="10000">
 							</div>
 						</div>
 						<div class="col-sm-2 pl-0">
 							<span class="my-auto ml-1 measurement-unit d-inline-block p-2"></span>
 						</div>
 					</div>
-					<div class="form-group row">
+					<div class="form-group mb-3  row">
 						<label class="col-sm-3 col-form-label">
 							{{ i18n("pools.pool_names_suffix.active_monitoring") }}
 						</label>
 						<div class="col-sm-5">
-							<select class="form-control" name="pool" id="select-edit-pool">
+							<select class="form-select" name="pool" id="select-edit-pool">
 								{% for _, pool in pairsByKeys(pools:get_all_pools(), asc) do %}
 								<option value="{{ pool.pool_id }}">{{ pool.name }}</option>
 								{% end %}
@@ -73,12 +69,12 @@
 							</a>
 						</div>
 					</div>
-					<div class="form-group row interface-group" style="display: none;">
+					<div class="form-group mb-3  row interface-group" style="display: none;">
 						<label class="col-sm-3 col-form-label">
 							{{ i18n("interface") }}
 						</label>
 						<div class="col-sm-5">
-							<select class="form-control" name="iface">
+							<select class="form-select" name="iface">
 							  <option selected>{{ i18n("active_monitoring_stats.default_interface") }}</option>
 							  {%
 							     for name,v in pairsByKeys(ntop.listInterfaces(), asc) do

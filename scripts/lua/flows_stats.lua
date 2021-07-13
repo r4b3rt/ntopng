@@ -62,6 +62,8 @@ local server_asn   = _GET["server_asn"]
 local prefs = ntop.getPrefs()
 local ifstats = interface.getStats()
 
+local duration_or_last_seen = prefs.flow_table_time
+
 local flows_filter = getFlowsFilter()
 
 flows_filter.statusFilter = nil -- remove the filter, otherwise no menu entries will be shown
@@ -169,7 +171,7 @@ if(traffic_profile ~= nil) then
   page_params["traffic_profile"] = traffic_profile
 end
 
-if table.len(page_params) > 0 then
+if (table.len(page_params) > 0) and (not isEmptyString(page_params["application"])) then
       print [[
       <div class="col-12 p-1">
          <div class="info-stats">
@@ -177,7 +179,7 @@ if table.len(page_params) > 0 then
                <div class="up">
                   <i class="fas fa-arrow-up" data-original-title="" title=""></i>
                   <span id="upload-filter-traffic-chart" class="line">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
-                  <div class='d-inline-block text-right' style='width: 11ch'>
+                  <div class='d-inline-block text-end' style='width: 11ch'>
                      <span id="upload-filter-traffic-value">0 kbit/s</span> |
                   </div>
                   <span id="filtered-flows-tot-bytes">]] print(i18n("flows_page.tot_bytes")) print[[</span>
@@ -186,7 +188,7 @@ if table.len(page_params) > 0 then
                <div class="down">
                   <i class="fas fa-arrow-down" data-original-title="" title=""></i>
                   <span id="download-filter-traffic-chart" class="line">0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0</span>
-                  <div class='d-inline-block text-right' style='width: 11ch'>
+                  <div class='d-inline-block text-end' style='width: 11ch'>
                      <span id="download-filter-traffic-value">0 kbit/s</span> |
                   </div>
                   <span id="filtered-flows-tot-throughput">]] print(i18n("flows_page.tot_throughput")) print[[</span>
@@ -215,6 +217,7 @@ print ('";')
             ]] initFlowsRefreshRows() print[[
          },
 ]]
+
 preference = tablePreferences("rows_number",_GET["perPage"])
 if (preference ~= "") then print ('perPage: '..preference.. ",\n") end
 
@@ -256,7 +259,8 @@ print[[
          field: "column_ndpi",
          sortable: true,
          css: {
-            textAlign: 'center'
+            textAlign: 'center',
+            whiteSpace: 'nowrap'
          }
       }, {
          title: "]] print(i18n("protocol")) print[[",
@@ -287,18 +291,43 @@ print[[
          title: "]] print(i18n("client")) print[[",
          field: "column_client",
          sortable: true,
+         css: {
+            whiteSpace: 'nowrap'
+         }
       }, {
          title: "]] print(i18n("server")) print[[",
          field: "column_server",
          sortable: true,
-      }, {
+         css: {
+            whiteSpace: 'nowrap'
+         }
+
+      }, ]]
+
+if duration_or_last_seen == false then 
+   print[[
+      {
          title: "]] print(i18n("duration")) print[[",
          field: "column_duration",
          sortable: true,
          css: {
+            textAlign: 'center',
+         }
+      },
+   ]]
+else
+   print[[
+      {
+         title: "]] print(i18n("last_seen")) print[[",
+         field: "column_last_seen",
+         sortable: true,
+         css: {
             textAlign: 'center'
          }
-      }, {
+      },
+   ]]
+end   
+print[[{
          title: "]] print(i18n("score")) print[[",
          field: "column_score",
          hidden: ]] print(ternary(isScoreEnabled(), "false", "true")) print[[,
@@ -318,21 +347,24 @@ print[[
          field: "column_thpt",
          sortable: true,
          css: {
-            textAlign: 'right'
+            textAlign: 'right',
+            whiteSpace: 'nowrap'
          }
       }, {
          title: "]] print(i18n("flows_page.total_bytes")) print[[",
          field: "column_bytes",
          sortable: true,
          css: {
-            textAlign: 'right'
+            textAlign: 'right',
+            whiteSpace: 'nowrap'
          }
       }, {
          title: "]] print(i18n("info")) print[[",
          field: "column_info",
          sortable: false,
          css: {
-            textAlign: 'left'
+            textAlign: 'left',
+            whiteSpace: 'nowrap'
          }
       }
       ]
@@ -347,7 +379,7 @@ print[[
 </script>
 ]]
 
-if table.len(page_params) > 0 then
+if (table.len(page_params) > 0) and (not isEmptyString(page_params["application"])) then
    print([[
       <script type='text/javascript'>
          let old_totBytesSent = 0;
@@ -370,7 +402,7 @@ if table.len(page_params) > 0 then
 
             function updateChart() {
 
-               const request = $.get("]] .. getPageUrl(ntop.getHttpPrefix() .. "/lua/rest/v1/get/flow/traffic_stats.lua", page_params) .. "&ifid=" .. interface.getId() .. [[");
+               const request = $.get("]] .. getPageUrl(ntop.getHttpPrefix() .. "/lua/rest/v2/get/flow/traffic_stats.lua", page_params) .. "&ifid=" .. interface.getId() .. [[");
                request.then((data) => {
                   let throughput_bps_sent = (8 * (data.rsp.totBytesSent - old_totBytesSent)) / refresh_rate;
                   let throughput_bps_rcvd = (8 * (data.rsp.totBytesRcvd - old_totBytesRcvd)) / refresh_rate;

@@ -1,5 +1,5 @@
 {#
-    (C) 2020 - ntop.org
+    (C) 2020-21 - ntop.org
 
     This is the template to generate the Manage Pool page.
 #}
@@ -28,7 +28,7 @@
                     </table>
             </div>
             <div class="card-footer">
-                {* ui_utils.render_configuration_footer('pool') *}
+                {* ui_utils.render_configuration_footer('pool', _GET["page"]) *}
             </div>
         </div>
     </div>
@@ -55,7 +55,7 @@ pool = pool
 }) *}
 
 
-<link href="{{ ntop.getHttpPrefix() }}/datatables/datatables.min.css" rel="stylesheet" />
+<link href="{{ ntop.getHttpPrefix() }}/css/dataTables.bootstrap5.min.css" rel="stylesheet" />
 <script type="text/javascript">
 
     let addCsrf = "{{ ntop.getRandomCSRFValue() }}";

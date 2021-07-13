@@ -1,5 +1,5 @@
 --
--- (C) 2018 - ntop.org
+-- (C) 2021 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -35,7 +35,7 @@ end
 
 
 if(user_key == nil) then
-   print("<div class=\"alert alert-danger\"><img src=".. ntop.getHttpPrefix() .. "/img/warning.png> "..i18n("user_info.missing_user_name_message").."</div>")
+   print("<div class=\"alert alert-danger\"><i class='fas fa-exclamation-triangle fa-lg fa-ntopng-warning'></i> "..i18n("user_info.missing_user_name_message").."</div>")
 else
    local title = ''
    local nav_url = ntop.getHttpPrefix().."/lua/username_details.lua?username="..user_key.."&uid="..uid
@@ -74,7 +74,7 @@ else
    if(page == "username_processes") then
       print [[
     <table class="table table-bordered table-striped">
-      <tr><th class="text-left">
+      <tr><th class="text-start">
       ]] print(i18n("user_info.processes_overview")) print[[
 	<td><div class="pie-chart" id="topProcesses"></div></td>
 

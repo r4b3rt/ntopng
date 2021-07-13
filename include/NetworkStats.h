@@ -36,6 +36,12 @@ class NetworkStats : public NetworkStatsAlertableEntity, public GenericTrafficEl
   AlertCounter flow_flood_victim_alert;
   u_int32_t syn_recvd_last_min, synack_sent_last_min; /* syn scan counters (victim) */
 
+#if defined(NTOPNG_PRO)
+  time_t nextMinPeriodicUpdate;
+  /* Behavioural analysis regarding the interface */
+  AnalysisBehavior *score_behavior, *traffic_tx_behavior, *traffic_rx_behavior;  
+#endif
+
   static inline void incTcp(TcpPacketStats *tps, u_int32_t ooo_pkts, u_int32_t retr_pkts, u_int32_t lost_pkts, u_int32_t keep_alive_pkts) {
     if(ooo_pkts)        tps->incOOO(ooo_pkts);
     if(retr_pkts)       tps->incRetr(retr_pkts);
@@ -43,9 +49,13 @@ class NetworkStats : public NetworkStatsAlertableEntity, public GenericTrafficEl
     if(keep_alive_pkts) tps->incKeepAlive(keep_alive_pkts);
   }
 
+#ifdef NTOPNG_PRO
+  void updateBehaviorStats(const struct timeval *tv);
+#endif
+
  public:
   NetworkStats(NetworkInterface *iface, u_int8_t _network_id);
-  virtual ~NetworkStats() {};
+  virtual ~NetworkStats();
 
   inline bool trafficSeen(){
     return ingress.getNumPkts() || egress.getNumPkts() || inner.getNumPkts();
@@ -87,10 +97,12 @@ class NetworkStats : public NetworkStatsAlertableEntity, public GenericTrafficEl
 
   void setNetworkId(u_int8_t id);
   bool match(const AddressTree * const tree) const;
-  void lua(lua_State* vm);
+  void lua(lua_State* vm, bool diff = false);
   bool serialize(json_object *my_object);
   void deserialize(json_object *obj);
   void housekeepAlerts(ScriptPeriodicity p);
+
+  virtual void updateStats(const struct timeval *tv);
 
   void updateSynAlertsCounter(time_t when, bool syn_sent);
   void updateSynAckAlertsCounter(time_t when, bool synack_sent);

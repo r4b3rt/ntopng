@@ -122,9 +122,9 @@ if(page == "overview") then
             -- encapsule the ERROR or WARNING string in a badge
             -- so the log are more visible
             if text:find("ERROR") then
-               text = text:gsub("(ERROR)(:)", "<span class='badge badge-danger'>%1</span>")
+               text = text:gsub("(ERROR)(:)", "<span class='badge bg-danger'>%1</span>")
             elseif text:find("WARNING") then
-               text = text:gsub("(WARNING)(:)", "<span class='badge badge-warning'>%1</span>")
+               text = text:gsub("(WARNING)(:)", "<span class='badge bg-warning'>%1</span>")
             end
 
             print(text)
@@ -203,7 +203,7 @@ elseif(page == "historical" and ts_creation) then
       }
    })
 elseif page == "internals" then
-   internals_utils.printInternals(getSystemInterfaceId(), false --[[ hash tables ]], true --[[ periodic activities ]], true --[[ user scripts]], true --[[ queues --]])
+   internals_utils.printInternals(getSystemInterfaceId(), false --[[ hash tables ]], true --[[ periodic activities ]], true --[[ checks]], true --[[ queues --]])
 end
 
 -- #######################################################

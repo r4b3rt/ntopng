@@ -24,15 +24,18 @@
 
 #include "ntop_includes.h"
 
-class FlowRiskHTTPSuspiciousURLAlert : public FlowAlert {
+class FlowRiskHTTPSuspiciousURLAlert : public FlowRiskAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_HTTP_SUSPICIOUS_URL; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_http_suspicious_url, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskHTTPSuspiciousURLAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ FlowRiskHTTPSuspiciousURLAlert(FlowCheck *c, Flow *f) : FlowRiskAlert(c, f) { };
   ~FlowRiskHTTPSuspiciousURLAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_http_suspicious_url"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_HTTP_SUSPICIOUS_URL_ALERT_H_ */

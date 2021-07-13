@@ -8,7 +8,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/notifications/?.lua;" ..
 
 
 require "lua_utils"
-local user_scripts = require "user_scripts"
+local checks = require "checks"
 local recipients_mod = require "recipients"
 local json = require "dkjson"
 local ntop_info = ntop.getInfo()
@@ -20,8 +20,9 @@ local pools = {}
 -- ##############################################
 
 -- A default pool id value associated to any member without pools
-pools.DEFAULT_POOL_ID = 0
-pools.DEFAULT_POOL_NAME = "Default"
+pools.DEFAULT_POOL_ID = 0           -- Keep in sync with ntop_defines.h NO_HOST_POOL_ID
+pools.DEFAULT_POOL_NAME = "Default" -- Keep in sync with ntop_defines.h DEFAULT_POOL_NAME
+pools.DROP_HOST_POOL_NAME = "Jailed hosts pool"
 
 if ntop.isnEdge() then
     -- Compatibility with nEdge pools
@@ -109,7 +110,7 @@ function pools:_initialize()
 	   self:_persist(pools.DEFAULT_POOL_ID,
                          pools.DEFAULT_POOL_NAME,
 			 {} --[[ no members --]] ,
-			 recipients_mod.get_builtin_recipients() --[[ builtin recipients --]])
+			 recipients_mod.get_builtin_recipients() --[[ builtin recipients --]], nil --[[ policy ]])
         end
 
         self:_unlock()
@@ -240,14 +241,14 @@ function pools:_unlock() ntop.delCache(self:_get_pool_lock_key()) end
 -- ##############################################
 
 --@brief Method called after a successful execution of method persist
-function pools:_post_persist(pool_id, name, members, recipients)
+function pools:_post_persist(pool_id, name, members, recipients, policy)
 end
 
 -- ##############################################
 
 -- @brief Persist pool details to disk. Possibly assign a pool id
 -- @param pool_id The pool_id of the pool which needs to be persisted. If nil, a new pool id is assigned
-function pools:_persist(pool_id, name, members, recipients)
+function pools:_persist(pool_id, name, members, recipients, policy)
     -- self:cleanup()
 
     -- Default pool name and members cannot be modified
@@ -265,7 +266,7 @@ function pools:_persist(pool_id, name, members, recipients)
 
     ntop.setCache(pool_details_key, json.encode(pool_details))
 
-    self:_post_persist(pool_id, name, members, recipients)
+    self:_post_persist(pool_id, name, members, recipients, policy)
 
     ntop.reloadPeriodicScripts()
 
@@ -285,7 +286,7 @@ end
 -- ##############################################
 
 -- Create a new pool (unless it already exists)
-function pools:add_pool(name, members, recipients)
+function pools:add_pool(name, members, recipients, policy)
     local pool_id
 
     local locked = self:_lock()
@@ -329,7 +330,7 @@ function pools:add_pool(name, members, recipients)
                 -- All the checks have succeeded
                 -- Now that everything is ok, the id can be assigned and the pool can be persisted with the assigned id
                 pool_id = self:_assign_pool_id()
-                self:_persist(pool_id, name, members, recipients)
+                self:_persist(pool_id, name, members, recipients, policy)
                 self:_set_cache_flag()
             end
         end
@@ -393,7 +394,8 @@ end
 -- ##############################################
 
 -- Overwrite the pool name, members and recipients
-function pools:edit_pool(pool_id, new_name, new_members, new_recipients)
+-- Policy are used just by Host Pool
+function pools:edit_pool(pool_id, new_name, new_members, new_recipients, new_policy)
     local ret = false
 
     local locked = self:_lock()
@@ -403,53 +405,70 @@ function pools:edit_pool(pool_id, new_name, new_members, new_recipients)
 
     -- If here, pool_id has been found
     if locked then
-        if not new_members then
-            -- In case members have not been sumbitted, new_members
-            -- are assumed to be the existing members
-            new_members = cur_pool_details["members"]
-        end
-
-        if not new_recipients then
-            -- In case recipients have not been sumbitted, new_recipients
-            -- are assumed to be the existing recipients
-            new_recipients = cur_pool_details["recipients"]
-        end
-
-        if cur_pool_details and new_name and new_members and new_recipients then
+	
+        if cur_pool_details and cur_pool_details.name then 
             local checks_ok = true
 
-            -- Check if new_name is not the name of any other existing pool
-            local same_name_pool = self:get_pool_by_name(new_name)
-            if same_name_pool and same_name_pool.pool_id ~= pool_id then
-                checks_ok = false
+            if new_name then
+               -- Check if new_name is not the name of any other existing pool
+               local same_name_pool = self:get_pool_by_name(new_name)
+               if same_name_pool and same_name_pool.pool_id ~= pool_id then
+                   checks_ok = false
+               end
+            else
+               new_name = cur_pool_details.name
             end
 
-            -- Check if members are valid
-            if checks_ok and not self:are_valid_members(new_members) then
-                checks_ok = false
+
+            if new_members then
+               -- Check if members are valid
+               if checks_ok and not self:are_valid_members(new_members) then
+                  checks_ok = false
+               end
+
+               -- Check if none of new_members belongs to any other exsiting pool
+               if checks_ok then
+                   for _, new_member in pairs(new_members) do
+                       local new_member_pool = self:get_pool_by_member(new_member)
+
+                       if new_member_pool and new_member_pool["pool_id"] ~= pool_id then
+                           -- Member already existing in another pool
+                           checks_ok = false
+                           break
+                       end
+                   end
+               end
+            else
+               -- In case members have not been sumbitted, new_members
+               -- are assumed to be the existing members
+               new_members = cur_pool_details["members"]
             end
 
-            -- Check if none of new_members belongs to any other exsiting pool
-            if checks_ok then
-                for _, new_member in pairs(new_members) do
-                    local new_member_pool = self:get_pool_by_member(new_member)
+	    if new_recipients then
+	       -- Check if recipients are valid
+	       if checks_ok and not self:are_valid_recipients(new_recipients) then
+		  checks_ok = false
+	       end
+	    else
+	       -- In case recipients have not been sumbitted, new_recipients
+	       -- are assumed to be the existing recipients
+	       new_recipients = {}
 
-                    if new_member_pool and new_member_pool["pool_id"] ~= pool_id then
-                        -- Member already existing in another pool
-                        checks_ok = false
-                        break
-                    end
-                end
-            end
+	       -- Populate with recipient IDs
+	       for _, recipient in pairs(cur_pool_details["recipients"] or {}) do
+		  new_recipients[#new_recipients + 1] = recipient["recipient_id"]
+	       end
+	    end
 
-            -- Check if recipients are valid
-            if checks_ok and not self:are_valid_recipients(new_recipients) then
-                checks_ok = false
+            if not new_policy then
+               -- In case policy have not been sumbitted, new_policy
+               -- is assumed to be the existing policy
+	       new_policy = cur_pool_details["policy"] or ""
             end
 
             if checks_ok then
                 -- If here, all checks are valid and the pool can be edited
-                self:_persist(pool_id, new_name, new_members, new_recipients)
+                self:_persist(pool_id, new_name, new_members, new_recipients, new_policy)
                 self:_set_cache_flag()
                 -- Pool edited successfully
                 ret = true
@@ -519,6 +538,12 @@ end
 
 -- ##############################################
 
+-- Currently Implemented only into the Host Pools, used to get the host policy
+function pools:get_pool_policy(pool_id)
+end
+
+-- ##############################################
+
 function pools:get_pool(pool_id, recipient_details)
     local recipient_details = recipient_details or true
     local pool_details
@@ -529,7 +554,7 @@ function pools:get_pool(pool_id, recipient_details)
         local pool_details_str = ntop.getCache(pool_details_key)
         pool_details = json.decode(pool_details_str)
 
-        if pool_details then
+	if pool_details then
             -- Add the integer pool id
             pool_details["pool_id"] = tonumber(pool_id)
 
@@ -543,7 +568,7 @@ function pools:get_pool(pool_id, recipient_details)
                 end
             end
 
-            if pool_details["recipients"] then
+	    if pool_details["recipients"] then
                 local recipients = {}
                 -- get recipient metadata
                 for _, recipient_id in pairs(pool_details["recipients"]) do
@@ -555,7 +580,7 @@ function pools:get_pool(pool_id, recipient_details)
 			 if recipient and recipient.recipient_name then
 			    -- Keep in in sync with overridden method in host_pool.lua
 			    res["recipient_name"] = recipient.recipient_name
-			    res["recipient_user_script_categories"] = recipient.user_script_categories
+			    res["recipient_check_categories"] = recipient.check_categories
 			    res["recipient_minimum_severity"] = recipient.minimum_severity
 			 end
 		      end
@@ -787,7 +812,7 @@ function pools:unbind_all_recipient_id(recipient_id)
 
             if found then
                 -- Rewrite the pool using the new recipients set
-                self:_persist(pool["pool_id"], pool["name"], pool["members"], new_recipients)
+                self:_persist(pool["pool_id"], pool["name"], pool["members"], new_recipients, pool["policy"])
             end
         end
 
@@ -832,7 +857,7 @@ function pools:bind_all_recipient_id(recipient_id)
 	       new_recipients[#new_recipients + 1] = tonumber(recipient_id)
 
 	       -- Rewrite the pool using the extended recipients array
-	       self:_persist(pool["pool_id"], pool["name"], pool["members"], new_recipients)
+	       self:_persist(pool["pool_id"], pool["name"], pool["members"], new_recipients, pool["policy"])
 	    end
 	 end
       end
@@ -902,7 +927,7 @@ function pools:_bind_recipient(recipient_id, pool_id)
 
       -- Persist the pool with the new `recipient`
          self:_persist(bind_pool["pool_id"], bind_pool["name"],
-                       bind_pool_members, bind_pool_recipients)
+                       bind_pool_members, bind_pool_recipients, pool["policy"])
       end
 
       -- Bind has executed successfully
@@ -943,7 +968,7 @@ function pools:_bind_member(member, pool_id)
 
             -- Persist the pool with the new `member`
             self:_persist(bind_pool["pool_id"], bind_pool["name"],
-                          bind_pool_members, bind_pool_recipients)
+                          bind_pool_members, bind_pool_recipients, bind_pool["policy"])
 
             -- Bind has executed successfully
             ret = true
@@ -992,7 +1017,7 @@ function pools:bind_member(member, pool_id)
 
                 -- Persist the existing pool without the removed `member`
                 self:_persist(cur_pool["pool_id"], cur_pool["name"],
-                              new_members, bind_pool_recipients)
+                              new_members, bind_pool_recipients, cur_pool["policy"])
             end
         end
 

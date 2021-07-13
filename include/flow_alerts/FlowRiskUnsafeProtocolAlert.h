@@ -24,15 +24,18 @@
 
 #include "ntop_includes.h"
 
-class FlowRiskUnsafeProtocolAlert : public FlowAlert {
+class FlowRiskUnsafeProtocolAlert : public FlowRiskAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_UNSAFE_PROTOCOL; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_unsafe_protocol, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskUnsafeProtocolAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) { };
+ FlowRiskUnsafeProtocolAlert(FlowCheck *c, Flow *f) : FlowRiskAlert(c, f) { };
   ~FlowRiskUnsafeProtocolAlert() { };
 
-  FlowAlertType getAlertType() const { return getClassType(); }  
-  std::string getName() const { return std::string("alert_ndpi_unsafe_protocol"); }
+  FlowAlertType getAlertType() const { return getClassType(); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_UNSAFE_PROTOCOL_ALERT_H_ */

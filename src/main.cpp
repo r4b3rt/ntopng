@@ -162,6 +162,11 @@ int main(int argc, char *argv[])
   if(prefs->daemonize_ntopng())
     ntop->daemonize();
 
+#ifndef HAVE_NEDGE
+  /* Force ZMQ interface creation */
+  ntop->broadcastIPSMessage(NULL);
+#endif
+  
 #ifdef __linux__
   /* Store number of CPUs before dropping privileges */
   ntop->setNumCPUs(sysconf(_SC_NPROCESSORS_ONLN));
@@ -226,12 +231,12 @@ int main(int argc, char *argv[])
 #endif
       }
     } catch(int err) {
-      ntop->getTrace()->traceEvent(TRACE_INFO, "An exception occurred during %s interface creation[%d]: %s. Falling back to pcap",
-				   ifName, err, strerror(err));
+      ntop->getTrace()->traceEvent(TRACE_NORMAL, "Unable to open interface %s [%d]: %s. Falling back to pcap.",
+				   ifName, err, err == EAFNOSUPPORT ? "PF_RING not loaded" : strerror(err));
       if(iface) delete iface;
       iface = NULL;
     } catch(...) {
-      ntop->getTrace()->traceEvent(TRACE_INFO, "An exception occurred during %s interface creation. Falling back to pcap", ifName);
+      ntop->getTrace()->traceEvent(TRACE_NORMAL, "Unable to open interface %s. Falling back to pcap.", ifName);
       if(iface) delete iface;
       iface = NULL;
     }
@@ -242,7 +247,7 @@ int main(int argc, char *argv[])
 	errno = 0;
 	iface = new PcapInterface(ifName, i);
       } catch(int err) {
-	ntop->getTrace()->traceEvent(TRACE_ERROR, "An exception occurred during %s interface creation[%d]: %s",
+	ntop->getTrace()->traceEvent(TRACE_ERROR, "Unable to open interface %s with pcap [%d]: %s",
 				     ifName, err, strerror(err));
 	if(iface) delete iface;
 	iface = NULL;

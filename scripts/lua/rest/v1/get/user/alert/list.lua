@@ -8,6 +8,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/alert_store/?.lua;" .. p
 
 local rest_utils = require("rest_utils")
 local user_alert_store = require "user_alert_store".new()
+local auth = require "auth"
 
 --
 -- Read alerts data
@@ -22,6 +23,11 @@ local res = {}
 local format = _GET["format"] or "json"
 local no_html = (format == "txt")
 
+if not auth.has_capability(auth.capabilities.alerts) then
+   rest_utils.answer(rest_utils.consts.err.not_granted)
+   return
+end
+
 interface.select(getSystemInterfaceId())
 
 -- Fetch the results
@@ -32,8 +38,13 @@ for _key,_value in ipairs(alerts or {}) do
    res[#res + 1] = record
 end -- for
 
-rest_utils.extended_answer(rc, {records = res}, {
-			      ["draw"] = tonumber(_GET["draw"]),
-			      ["recordsFiltered"] = recordsFiltered,
-			      ["recordsTotal"] = #res
-}, format)
+if no_html then
+   res = user_alert_store:to_csv(res)   
+   rest_utils.vanilla_payload_response(rc, res, "text/csv")
+else
+   rest_utils.extended_answer(rc, {records = res}, {
+				 ["draw"] = tonumber(_GET["draw"]),
+				 ["recordsFiltered"] = recordsFiltered,
+				 ["recordsTotal"] = #res
+						   }, format)
+end

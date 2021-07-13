@@ -1,5 +1,5 @@
 --
--- (C) 2018 - ntop.org
+-- (C) 2021 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -17,7 +17,7 @@ sendHTTPContentTypeHeader('text/html')
 local category_filter = _GET["l7proto"]
 local ifId = getInterfaceId(ifname)
 
-if not haveAdminPrivileges() then
+if not isAdministratorOrPrintErr() then
   return
 end
 

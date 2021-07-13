@@ -22,12 +22,13 @@ alert_known_proto_on_non_std_port.meta = {
    alert_key = flow_alert_keys.flow_alert_known_proto_on_non_std_port,
    i18n_title = "alerts_dashboard.known_proto_on_non_std_port",
    icon = "fas fa-fw fa-exclamation",
+
+   has_attacker = true,
 }
 
 -- ##############################################
 
 -- @brief Prepare an alert table used to generate the alert
--- @param alert_severity A severity as defined in `alert_severities`
 -- @param info A lua table containing flow information obtained with `flow.getInfo()`
 -- @return A table with the alert built
 function alert_known_proto_on_non_std_port:init()

@@ -51,6 +51,7 @@ Prefs::Prefs(Ntop *_ntop) {
   ewma_alpha_percent = CONST_DEFAULT_EWMA_ALPHA_PERCENT;
   data_dir = strdup(CONST_DEFAULT_DATA_DIR);
   emit_flow_alerts = emit_host_alerts = true;
+  zmq_publish_events_url = NULL;
   enable_access_log = false, enable_sql_log = false;
   enable_flow_device_port_rrd_creation = false;
   reproduce_at_original_speed = false;
@@ -62,6 +63,7 @@ Prefs::Prefs(Ntop *_ntop) {
     enable_informative_captive_portal = false,
     override_dst_with_post_nat_dst = false, override_src_with_post_nat_src = false;
     hostMask = no_host_mask;
+  enable_asn_behaviour_analysis = enable_network_behaviour_analysis = enable_iface_l7_behaviour_analysis = false; 
   enable_mac_ndpi_stats = false;
   auto_assigned_pool_id = NO_HOST_POOL_ID;
   default_l7policy = PASS_ALL_SHAPER_ID;
@@ -100,8 +102,12 @@ Prefs::Prefs(Ntop *_ntop) {
   timeseries_driver = ts_driver_rrd;
   lan_interface = wan_interface = NULL;
   cpu_affinity = other_cpu_affinity = NULL;
+  flow_table_time = false;
 #ifdef HAVE_LIBCAP
   CPU_ZERO(&other_cpu_affinity_mask);
+#endif
+#ifdef HAVE_PF_RING
+  pfring_cluster_id = -1;
 #endif
   redis_host = strdup("127.0.0.1");
   redis_password = NULL;
@@ -189,6 +195,7 @@ Prefs::~Prefs() {
     deferred_interfaces_to_register = NULL;
   }
 
+  if(zmq_publish_events_url) free(zmq_publish_events_url);
   if(data_dir)         free(data_dir);
   if(install_dir)      free(install_dir);
   if(docs_dir)         free(docs_dir);
@@ -342,6 +349,7 @@ void usage() {
 	 "[--zmq-encryption-key-priv <key>]   | ZMQ (collection) encryption secret key (debug only) \n"
 	 "[--zmq-encryption-key <key>]        | ZMQ (export) encryption public key (-I only) \n"
 #endif
+	 "[--zmq-publish-events <URL>]        | Endpoint for publishing events (e.g. IPS)\n"
 	 "[--disable-autologout|-q]           | Disable web logout for inactivity\n"
 	 "[--disable-login|-l] <mode>         | Disable user login authentication:\n"
 	 "                                    | 0 - Disable login only for localhost\n"
@@ -426,6 +434,9 @@ void usage() {
 	 "                                    |         hardware devices\n"
 	 "[--capture-direction] <dir>         | Specify packet capture direction\n"
 	 "                                    | 0=RX+TX (default), 1=RX only, 2=TX only\n"
+#ifdef HAVE_PF_RING
+         "[--cluster-id] <cluster id>         | Specify the PF_RING cluster ID on which incoming packets will be bound.\n"
+#endif
 	 /* "--online-check                      | Check the license using the online service\n" */
 	 "[--online-license-check]            | Check the license online\n" /* set as deprecated as soon as --online-check is supported */
 	 "[--http-prefix|-Z <prefix>]         | HTTP prefix to be prepended to URLs.\n"
@@ -660,6 +671,7 @@ void Prefs::reloadPrefsFromRedis() {
 
     max_ui_strlen = getDefaultPrefsValue(CONST_RUNTIME_MAX_UI_STRLEN, CONST_DEFAULT_MAX_UI_STRLEN),
     hostMask      = (HostMask)getDefaultPrefsValue(CONST_RUNTIME_PREFS_HOSTMASK, no_host_mask),
+    flow_table_time      = (bool)getDefaultPrefsValue(CONST_FLOW_TABLE_TIME, flow_table_time),
     auto_assigned_pool_id = (u_int16_t) getDefaultPrefsValue(CONST_RUNTIME_PREFS_AUTO_ASSIGNED_POOL_ID, NO_HOST_POOL_ID);
 
   getDefaultStringPrefsValue(CONST_RUNTIME_PREFS_TS_DRIVER, &aux, (char*)"rrd");
@@ -732,7 +744,10 @@ void Prefs::reloadPrefsFromRedis() {
 /* ******************************************* */
 
 void Prefs::refreshBehaviourAnalysis() {
-  enable_behaviour_analysis  = getDefaultBoolPrefsValue(CONST_PREFS_BEHAVIOUR_ANALYSIS, false);
+  enable_behaviour_analysis          = getDefaultBoolPrefsValue(CONST_PREFS_BEHAVIOUR_ANALYSIS, false);
+  enable_asn_behaviour_analysis      = getDefaultBoolPrefsValue(CONST_PREFS_ASN_BEHAVIOR_ANALYSIS, false);
+  enable_network_behaviour_analysis  = getDefaultBoolPrefsValue(CONST_PREFS_NETWORK_BEHAVIOR_ANALYSIS, false);
+  enable_iface_l7_behaviour_analysis = getDefaultBoolPrefsValue(CONST_PREFS_IFACE_L7_BEHAVIOR_ANALYSIS, false);
   behaviour_analysis_learning_period = getDefaultPrefsValue(CONST_PREFS_BEHAVIOUR_ANALYSIS_LEARNING_PERIOD, CONST_DEFAULT_BEHAVIOUR_ANALYSIS_LEARNING_PERIOD);
   behaviour_analysis_learning_status_during_learning = (ServiceAcceptance)getDefaultPrefsValue(CONST_PREFS_BEHAVIOUR_ANALYSIS_STATUS_DURING_LEARNING, service_allowed);
   behaviour_analysis_learning_status_post_learning = (ServiceAcceptance)getDefaultPrefsValue(CONST_PREFS_BEHAVIOUR_ANALYSIS_STATUS_POST_LEARNING, service_allowed);
@@ -804,6 +819,10 @@ static const struct option long_options[] = {
   { "callbacks-dir",                     required_argument, NULL, '3' },
   { "prefs-dir",                         required_argument, NULL, '4' },
   { "pcap-dir",                          required_argument, NULL, '5' },
+  { "zmq-publish-events",                required_argument, NULL, 203 },
+#ifdef HAVE_PF_RING
+  { "cluster-id",                        required_argument, NULL, 204 },
+#endif
 #ifdef NTOPNG_PRO
   { "version-json",                      no_argument,       NULL, 205 },
 #endif
@@ -1330,45 +1349,51 @@ int Prefs::setOption(int optkey, char *optarg) {
     }
     else if(!strncmp(optarg, "mysql", 5)) {
 #ifdef HAVE_MYSQL
-      if(!strncmp(optarg, "mysql-nprobe", 12))
-	read_flows_from_mysql = true;
-      else
-	dump_flows_on_mysql = true;
+      char *sep = strchr(optarg, ';');
 
-      /* mysql;<host[@port]|unix socket>;<dbname>;<table name>;<user>;<pw> */
-      optarg = Utils::tokenizer(strchr(optarg, ';') + 1, ';', &mysql_host);
-      optarg = Utils::tokenizer(optarg, ';', &mysql_dbname);
-      optarg = Utils::tokenizer(optarg, ';', &mysql_tablename);
-      optarg = Utils::tokenizer(optarg, ';', &mysql_user);
-      mysql_pw = strdup(optarg ? optarg : "");
+      if(!sep) {
+	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid --mysql format: ignored");
+      } else {
+	if(!strncmp(optarg, "mysql-nprobe", 12))
+	  read_flows_from_mysql = true;
+	else
+	  dump_flows_on_mysql = true;
 
-      if(mysql_host && mysql_user) {
-	if((mysql_dbname == NULL) || (mysql_dbname[0] == '\0'))       mysql_dbname  = strdup("ntopng");
-	if((mysql_tablename == NULL)
-	   || (mysql_tablename[0] == '\0')
-	   || dump_flows_on_mysql /*forcefully defaults the table name*/) {
-	  if(mysql_tablename) free(mysql_tablename);
-	  mysql_tablename  = strdup("flows");
-	}
-	if((mysql_pw == NULL) || (mysql_pw[0] == '\0')) mysql_pw  = strdup("");
+	/* mysql;<host[@port]|unix socket>;<dbname>;<table name>;<user>;<pw> */
+	optarg = Utils::tokenizer(sep + 1, ';', &mysql_host);
+	optarg = Utils::tokenizer(optarg, ';', &mysql_dbname);
+	optarg = Utils::tokenizer(optarg, ';', &mysql_tablename);
+	optarg = Utils::tokenizer(optarg, ';', &mysql_user);
+	mysql_pw = strdup(optarg ? optarg : "");
 
-	/* Check for non-default SQL port on -F line */
-	char* mysql_port_str;
-	if((mysql_port_str = strchr(mysql_host, '@'))) {
-	  *(mysql_port_str++) = '\0';
+	if(mysql_host && mysql_user) {
+	  if((mysql_dbname == NULL) || (mysql_dbname[0] == '\0'))       mysql_dbname  = strdup("ntopng");
+	  if((mysql_tablename == NULL)
+	     || (mysql_tablename[0] == '\0')
+	     || dump_flows_on_mysql /*forcefully defaults the table name*/) {
+	    if(mysql_tablename) free(mysql_tablename);
+	    mysql_tablename  = strdup("flows");
+	  }
+	  if((mysql_pw == NULL) || (mysql_pw[0] == '\0')) mysql_pw  = strdup("");
 
-	  errno = 0;
-	  long l = strtol(mysql_port_str, NULL, 10);
+	  /* Check for non-default SQL port on -F line */
+	  char* mysql_port_str;
+	  if((mysql_port_str = strchr(mysql_host, '@'))) {
+	    *(mysql_port_str++) = '\0';
 
-	  if(errno || !l)
-	    ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid mysql port, using default port %d [%s]",
-					 CONST_DEFAULT_MYSQL_PORT,
-					 strerror(errno));
-	  else
-	    mysql_port = (int)l;
-	}
-      }  else
-	ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for -F mysql;....");
+	    errno = 0;
+	    long l = strtol(mysql_port_str, NULL, 10);
+
+	    if(errno || !l)
+	      ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid mysql port, using default port %d [%s]",
+					   CONST_DEFAULT_MYSQL_PORT,
+					   strerror(errno));
+	    else
+	      mysql_port = (int)l;
+	  }
+	} else
+	  ntop->getTrace()->traceEvent(TRACE_WARNING, "Invalid format for -F mysql;....");
+      }
 #else
       ntop->getTrace()->traceEvent(TRACE_WARNING, "-F mysql is not available (missing MySQL support)");
 #endif
@@ -1414,6 +1439,16 @@ int Prefs::setOption(int optkey, char *optarg) {
   case 'V':
     print_version = true;
     break;
+
+  case 203:
+    zmq_publish_events_url = strdup(optarg);
+    break;
+
+#ifdef HAVE_PF_RING
+  case 204:
+    pfring_cluster_id = atoi(optarg);
+    break;
+#endif
 
   case 205:
     print_version_json = true;
@@ -1545,16 +1580,20 @@ int Prefs::checkOptions() {
     /* Disable tracing messages */
     ntop->getTrace()->set_trace_level(0);
     ntop->registerPrefs(this, true);
-    ntop->getPro()->check_maintenance_duration();
-    exit(0);
+    if (ntop->getPro()->check_maintenance_duration())
+      exit(0);
+    else
+      exit(1);
   }
 
   if(print_license) {
     /* Disable tracing messages */
     ntop->getTrace()->set_trace_level(0);
     ntop->registerPrefs(this, true);
-    ntop->getPro()->check_license_validity();
-    exit(0);
+    if (ntop->getPro()->check_license_validity())
+      exit(0);
+    else
+      exit(1);
   }
 #endif
 
@@ -1887,6 +1926,7 @@ void Prefs::lua(lua_State* vm) {
   lua_push_uint64_table_entry(vm, "other_rrd_1d_days", other_rrd_1d_days);
 
   lua_push_bool_table_entry(vm, "are_top_talkers_enabled", enable_top_talkers);
+  lua_push_bool_table_entry(vm, "flow_table_time", flow_table_time);
   lua_push_bool_table_entry(vm, "is_active_local_hosts_cache_enabled", enable_active_local_hosts_cache);
 
   lua_push_bool_table_entry(vm,"is_tiny_flows_export_enabled",             enable_tiny_flows_export);
@@ -1976,13 +2016,19 @@ void Prefs::refreshDbDumpPrefs() {
 /* *************************************** */
 
 void Prefs::resetDeferredInterfacesToRegister() {
+  int num = 0;
+  ntop->getTrace()->traceEvent(TRACE_ERROR, "Reset interfaces");
   for(int i = 0; i < num_deferred_interfaces_to_register; i++) {
+    /* Reset network interfaces, excluding event interfaces like syslog/zmq */
     if(deferred_interfaces_to_register[i] != NULL) {
-      free(deferred_interfaces_to_register[i]);
-      deferred_interfaces_to_register[i] = NULL;
+      if (strstr(deferred_interfaces_to_register[i], "syslog://") ||
+          strstr(deferred_interfaces_to_register[i], "tcp://"))
+        deferred_interfaces_to_register[num++] = deferred_interfaces_to_register[i];
+      else    
+        free(deferred_interfaces_to_register[i]);
     }
   }
-  num_deferred_interfaces_to_register = 0;
+  num_deferred_interfaces_to_register = num;
 }
 
 /* *************************************** */
@@ -2120,20 +2166,21 @@ const char * const Prefs::getCaptivePortalUrl() {
 
 /* *************************************** */
 
-void Prefs::setIEC104AllowedTypeIDs(char *protos) {
-  char *p, *tmp;
+void Prefs::setIEC104AllowedTypeIDs(const char * const protos) {
+  char *p, *buf, *tmp;
   
-  if(!protos) return; else p = strtok_r(protos, ",", &tmp);
+  if(!protos) return;
 
-  if((p != NULL) && (strcmp(p, "-1") == 0))
+  if((strcmp(protos, "-1") == 0))
     iec104_allowed_typeids[0] = (u_int64_t)-1, iec104_allowed_typeids[1] = (u_int64_t)-1; /* All */
-  else {
+  else if((buf = strdup(protos))) {
     iec104_allowed_typeids[0] = (u_int64_t)0, iec104_allowed_typeids[1] = (u_int64_t)0;
-    
+
+    p = strtok_r(buf, ",", &tmp);
     while(p != NULL) {
       int type_id = atoi(p);
       
-      /* ntop->getTrace()->traceEvent(TRACE_WARNING, "-> %d", type_id); */
+      // ntop->getTrace()->traceEvent(TRACE_WARNING, "-> %d", type_id);
       
       if(type_id < 64)
 	iec104_allowed_typeids[0] |= ((u_int64_t)1 << type_id);
@@ -2142,5 +2189,7 @@ void Prefs::setIEC104AllowedTypeIDs(char *protos) {
       
       p = strtok_r(NULL, ",", &tmp);
     }
+
+    free(buf);
   }
 }

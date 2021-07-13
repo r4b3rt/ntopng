@@ -21,7 +21,7 @@
 
 #include "ntop_includes.h"
 
-/* #define HOST_POOLS_DEBUG 1 */
+// #define HOST_POOLS_DEBUG 1
 
 /* *************************************** */
 
@@ -56,10 +56,6 @@ HostPools::HostPools(NetworkInterface *_iface) {
      || (num_active_l2_devices_inline  = (int32_t*)calloc(sizeof(int32_t), MAX_NUM_HOST_POOLS)) == NULL
      || (num_active_l2_devices_offline = (int32_t*)calloc(sizeof(int32_t), MAX_NUM_HOST_POOLS)) == NULL)
     throw 1;
-
-  latest_swap = 0;
-  if((swap_lock = new (std::nothrow) Mutex()) == NULL)
-    throw 3;
 
   if(_iface)
     iface = _iface;
@@ -101,7 +97,6 @@ HostPools::~HostPools() {
 
   if(tree_shadow)   delete tree_shadow;
   if(tree)          delete tree;
-  if(swap_lock)     delete swap_lock;
 
   dumpToRedis();
   if(stats)        deleteStats(&stats);
@@ -126,14 +121,6 @@ HostPools::~HostPools() {
 /* *************************************** */
 
 void HostPools::swap(VLANAddressTree *new_trees, HostPoolStats **new_stats) {
-  swap_lock->lock(__FILE__, __LINE__);
-
-  while(time(NULL) - latest_swap < 1) {
-    swap_lock->unlock(__FILE__, __LINE__);
-    sleep(1); /* Force at least 1 sec. time between consecutive swaps */
-    swap_lock->lock(__FILE__, __LINE__);
-  }
-
   /* Swap statistics */
   if(new_stats) {
     if(stats) {
@@ -153,9 +140,6 @@ void HostPools::swap(VLANAddressTree *new_trees, HostPoolStats **new_stats) {
 
     tree = new_trees;
   }
-
-  latest_swap = time(NULL);
-  swap_lock->unlock(__FILE__, __LINE__);
 }
 
 /* *************************************** */
@@ -322,26 +306,6 @@ void HostPools::checkPoolsStatsReset() {
   }
 }
 
-/* *************************************** */
-
-void HostPools::addToPool(char *host_or_mac,
-			  u_int16_t user_pool_id) {
-  char key[128], pool_buf[16];
-
-#ifdef HOST_POOLS_DEBUG
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Adding %s as host pool member [pool id: %i]",
-			       host_or_mac,
-			       user_pool_id);
-#endif
-
-  snprintf(pool_buf, sizeof(pool_buf), "%u", user_pool_id);
-  snprintf(key, sizeof(key), HOST_POOL_MEMBERS_KEY, pool_buf);
-  ntop->getRedis()->sadd(key, host_or_mac); /* New member added */
-
-  reloadPools();
-}
-
 #endif
 
 /* *************************************** */
@@ -392,7 +356,8 @@ void HostPools::reloadPools() {
   char kname[CONST_MAX_LEN_REDIS_KEY];
   char **pools, **pool_members, *at, *member;
   int num_pools, num_members, actual_num_members;
-  u_int16_t _pool_id, vlan_id;
+  u_int16_t _pool_id;
+  VLANid vlan_id;
   VLANAddressTree *new_tree;
   HostPoolStats **new_stats;
   Redis *redis = ntop->getRedis();
@@ -413,6 +378,9 @@ void HostPools::reloadPools() {
   else /* Brand new statistics */
     new_stats[0] = new (std::nothrow) HostPoolStats(iface);
 
+  /* Set the default pool name into the stats */
+  if(new_stats[0]) new_stats[0]->updateName(DEFAULT_POOL_NAME);
+
   /* Keys are pool ids */
   if((num_pools = redis->smembers(kname, &pools)) == -1)
     return; /* Something went wrong with redis? */
@@ -431,6 +399,8 @@ void HostPools::reloadPools() {
       continue;
     }
 
+    snprintf(kname, sizeof(kname), HOST_POOL_DETAILS_KEY, _pool_id);
+
     if(_pool_id != 0) { /* Pool id 0 stats already updated */
       if(stats && stats[_pool_id]) /* Duplicate existing statistics */
 	new_stats[_pool_id] = new (std::nothrow) HostPoolStats(*stats[_pool_id]);
@@ -438,7 +408,12 @@ void HostPools::reloadPools() {
 	new_stats[_pool_id] = new (std::nothrow) HostPoolStats(iface);
     }
 
-    snprintf(kname, sizeof(kname), HOST_POOL_DETAILS_KEY, _pool_id);
+    /* Initialize the name */
+    if(new_stats[_pool_id]) {
+      char name_rsp[POOL_MAX_NAME_LEN];
+      redis->hashGet(kname, (char*)"name", name_rsp, sizeof(name_rsp));
+      new_stats[_pool_id]->updateName(name_rsp);
+    }
 
 #ifdef NTOPNG_PRO
     char rsp[16] = { 0 };
@@ -460,13 +435,14 @@ void HostPools::reloadPools() {
 
 #ifdef HOST_POOLS_DEBUG
     redis->hashGet(kname, (char*)"name", rsp, sizeof(rsp));
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "Loading pool [iteration: %u][pool_id: %u][name: %s]"
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "Loading pool [%s][iteration: %u][pool_id: %u][name: %s]"
 				 "[children_safe: %i]"
 				 "[forge_global_dns: %i]"
 				 "[pool_shaper: %i]"
 				 "[schedule_bitmap: %i]"
 				 "[enforce_quotas_per_pool_member: %i]"
 				 "[enforce_shapers_per_pool_member: %i]",
+				 iface->get_name(),
 				 i, _pool_id,
 				 rsp, children_safe[_pool_id], forge_global_dns[_pool_id],
 				 pool_shaper[_pool_id], schedule_bitmap[_pool_id],
@@ -560,7 +536,8 @@ bool HostPools::findMacPool(Mac *mac, u_int16_t *found_pool) {
 
 /* *************************************** */
 
-bool HostPools::findIpPool(IpAddress *ip, u_int16_t vlan_id, u_int16_t *found_pool, ndpi_patricia_node_t **found_node) {
+bool HostPools::findIpPool(IpAddress *ip, VLANid vlan_id,
+			   u_int16_t *found_pool, ndpi_patricia_node_t **found_node) {
   VLANAddressTree *cur_tree; /* must use this as tree can be swapped */
 #ifdef HOST_POOLS_DEBUG
   char buf[128];
@@ -619,4 +596,18 @@ u_int16_t HostPools::getPool(Host *h) {
     return NO_HOST_POOL_ID;
 
   return pool_id;
+}
+
+/* *************************************** */
+
+/* Returns a pool id, given a pool name. When no pool id is found, the default pool id is returned */
+u_int16_t HostPools::getPoolByName(const char * const pool_name) {
+  HostPoolStats *hps;
+
+  for(int i = 0; i < MAX_NUM_HOST_POOLS; i++) {
+    if((hps = getPoolStats(i)) && hps->getName().compare(pool_name) == 0)
+      return i;
+  }
+
+  return NO_HOST_POOL_ID;
 }

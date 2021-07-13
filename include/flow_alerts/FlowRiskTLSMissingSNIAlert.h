@@ -26,13 +26,16 @@
 
 class FlowRiskTLSMissingSNIAlert : public FlowRiskTLSAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_TLS_MISSING_SNI; }
   static FlowAlertType getClassType() { return { flow_alert_ndpi_tls_missing_sni, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskTLSMissingSNIAlert(FlowCallback *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
+ FlowRiskTLSMissingSNIAlert(FlowCheck *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
   ~FlowRiskTLSMissingSNIAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_ndpi_tls_missing_sni"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_TLS_MISSING_SNI_ALERT_H_ */

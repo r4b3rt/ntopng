@@ -1,5 +1,5 @@
 --
--- (C) 2018 - ntop.org
+-- (C) 2021 - ntop.org
 --
 -- This file contains the alert constants
 
@@ -89,6 +89,27 @@ alert_consts.alerts_granularities = {
 
 -- ################################################################################
 
+-- This status is written inside SQLite column `alert_status`
+alert_consts.alert_status = {
+   ["historical"] = {
+      -- Default for alerts written to the database
+      alert_status_id = 0,
+   },
+   ["acknowledged"] = {
+      -- Alerts acknowledged
+      alert_status_id = 1,
+   },
+   ["engaged"] = {
+      -- Not used yet. Will be possibly used when managing engaged alerts inside sqlite
+      alert_status_id = 2,
+   },
+   ["any"] = {
+      alert_status_id = 3,
+   },
+}
+
+-- ################################################################################
+
 alert_consts.ids_rule_maker = {
   GPL = "GPL",
   SURICATA = "Suricata",
@@ -136,7 +157,6 @@ function alert_consts.formatAlertEntity(ifid, entity_type, entity_value)
    require "flow_utils"
    local value
    local epoch_begin, epoch_end = getAlertTimeBounds({alert_tstamp = os.time()})
-   local label = string.lower(alert_consts.alert_entities[entity_type].label)
 
    if entity_type == "host" then
       local host_info = hostkey2hostinfo(entity_value)
@@ -179,7 +199,7 @@ function alert_consts.formatAlertEntity(ifid, entity_type, entity_value)
       return localized
    else
       -- fallback
-      return label.." "..value
+      return value
    end
 end
 
@@ -286,7 +306,7 @@ function alert_consts.alertEntityLabel(v)
   local entity_id = alert_consts.alertEntityRaw(v)
 
   if(entity_id) then
-    return(alert_consts.alert_entities[entity_id].label)
+    return i18n(alert_consts.alert_entities[entity_id].i18n_label)
   end
 end
 
@@ -294,7 +314,7 @@ end
 
 -- See alert_consts.resetDefinitions()
 alert_consts.alert_types = {}
-local alerts_by_id      = {} -- All available alerts keyed by alert id
+local alerts_by_id = {} -- All available alerts keyed by entity_id and alert_id
 
 local function loadAlertsDefs()
    if(false) then
@@ -385,7 +405,7 @@ function loadDefinition(def_script, mod_fname, script_path)
 
    -- Sanity check: make sure the alert key is not redefined
    local alert_entity_id = alert_entity.entity_id
-   
+  
    if alerts_by_id[alert_entity_id] and alerts_by_id[alert_entity_id][alert_key] then
       traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("Alert key %d redefined, skipping in %s from %s", alert_key, mod_fname, script_path))
       return(false)
@@ -399,14 +419,26 @@ function loadDefinition(def_script, mod_fname, script_path)
    end
    alerts_by_id[alert_entity_id][alert_key] = mod_fname
 
+   -- Handle 'other' alerts
+   -- Note: some are used by multiple entities, defined under
+   -- meta in the alert definition
+   if def_script.meta['entities'] then
+      for _, entity in ipairs(def_script.meta['entities']) do
+         if not alerts_by_id[entity.entity_id] then
+            alerts_by_id[entity.entity_id] = {}
+         end
+         alerts_by_id[entity.entity_id][alert_key] = mod_fname
+      end
+   end
+
    -- Success
    return(true)
 end
  
 -- ##############################################
 
-function alert_consts.alertTypeLabel(v, nohtml, alert_entity_id)
-   local alert_key = alert_consts.getAlertType(v, alert_entity_id)
+function alert_consts.alertTypeLabel(alert_id, nohtml, alert_entity_id)
+   local alert_key = alert_consts.getAlertType(alert_id, alert_entity_id)
 
    if(alert_key) then
       local type_info = alert_consts.alert_types[alert_key]
@@ -416,7 +448,7 @@ function alert_consts.alertTypeLabel(v, nohtml, alert_entity_id)
       if(nohtml) then
         return(title)
       else
-        return(string.format('<i class="%s"></i> %s', type_info.icon or type_info.meta.icon, title))
+        return(string.format('<i class="%s"></i> %s', type_info.icon or type_info.meta.icon, shortenString(title)))
       end
    end
 
@@ -464,7 +496,7 @@ function alert_consts.getAlertType(alert_key, alert_entity_id)
    alert_key = tonumber(alert_key)
    alert_entity_id = tonumber(alert_entity_id)
 
-   if alert_entity_id and alerts_by_id[alert_entity_id] then
+   if alert_entity_id and alerts_by_id[alert_entity_id] and alerts_by_id[alert_entity_id][alert_key] then
       return alerts_by_id[alert_entity_id][alert_key]
    end
 
@@ -479,6 +511,37 @@ function alert_consts.getAlertType(alert_key, alert_entity_id)
    if alerts_by_id[alert_entities.other.entity_id][alert_key] then
       return alerts_by_id[alert_entities.other.entity_id][alert_key]
    end
+end
+
+-- ##############################################
+
+function alert_consts.getAlertTypes(alert_entity_id)
+   return alerts_by_id[alert_entity_id]
+end
+
+-- ##############################################
+
+function alert_consts.alert_type_info_asc(a, b)
+   return (a.label:upper() < b.label:upper())
+end
+
+function alert_consts.getAlertTypesInfo(alert_entity_id)
+   local alert_types = alert_consts.getAlertTypes(alert_entity_id)
+
+   if not alert_types then
+      return {}
+   end
+
+   local alert_types_info = {}
+   for alert_id, alert_name in pairs(alert_types) do
+      alert_types_info[alert_id] = {
+         alert_id = alert_id,
+         name = alert_name,
+         label = alert_consts.alertTypeLabel(alert_id, true, alert_entity_id),
+      }
+   end
+
+   return alert_types_info
 end
 
 -- ##############################################

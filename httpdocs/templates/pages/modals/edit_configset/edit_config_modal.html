@@ -4,9 +4,7 @@
             <form id='edit-form' method='post'>
                 <div class="modal-header">
                     <h5 class="modal-title"><span id='script-name'></span></h5>
-                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <table class='table table-borderless' id='script-config-editor'>
@@ -38,8 +36,8 @@
 {% if subdir == "host" or subdir == "flow" then %}
 
 <template id="exclusion-list-template">
-  <textarea name="exclusion-list" id="exclusionlist-textarea" class="w-100 form-control" rows="6"></textarea title='{{ i18n("scripts_list.exclusion_list_title") }}'>
-  <small>{{ i18n("scripts_list.exclusion_list") }}</small>
+    <textarea name="exclusion-list" id="exclusionlist-textarea" class="w-100 form-control" rows="6"></textarea>
+    <small>{{ i18n("scripts_list.exclusion_list") }}</small>
 </template>
 
 {% end %}

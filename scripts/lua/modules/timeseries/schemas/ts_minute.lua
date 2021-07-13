@@ -21,22 +21,22 @@ schema:addMetric("writes")
 schema:addMetric("drops")
 
 -------------------------------------------------------
--- TRAFFIC ELEMENTS USER SCRIPTS SCHEMAS
+-- TRAFFIC ELEMENTS CHECKS SCHEMAS
 -------------------------------------------------------
 
-schema = ts_utils.newSchema("elem_user_script:duration", {step = 60, metrics_type = ts_utils.metrics.gauge})
+schema = ts_utils.newSchema("elem_check:duration", {step = 60, metrics_type = ts_utils.metrics.gauge})
 schema:addTag("ifid")
-schema:addTag("user_script")
+schema:addTag("check")
 schema:addTag("subdir")
 schema:addMetric("num_ms")
 
-schema = ts_utils.newSchema("elem_user_script:num_calls", {step = 60, metrics_type = ts_utils.metrics.gauge})
+schema = ts_utils.newSchema("elem_check:num_calls", {step = 60, metrics_type = ts_utils.metrics.gauge})
 schema:addTag("ifid")
-schema:addTag("user_script")
+schema:addTag("check")
 schema:addTag("subdir")
 schema:addMetric("num_calls")
 
-schema = ts_utils.newSchema("elem_user_script:total_stats", {step = 60, metrics_type = ts_utils.metrics.gauge})
+schema = ts_utils.newSchema("elem_check:total_stats", {step = 60, metrics_type = ts_utils.metrics.gauge})
 schema:addTag("ifid")
 schema:addTag("subdir")
 schema:addMetric("num_ms")
@@ -123,6 +123,15 @@ schema = ts_utils.newSchema("subnet:engaged_alerts", {step=60, metrics_type=ts_u
 schema:addTag("ifid")
 schema:addTag("subnet")
 schema:addMetric("alerts")
+
+-- ##############################################
+
+schema = ts_utils.newSchema("subnet:score", {step=60, metrics_type=ts_utils.metrics.gauge})
+schema:addTag("ifid")
+schema:addTag("subnet")
+schema:addMetric("score")
+schema:addMetric("scoreAsClient")
+schema:addMetric("scoreAsServer")
 
 -------------------------------------------------------
 -- INTERFACES SCHEMAS
@@ -273,6 +282,13 @@ schema:addMetric("num_nfq_pct")
 
 -- ##############################################
 
+schema = ts_utils.newSchema("iface:score", {step=60, metrics_type = ts_utils.metrics.gauge})
+schema:addTag("ifid")
+schema:addMetric("cli_score")
+schema:addMetric("srv_score")
+
+-- ##############################################
+
 schema = ts_utils.newSchema("iface:alerts_stats", {step=60, metrics_type=ts_utils.metrics.gauge, is_critical_ts = true})
 schema:addTag("ifid")
 schema:addMetric("engaged_alerts")
@@ -342,3 +358,17 @@ schema:addTag("ifid")
 schema:addTag("pod")
 schema:addMetric("as_client")
 schema:addMetric("as_server")
+
+-------------------------------------------------------
+-- NPROBE OBSERVATION POINTS SCHEMAS
+-------------------------------------------------------
+
+schema = ts_utils.newSchema("observation_point:traffic", {step=60})
+schema:addTag("ifid")
+schema:addTag("observation_point_id")
+schema:addMetric("bytes")
+
+schema = ts_utils.newSchema("observation_point:flows", {step=60})
+schema:addTag("ifid")
+schema:addTag("observation_point_id")
+schema:addMetric("flows")

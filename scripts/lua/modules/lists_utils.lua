@@ -5,6 +5,7 @@
 local lists_utils = {}
 
 local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 local os_utils = require("os_utils")
 local categories_utils = require("categories_utils")
 local json = require("dkjson")
@@ -375,7 +376,7 @@ local function checkListsUpdate(timeout)
 	       list_name
 	    )
 
-	    alert:set_score(10)
+	    alert:set_score_notice()
 
 	    alert:store(alerts_api.systemEntity(list_name))
 
@@ -409,7 +410,7 @@ local function checkListsUpdate(timeout)
 	       last_error
 	    )
 
-	    alert:set_score(100)
+	    alert:set_score_error()
 
 	    alert:store(alerts_api.systemEntity(list_name))
 
@@ -507,12 +508,8 @@ local function loadListItem(host, category, user_custom_categories, list, num_li
       else
 	 -- Domain
 	 if((not list) or (list.format ~= "ip")) then
-	   if((string.len(host) < 4) or (string.find(host, "%.") == nil)) then
-	     traceError(TRACE_INFO, TRACE_CONSOLE, string.format("Bad domain name '%s' in list '%s' [line: %u]", host, list and list.name, num_line))
-	   else
-	     ntop.loadCustomCategoryHost(host, category)
-	     return "domain"
-	   end
+	    ntop.loadCustomCategoryHost(host, category)
+	    return "domain"
 	 else
 	   loadWarning(string.format("Invalid domain '%s' in list '%s'", host, list.name))
 	 end
@@ -707,7 +704,7 @@ local function reloadListsNow()
 	 if ntop.isShutdown() then
 	    break
 	 end
-	 loadListItem(host, category_id, user_custom_categories, 0)
+	 loadListItem(host, category_id, user_custom_categories, {} --[[ No list --]], 0 --[[ No line number --]])
       end
    end
 
@@ -743,6 +740,11 @@ end
 
 -- This is run in housekeeping.lua
 function lists_utils.checkReloadLists()
+
+   if ntop.isOffline() then
+      return
+   end
+
    local forced_reload = (ntop.getCache("ntopng.cache.reload_lists_utils") == "1")
    local reload_now = false
 

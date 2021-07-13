@@ -30,12 +30,12 @@ class LowGoodputFlowAlert : public FlowAlert {
 
  public:
   static FlowAlertType getClassType() { return { flow_alert_low_goodput, alert_category_network }; }
+  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- LowGoodputFlowAlert(FlowCallback *c, Flow *f) : FlowAlert(c, f) {};
+ LowGoodputFlowAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
   ~LowGoodputFlowAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("low_goodput"); }
 };
 
 #endif /* _LOW_GOODPUT_FLOW_ALERT_H_ */

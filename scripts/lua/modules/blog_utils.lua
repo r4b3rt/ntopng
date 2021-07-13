@@ -71,9 +71,9 @@ function blog_utils.updatePostState(blogNotificationId, username)
 
    for _, p in pairs(posts) do
       if (p.id == blogNotificationId) then
-	 if (p.users_read == nil) then p.users_read = {} end
-	 p.users_read[username] = true
-	 success = true
+         if (p.users_read == nil) then p.users_read = {} end
+         p.users_read[username] = true
+         success = true
       end
    end
 
@@ -100,6 +100,11 @@ function blog_utils.updateRedis(newPosts)
 end
 
 function blog_utils.fetchLatestPosts()  
+
+   if ntop.isOffline() then
+      return
+   end
+
    local response
    local now = os.time()
    local next_fetch = ntop.getPref(BLOG_NEXT_FEED_UPDATE)

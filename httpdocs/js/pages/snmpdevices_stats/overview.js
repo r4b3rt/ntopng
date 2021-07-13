@@ -3,7 +3,7 @@
  *
  * This script implements the logic for the overview tab inside snmpdevice_stats.lua page.
  */
-$(document).ready(function () {
+$(function () {
 
     // constant for filtering table
     const RESPONSIVE_COLUMN_INDEX = 0;
@@ -179,7 +179,7 @@ $(document).ready(function () {
 
             $(this).attr("disabled", true);
 
-            const request = await fetch(`${http_prefix}/lua/rest/v1/get/snmp/device/pools.lua`);
+            const request = await fetch(`${http_prefix}/lua/rest/v2/get/snmp/device/pools.lua`);
             const data = await request.json();
 
             if (data.rc < 0) {
@@ -247,7 +247,7 @@ $(document).ready(function () {
 
                     if (type == "display" && row.column_device_status == "unreachable") {
                         return (`
-                            <span class='badge badge-warning' title='${i18n.snmp.snmp_device_does_not_respond}'>
+                            <span class='badge bg-warning' title='${i18n.snmp.snmp_device_does_not_respond}'>
                                 <i class="fas fa-exclamation-triangle"></i>
                             </span>
                             ${data}
@@ -334,7 +334,7 @@ $(document).ready(function () {
         method: 'post',
         csrf: addCsrf,
         resetAfterSubmit: false,
-        endpoint: `${ http_prefix }/lua/pro/rest/v1/add/snmp/device.lua`,
+        endpoint: `${ http_prefix }/lua/pro/rest/v2/add/snmp/device.lua`,
         beforeSumbit: () => {
             return buildDataRequest(`#add-snmp-device-modal`);
         },
@@ -361,7 +361,7 @@ $(document).ready(function () {
         method: 'post',
         csrf: addCsrf,
         resetAfterSubmit: false,
-        endpoint: `${ http_prefix }/lua/pro/rest/v1/edit/snmp/device/device.lua`,
+        endpoint: `${ http_prefix }/lua/pro/rest/v2/edit/snmp/device/device.lua`,
         beforeSumbit: (selectedSNMPDevice) => {
             const data = buildDataRequest('#edit-snmp-device-modal');
             data.snmp_host = selectedSNMPDevice.column_key;
@@ -397,7 +397,7 @@ $(document).ready(function () {
     const $deleteModalHandler = $(`#delete-snmp-device-modal form`).modalHandler({
         method: 'post',
         csrf: deleteCsrf,
-        endpoint: `${ http_prefix }/lua/pro/rest/v1/delete/snmp/device.lua`,
+        endpoint: `${ http_prefix }/lua/pro/rest/v2/delete/snmp/device.lua`,
         resetAfterSubmit: false,
         onModalInit: function(selectedSNMPDevice) {
             $(`.delete-snmp-device-name`).text(selectedSNMPDevice.column_key);

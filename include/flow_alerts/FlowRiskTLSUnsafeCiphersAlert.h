@@ -26,13 +26,16 @@
 
 class FlowRiskTLSUnsafeCiphersAlert : public FlowRiskTLSAlert {
  public:
+  static ndpi_risk_enum getClassRisk() { return NDPI_TLS_WEAK_CIPHER; }
   static FlowAlertType getClassType() { return { flow_alert_tls_unsafe_ciphers, alert_category_security }; }
+  static u_int8_t      getDefaultScore() { return Utils::getFlowRiskScore(getClassRisk()); }
 
- FlowRiskTLSUnsafeCiphersAlert(FlowCallback *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
+ FlowRiskTLSUnsafeCiphersAlert(FlowCheck *c, Flow *f) : FlowRiskTLSAlert(c, f) { };
   ~FlowRiskTLSUnsafeCiphersAlert() { };
 
   FlowAlertType getAlertType() const { return getClassType(); }
-  std::string getName() const { return std::string("alert_tls_unsafe_ciphers"); }
+  ndpi_risk_enum getAlertRisk()  const { return getClassRisk();  }
+  u_int8_t       getAlertScore() const { return getDefaultScore(); }
 };
 
 #endif /* _FR_TLS_UNSAFE_CHIPERS_ALERT_H_ */

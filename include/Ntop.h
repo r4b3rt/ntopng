@@ -44,7 +44,9 @@ class Ntop {
   pthread_t purgeLoop;    /* Loop which iterates on active interfaces to delete idle hash table entries */
   bool purgeLoop_started; /* Flag that indicates whether the purgeLoop has been started */
   bool ndpiReloadInProgress;
-  bool flowCallbacksReloadInProgress, hostCallbacksReloadInProgress, alertExclusionsReloadInProgress;
+  bool flowChecksReloadInProgress, hostChecksReloadInProgress;
+  bool hostPoolsReloadInProgress;
+  bool offline;
   Bloom *resolvedHostsBloom; /* Used by all redis class instances */
   AddressTree local_interface_addresses;
   char epoch_buf[11];
@@ -62,10 +64,11 @@ class Ntop {
   NtopGlobals *globals; /**< Pointer of Ntop globals info and variables. */
   u_int num_cpus; /**< Number of physical CPU cores. */
   Redis *redis; /**< Pointer to the Redis server. */
-  Mutex m;
+  Mutex m, users_m;
   struct ndpi_detection_module_struct *ndpi_struct, *ndpi_struct_shadow;
 #ifndef HAVE_NEDGE
   ElasticSearch *elastic_search; /**< Pointer of Elastic Search. */
+  ZMQPublisher *zmqPublisher;
 #ifndef WIN32
   SyslogDump *syslog; /**< Pointer of Logstash. */
 #endif
@@ -89,6 +92,9 @@ class Ntop {
   cpu_load_stats cpu_stats;
   float cpu_load;
   bool plugins0_active, can_send_icmp, privileges_dropped;
+#ifndef HAVE_NEDGE
+  bool refresh_ips_rules;
+#endif
   FifoSerializerQueue *internal_alerts_queue;
   Recipients recipients; /* Handle notification recipients */
   
@@ -97,12 +103,19 @@ class Ntop {
   char *local_network_aliases[CONST_MAX_NUM_NETWORKS];
   AddressTree local_network_tree;
 
-  /* Callbacks */
-  FlowCallbacksLoader *flow_callbacks_loader;
-  HostCallbacksLoader *host_callbacks_loader;
+  /* Alerts */
+  FlowAlertsLoader flow_alerts_loader;
+
+  /* Checks */
+  FlowChecksLoader *flow_checks_loader;
+  HostChecksLoader *host_checks_loader;
 
   /* Hosts Control (e.g., disabled alerts) */
+#ifdef NTOPNG_PRO
+  bool alertExclusionsReloadInProgress;
   AlertExclusions *alert_exclusions, *alert_exclusions_shadow;
+#endif
+  bool assignUserId(u_int8_t *new_user_id);
 
 #ifndef WIN32
   ContinuousPing *cping;
@@ -128,9 +141,10 @@ class Ntop {
   bool checkUserPassword(const char * const user, const char * const password, char *group, bool *localuser) const;
   bool startPurgeLoop();
 
-  void checkReloadFlowCallbacks();
-  void checkReloadHostCallbacks();
+  void checkReloadFlowChecks();
+  void checkReloadHostChecks();
   void checkReloadAlertExclusions();
+  void checkReloadHostPools();
   
  public:
   /**
@@ -464,7 +478,9 @@ class Ntop {
   inline void      setLastModifiedStaticFileEpoch(u_int32_t t) { if(t > last_modified_static_file_epoch) last_modified_static_file_epoch = t; }
   inline u_int32_t getUptime()                 { return((u_int32_t)((start_time > 0) ? (time(NULL)-start_time) : 0)); }
   inline int getUdpSock()                      { return(udp_socket); }
+#ifdef NTOPNG_PRO
   inline AlertExclusions *getAlertExclusions() { return alert_exclusions; }
+#endif
 
   inline u_int getNumCPUs()             { return(num_cpus); }
   inline void setNumCPUs(u_int num)     { num_cpus = num; }
@@ -533,9 +549,16 @@ class Ntop {
   ndpi_protocol_category_t get_ndpi_proto_category(u_int protoid);
   void setnDPIProtocolCategory(u_int16_t protoId, ndpi_protocol_category_t protoCategory);
   void reloadPeriodicScripts();
-  inline void reloadFlowCallbacks()   { flowCallbacksReloadInProgress = true;    };
-  inline void reloadHostCallbacks()   { hostCallbacksReloadInProgress = true;    };
-  inline void reloadAlertExclusions() { alertExclusionsReloadInProgress = true;  };
+  inline void reloadFlowChecks()   { flowChecksReloadInProgress = true;    };
+  inline void reloadHostChecks()   { hostChecksReloadInProgress = true;    };
+  inline void reloadAlertExclusions() {
+#ifdef NTOPNG_PRO
+    alertExclusionsReloadInProgress = true;
+#endif
+  };
+  inline void reloadHostPools()       { hostPoolsReloadInProgress = true;        };
+
+  void addToPool(char *host_or_mac, u_int16_t user_pool_id);
 
   char *getAlertJSON(FlowAlertType fat, Flow *f) const;
   ndpi_serializer *getAlertSerializer(FlowAlertType fat, Flow *f) const;
@@ -561,8 +584,20 @@ class Ntop {
   
   //void getLocalAddresses(lua_State* vm) { return(local_network_tree.getAddresses(vm)); };
 
-  inline FlowCallbacksLoader* getFlowCallbacksLoader() { return(flow_callbacks_loader); }
-  inline HostCallbacksLoader* getHostCallbacksLoader() { return(host_callbacks_loader); }
+  inline FlowChecksLoader* getFlowChecksLoader() { return(flow_checks_loader); }
+  inline HostChecksLoader* getHostChecksLoader() { return(host_checks_loader); }
+  inline u_int8_t getFlowAlertScore(FlowAlertTypeEnum alert_id) const { return flow_alerts_loader.getAlertScore(alert_id); };
+  bool luaFlowCheckInfo(lua_State *vm, std::string check_name) const;
+  bool luaHostCheckInfo(lua_State *vm, std::string check_name) const;
+  inline ndpi_risk getUnhandledRisks() const { return flow_checks_loader ? flow_checks_loader->getUnhandledRisks() : 0; };
+#ifndef HAVE_NEDGE
+  bool broadcastIPSMessage(char *msg);
+  inline void askToRefreshIPSRules()  { refresh_ips_rules = true; }
+  inline bool timeToRefreshIPSRules() { bool rc = refresh_ips_rules; refresh_ips_rules = false; return(rc); }
+#endif
+
+  inline bool isOffline() { return offline; }
+  inline void toggleOffline(bool off) { offline = off; }
 };
 
 extern Ntop *ntop;

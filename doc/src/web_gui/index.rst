@@ -61,10 +61,11 @@ Each individual menu bar entry will be discussed below.
     historical
     report
     flows
-    user_scripts
+    checks
     categories
     hosts
     host_details
+    pools
     interfaces
     settings
     administration

@@ -44,6 +44,7 @@ public:
   static char* jsonLabel(int label,const char *label_str, char *buf, u_int buf_len);
   static char* formatTraffic(float numBits, bool bits, char *buf, u_int buf_len);
   static char* formatPackets(float numPkts, char *buf, u_int buf_len);
+  static const char* edition2name(NtopngEdition ntopng_edition);
   static char* l4proto2name(u_int8_t proto);
   static u_int8_t l4name2proto(const char *name);
   static u_int8_t queryname2type(const char *name);
@@ -109,6 +110,11 @@ public:
   static ticks getticks();
   static ticks gettickspersec();
   static char* getURL(char *url, char *buf, u_int buf_len);
+  inline static u_int8_t getFlowRiskScore(ndpi_risk_enum risk) {
+    ndpi_risk r = 0; u_int16_t c, s;
+    ndpi_risk2score(NDPI_SET_BIT(r, risk), &c, &s);
+    return c + s;
+  }
   static bool discardOldFilesExceeding(const char *path, const unsigned long max_size);
   static u_int64_t macaddr_int(const u_int8_t *mac);
   static char *ifname2devname(const char *ifname, char *devname, int devname_size);
@@ -239,12 +245,13 @@ public:
 #endif
   static void tlv2lua(lua_State *vm, ndpi_serializer *serializer);
   static u_int16_t country2u16(const char *country_code);
-  static int snappend(char *str, size_t size, const char *tobeappended, const char *separator);
   static bool isNumber(const char *s, unsigned int s_len, bool *is_float);
   static bool isPingSupported();
-  static ScoreCategory mapAlertToScoreCategory(AlertCategory script_category);
+  static ScoreCategory mapAlertToScoreCategory(AlertCategory check_category);
   /* Map alert score to AlertLevel */
   static AlertLevel mapScoreToSeverity(u_int32_t score);
+  /* Map AlertLevel to score */
+  static u_int8_t mapSeverityToScore(AlertLevel alert_level);
   /*
     Maps an AlertLevel into the corresponding AlertLevelGroup. Alert level groups
     are used to 'compress' alert levels into a reduced number of (grouped) levels.
@@ -255,6 +262,7 @@ public:
   static int mapSyslogFacilityTextToValue(const char *facility_text);
 #endif
   static void buildSqliteAllowedNetworksFilters(lua_State *vm);
+  static void make_session_key(char *buf, u_int buf_len);
 };
 
 #endif /* _UTILS_H_ */

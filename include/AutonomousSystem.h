@@ -27,30 +27,41 @@
 #include "ntop_includes.h"
 
 class AutonomousSystem : public GenericHashEntry, public GenericTrafficElement, public SerializableElement, public Score {
- private:
+private:
   u_int32_t asn;
   char *asname;
   u_int32_t round_trip_time;
 
+#if defined(NTOPNG_PRO)
+  time_t nextMinPeriodicUpdate;
+
+  /* Traffic behavior analysis */
+  AnalysisBehavior *score_behavior, *traffic_tx_behavior, *traffic_rx_behavior;
+#endif
+
   inline void incSentStats(time_t t, u_int64_t num_pkts, u_int64_t num_bytes)  {
     if(first_seen == 0) first_seen = t,
-    last_seen = iface->getTimeLastPktRcvd();
+			  last_seen = iface->getTimeLastPktRcvd();
     sent.incStats(t, num_pkts, num_bytes);
   }
   inline void incRcvdStats(time_t t,u_int64_t num_pkts, u_int64_t num_bytes) {
     rcvd.incStats(t, num_pkts, num_bytes);
   }
 
- public:
+#ifdef NTOPNG_PRO
+  void updateBehaviorStats(const struct timeval *tv);
+#endif
+
+public:
   AutonomousSystem(NetworkInterface *_iface, IpAddress *ipa);
   ~AutonomousSystem();
 
   void set_hash_entry_state_idle();
 
-  inline u_int16_t getNumHosts()               { return getUses();            }
-  inline u_int32_t key()                       { return(asn);                 }
-  inline u_int32_t get_asn()                   { return(asn);                 }
-  inline char *get_asname()                    { return(asname);              }
+  inline u_int16_t getNumHosts()               { return getUses();             }
+  inline u_int32_t key()                       { return(asn);                  }
+  inline u_int32_t get_asn()                   { return(asn);                  }
+  inline char*    get_asname()                 { return(asname ? asname : (char*)""); }
 
   bool equal(u_int32_t asn);
 
@@ -64,7 +75,9 @@ class AutonomousSystem : public GenericHashEntry, public GenericTrafficElement, 
   }
 
   void updateRoundTripTime(u_int32_t rtt_msecs);
-  void lua(lua_State* vm, DetailsLevel details_level, bool asListElement);
+  void lua(lua_State* vm, DetailsLevel details_level, bool asListElement, bool diff = false);
+
+  virtual void updateStats(const struct timeval *tv);
 
   inline void deserialize(json_object *obj) {
     GenericHashEntry::deserialize(obj);
@@ -78,4 +91,3 @@ class AutonomousSystem : public GenericHashEntry, public GenericTrafficElement, 
 };
 
 #endif /* _AUTONOMOUS_SYSTEM_H_ */
-

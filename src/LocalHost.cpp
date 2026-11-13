@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,206 +23,346 @@
 
 /* *************************************** */
 
-LocalHost::LocalHost(NetworkInterface *_iface, Mac *_mac,
-		     VLANid _vlanId, u_int16_t _observation_point_id,
-		     IpAddress *_ip) : Host(_iface, _mac, _vlanId, _observation_point_id, _ip) {
+LocalHost::LocalHost(NetworkInterface* _iface, int32_t _iface_idx, Mac* _mac,
+                     u_int16_t _vlanId, u_int16_t _observation_point_id,
+                     IpAddress* _ip)
+    : Host(_iface, _iface_idx, _mac, _vlanId, _observation_point_id, _ip),
+      contacted_server_ports(CONST_MAX_NUM_QUEUED_PORTS,
+                             "localhost-serverportsproto") {
+  tcp_fingerprint = NULL;
+
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
 #ifdef LOCALHOST_DEBUG
   char buf[48];
-  
+
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Instantiating local host %s",
-			       _ip ? _ip->print(buf, sizeof(buf)) : "");
+                               _ip ? _ip->print(buf, sizeof(buf)) : "");
 #endif
   initialize();
 }
 
 /* *************************************** */
 
-LocalHost::LocalHost(NetworkInterface *_iface, char *ipAddress,
-		     VLANid _vlanId, u_int16_t _observation_point_id)
-  : Host(_iface, ipAddress, _vlanId, _observation_point_id) {
+LocalHost::LocalHost(NetworkInterface* _iface, int32_t _iface_idx,
+                     char* ipAddress, u_int16_t _vlanId,
+                     u_int16_t _observation_point_id)
+    : Host(_iface, _iface_idx, ipAddress, _vlanId, _observation_point_id),
+      contacted_server_ports(CONST_MAX_NUM_QUEUED_PORTS,
+                             "localhost-serverportsproto") {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
   initialize();
 }
 
 /* *************************************** */
 
 LocalHost::~LocalHost() {
-  if(initial_ts_point) delete(initial_ts_point);
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+
+#ifdef NTOPNG_PRO
+  dumpAssetInfo();
+#endif
+
+  if (initial_ts_point) delete (initial_ts_point);
   freeLocalHostData();
+  if (fingerprints) delete fingerprints;
+
+  /* Decrease number of active hosts */
+  iface->decNumHosts(this, is_rx_only);
+  /* NOTE: no lock (see dumpAssetJson), the host is no longer used */
+  asset_map.clear();
 }
 
 /* *************************************** */
 
 void LocalHost::set_hash_entry_state_idle() {
-  /* Serialization is performed, inline, as soon as the LocalHost becomes idle, and
-     not when it is deleted. This guarantees that, if the same host becomes active again,
-     its counters will be consistent even if its other instance has still to be deleted. */
-  if(data_delete_requested)
-    deleteRedisSerialization();
-  else if((ntop->getPrefs()->is_idle_local_host_cache_enabled()
-      || ntop->getPrefs()->is_active_local_host_cache_enabled())
-     && (!ip.isEmpty())) {
-    Mac *mac = getMac();
+  if (ntop->getPrefs()->is_active_local_host_cache_enabled() &&
+      (!ip.isEmpty())) {
+    Mac* mac = getMac();
+
     checkStatsReset();
-    serializeToRedis();
 
     /* For LBD hosts in the DHCP range, also save the IP -> MAC
      * association. This allows us to both search the host by IP and to
      * bring up the host in memory with the correct stats. */
-    if(mac && serializeByMac()) {
+    if (mac && serializeByMac()) {
       char key[CONST_MAX_LEN_REDIS_KEY];
       char buf[64], mac_buf[32];
 
-      snprintf(key, sizeof(key), IP_MAC_ASSOCIATION, iface->get_id(), ip.print(buf, sizeof(buf)), vlan_id);
+      snprintf(key, sizeof(key), IP_MAC_ASSOCIATION, (u_int)iface->get_id(),
+               ip.print(buf, sizeof(buf)), vlan_id);
       mac->print(mac_buf, sizeof(mac_buf));
 
       /* IP@VLAN -> MAC */
-      ntop->getRedis()->set(key, mac_buf, ntop->getPrefs()->get_local_host_cache_duration());
+      ntop->getRedis()->set(key, mac_buf,
+                            ntop->getPrefs()->get_local_host_cache_duration());
     }
   }
 
-  iface->decNumHosts(true /* A local host */);
-  if(NetworkStats *ns = iface->getNetworkStats(local_network_id))
-    ns->decNumHosts();
+  /* Only increase the number of host if it's a unicast host */
+  if (isUnicastHost()) {
+    if (NetworkStats* ns = iface->getNetworkStats(local_network_id))
+      ns->decNumHosts();
+  }
 
   GenericHashEntry::set_hash_entry_state_idle();
 }
 
 /* *************************************** */
 
-/* NOTE: Host::initialize will be called from the Host initializator */
+/* NOTE: Host::initialize will be called by the constructor after the Host
+ * initialization */
 void LocalHost::initialize() {
   char buf[64], host[96], rsp[256];
-  
+
+  BroadcastDomains* bd = iface->getBroadcastDomains();
+
   stats = allocateStats();
-  updateHostPool(true /* inline with packet processing */, true /* first inc */);
+  updateHostPool(true /* inline with packet processing */,
+                 true /* first inc */);
 
   local_network_id = -1;
-  drop_all_host_traffic = false;
   os_detail = NULL;
+  usernames = NULL, kerberos_machine = NULL;
+  usedPorts = NULL;
+  asset_map_updated = false, too_many_server_ports_logged = false;
+  tags_refreshed_bitmap = tags_removed_bitmap = tags_assigned_bitmap = 0;
+#ifdef NTOPNG_PRO
+  journal_causes = NULL, journal_created_pending = true;
+#endif
 
   ip.isLocalHost(&local_network_id);
-
+  inconsistent_host_os = false;
   systemHost = ip.isLocalInterfaceAddress();
 
-  PROFILING_SUB_SECTION_ENTER(iface, "LocalHost::initialize: local_host_cache", 16);
-  if(ntop->getPrefs()->is_idle_local_host_cache_enabled()) {
-    if(!deserializeFromRedis())
-      deleteRedisSerialization();
-  }
-  PROFILING_SUB_SECTION_EXIT(iface, 16);
-
   /* Clone the initial point. It will be written to the timeseries DB to
-   * address the first point problem (https://github.com/ntop/ntopng/issues/2184). */
-  initial_ts_point = new (std::nothrow) LocalHostStats(*(LocalHostStats *)stats);
+   * address the first point problem
+   * (https://github.com/ntop/ntopng/issues/2184). */
+  initial_ts_point = new (std::nothrow) LocalHostStats(*(LocalHostStats*)stats);
   initialization_time = time(NULL);
 
-  char *strIP = ip.print(buf, sizeof(buf));
+  char* strIP = ip.print(buf, sizeof(buf));
   snprintf(host, sizeof(host), "%s@%u", strIP, vlan_id);
 
-  if(ntop->getPrefs()->is_dns_resolution_enabled()) {
-    if(isBroadcastHost() || isMulticastHost()
-       || (isIPv6()
-	   && ((strncmp(strIP, "ff0", 3) == 0)
-	       || (strncmp(strIP, "fe80", 4) == 0)))
-       )
+  if (ntop->getPrefs()->is_dns_resolution_enabled()) {
+    if (isBroadcastHost() || isMulticastHost() ||
+        (isIPv6() &&
+         ((strncmp(strIP, "ff0", 3) == 0) || (strncmp(strIP, "fe80", 4) == 0))))
       ;
-    else
+    else {
       ntop->getRedis()->getAddress(strIP, rsp, sizeof(rsp), true);
-  }
-  
-  PROFILING_SUB_SECTION_ENTER(iface, "LocalHost::initialize: updateHostTrafficPolicy", 18);
-  updateHostTrafficPolicy(host);
-  PROFILING_SUB_SECTION_EXIT(iface, 18);
 
-  iface->incNumHosts(true /* Local Host */);
-  if(NetworkStats *ns = iface->getNetworkStats(local_network_id))
-    ns->incNumHosts();
-  
+      if (rsp[0] != '\0') setResolvedName(rsp);
+    }
+  }
+
+  INTERFACE_PROFILING_SUB_SECTION_ENTER(
+      iface, "LocalHost::initialize: updateHostTrafficPolicy", 18);
+  updateHostTrafficPolicy(host);
+  INTERFACE_PROFILING_SUB_SECTION_EXIT(iface, 18);
+
+  /* Only increase the hosts number if it's a unicast host */
+  if (isUnicastHost()) {
+    if (NetworkStats* ns = iface->getNetworkStats(local_network_id))
+      ns->incNumHosts();
+  }
+
+  iface->incNumHosts(
+      this, true /* Initialization: bytes are 0, considered RX only */);
+
 #ifdef LOCALHOST_DEBUG
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s is %s [%p]",
-			       ip.print(buf, sizeof(buf)),
-			       isSystemHost() ? "systemHost" : "", this);
+                               ip.print(buf, sizeof(buf)),
+                               isSystemHost() ? "systemHost" : "", this);
 #endif
+
+  router_mac_set = 0, memset(router_mac, 0, sizeof(router_mac));
+
+#ifdef HAVE_NEDGE
+  drop_all_host_traffic = 0;
+#endif
+
+  if (ntop->getPrefs()->areFingerprintStatsEnabled())
+    fingerprints = new (std::nothrow) HostFingerprints();
+  else
+    fingerprints = NULL;
+
+  tcp_fingerprint_host_os = ndpi_os_unknown;
+
+  syncMACMetadata(true);
+  gettimeofday(&last_periodic_asset_update, NULL);
+
+  if (bd) {
+    if (bd->isLocalBroadcastDomainHost(this, true) ||
+        iface->getInterfaceNetworks()->match(&ip, ip.isIPv4() ? 32 : 128))
+      setMACmeaningful();
+  }
+
+  if (!ntop->getPrefs()->isASNModeEnabled())
+    usedPorts = new (std::nothrow) UsedPorts(this);
+
+#ifdef NTOPNG_PRO
+  loadAssetInfo();
+
+  flow_stats.num_new_flows_as_client_toward_local_servers = 0,
+    flow_stats.num_new_flows_as_client_toward_remote_servers = 0,
+    flow_stats.next_flow_stats_reset = 0,
+    flow_stats.num_consec_threshold_cross = 0, 
+
+    resetLocalFlowStats();
+#endif  
 }
 
 /* *************************************** */
 
-char* LocalHost::getSerializationKey(char *redis_key, uint bufsize) {
-  Mac *mac = getMac();
+void LocalHost::deferredInitialization() {
 
-  if(mac && serializeByMac()) {
+  Host::deferredInitialization(); /* this also sets is_in_broadcast_domain */
+
+  user_tags_bitmap = iface->getPersistentHostTags(this);
+}
+
+/* *************************************** */
+
+void LocalHost::syncMACMetadata(bool force_update) {
+  Mac* cur_mac;
+
+#ifdef NTOPNG_PRO
+  if (!ntop->getPrefs()->isAssetInventoryEnabled()) return;
+#endif
+
+  cur_mac = getMac();
+
+  if (cur_mac && (force_update || cur_mac->isAssetUpdated())) {
+    if (cur_mac->getDHCPNamePtr())
+      offlineSetDHCPName(cur_mac->getDHCPNamePtr());
+
+    if (cur_mac->getDeviceOS() != ndpi_os_unknown)
+      setOS(cur_mac->getDeviceOS(), os_learning_dhcp);
+  }
+}
+
+/* *************************************** */
+
+void LocalHost::periodic_stats_update(const struct timeval* tv,
+                                      bool force_update) {
+  checkGatewayInfo();
+  syncMACMetadata(false);
+
+#ifdef NTOPNG_PRO
+  if (ntop->getPrefs()->isAssetInventoryEnabled()) {
+    /* If at least CONST_ASSETS_PERIODIC_UPDATE are past and the map was
+     * updated, dump the info */
+    float diff = Utils::msTimevalDiff(tv, &last_periodic_asset_update) /
+                 1000; /* in Sec */
+    Mac* cur_mac = getMac();
+    if (cur_mac && cur_mac->isAssetUpdated()) asset_map_updated = true;
+
+    if (((diff > CONST_ASSETS_PERIODIC_UPDATE) && asset_map_updated) ||
+        /* Nothing has changed, but some tags that expire when not refreshed
+         * have been observed again */
+        ((diff > ntop->getPrefs()->getAssetTagsRefreshInterval()) &&
+         (tags_refreshed_bitmap & ntop->getTTLTagsBitmap()))) {
+      memcpy(&last_periodic_asset_update, tv,
+             sizeof(last_periodic_asset_update));
+      dumpAssetInfo();
+    }
+  }
+#endif
+
+  Host::periodic_stats_update(tv, force_update);
+}
+
+/* *************************************** */
+
+void LocalHost::checkGatewayInfo() {
+  if (mac) {
+    // #define DEBUG_GATEWAY 1
+
+    // A local host is a gateway only if its MAC is a networking device AND it
+    // actually routes traffic towards remote networks (i.e. there are remote
+    // hosts reachable behind that MAC).
+    bool is_gateway =
+        (mac->getDeviceType() == device_networking) && mac->isRouterMac();
+#ifdef DEBUG_GATEWAY
+    char buf[64];
+    ntop->getTrace()->traceEvent(TRACE_NORMAL,
+        "Checking device type [IP: %s] [Type: %d] [Remote hosts behind MAC: %u]",
+        ip.print(buf, sizeof(buf)), mac->getDeviceType(),
+        mac->getNumRemoteHosts());
+#endif
+    if (is_gateway) {
+      ip.setGateway(true);
+#ifdef DEBUG_GATEWAY
+      ntop->getTrace()->traceEvent(TRACE_NORMAL, "Gateway detected [IP: %s]",
+                                   ip.print(buf, sizeof(buf)));
+#endif
+    } else {
+      ip.setGateway(false);
+    }
+  }
+}
+
+/* *************************************** */
+
+char* LocalHost::getSerializationKey(char* redis_key, u_int bufsize,
+                                     bool short_format) {
+  Mac* mac = getMac();
+
+  if (mac && (is_in_broadcast_domain || serializeByMac())) {
     char mac_buf[128];
 
     get_mac_based_tskey(mac, mac_buf, sizeof(mac_buf));
 
-    return(getMacBasedSerializationKey(redis_key, bufsize, mac_buf));
+    return (
+        getMacBasedSerializationKey(redis_key, bufsize, mac_buf, short_format));
   }
 
-  return(getIpBasedSerializationKey(redis_key, bufsize));
+  return (getIPBasedSerializationKey(redis_key, bufsize, short_format));
 }
 
 /* *************************************** */
 
-void LocalHost::deserialize(json_object *o) {
-  json_object *obj;
+char* LocalHost::getRedisKey(char* buf, uint buf_len, bool skip_prefix) {
+  Mac* mac = getMac();
 
-  if(!isBroadcastHost()) stats->deserialize(o);
+  if (mac && (is_in_broadcast_domain || serializeByMac())) {
+    get_mac_based_tskey(mac, buf, buf_len, skip_prefix);
 
-  if(! mac) {
-    u_int8_t mac_buf[6];
-    memset(mac_buf, 0, sizeof(mac_buf));
-
-    if(json_object_object_get_ex(o, "mac_address", &obj)) Utils::parseMac(mac_buf, json_object_get_string(obj));
-
-    // sticky hosts enabled, we must bring up the mac address
-    if((mac = iface->getMac(mac_buf, true /* create if not exists */, true /* Inline call */)) != NULL)
-      mac->incUses();
-    else
-      ntop->getTrace()->traceEvent(TRACE_WARNING,
-				   "Internal error: NULL mac. Are you running out of memory or MAC hash is full?");
-  }
-
-  GenericHashEntry::deserialize(o);
-  if(json_object_object_get_ex(o, "last_stats_reset", &obj)) last_stats_reset = json_object_get_int64(obj);
-
-  if(json_object_object_get_ex(o, "os_id", &obj))
-    inlineSetOS((OSType)json_object_get_int(obj));
-
-  /* We commented the line below to avoid strings too long */
-#if 0
-  activityStats.reset();
-  if(json_object_object_get_ex(o, "activityStats", &obj)) activityStats.deserialize(obj);
-#endif
-
-  checkStatsReset();
+    return (buf);
+  } else
+    return (get_hostkey(buf, buf_len, false));
 }
 
 /* *************************************** */
 
-void LocalHost::updateHostTrafficPolicy(char *key) {
+void LocalHost::updateHostTrafficPolicy(char* key) {
 #ifdef HAVE_NEDGE
   char buf[64], *host;
 
-  if(key)
+  if (key)
     host = key;
   else
     host = get_hostkey(buf, sizeof(buf));
 
-  if(iface->isPacketInterface()) {
-    if((ntop->getRedis()->hashGet((char*)DROP_HOST_TRAFFIC, host, buf, sizeof(buf)) == -1)
-       || (strcmp(buf, "true") != 0))
-      drop_all_host_traffic = false;
+  if (iface->isPacketInterface()) {
+    if ((ntop->getRedis()->hashGet((char*)DROP_HOST_TRAFFIC, host, buf,
+                                   sizeof(buf)) == -1) ||
+        (strcmp(buf, "true") != 0))
+      drop_all_host_traffic = 0;
     else
-      drop_all_host_traffic = true;
-
+      drop_all_host_traffic = 1;
   }
 #endif
 }
 
 /* ***************************************** */
 
-const char * LocalHost::getOSDetail(char * const buf, ssize_t buf_len) {
-  if(buf && buf_len) {
+const char* LocalHost::getOSDetail(char* const buf, ssize_t buf_len) {
+  if (buf && buf_len) {
     m.lock(__FILE__, __LINE__);
     snprintf(buf, buf_len, "%s", os_detail ? os_detail : "");
     m.unlock(__FILE__, __LINE__);
@@ -233,17 +373,19 @@ const char * LocalHost::getOSDetail(char * const buf, ssize_t buf_len) {
 
 /* *************************************** */
 
-void LocalHost::lua_contacts_stats(lua_State *vm) const {
-  if(!stats)
-    return;
+void LocalHost::lua_contacts_stats(lua_State* vm) const {
+  if (!stats) return;
 
   lua_newtable(vm);
 
-  lua_push_uint32_table_entry(vm, "dns",  stats->getDNSContactCardinality());
+  lua_push_uint32_table_entry(vm, "dns", stats->getDNSContactCardinality());
   lua_push_uint32_table_entry(vm, "smtp", stats->getSMTPContactCardinality());
-  lua_push_uint32_table_entry(vm, "ntp",  stats->getNTPContactCardinality());
-  lua_push_uint32_table_entry(vm, "domain_names",  stats->getDomainNamesCardinality());
-  
+  lua_push_uint32_table_entry(vm, "imap", stats->getIMAPContactCardinality());
+  lua_push_uint32_table_entry(vm, "pop", stats->getPOPContactCardinality());
+  lua_push_uint32_table_entry(vm, "ntp", stats->getNTPContactCardinality());
+  lua_push_uint32_table_entry(vm, "domain_names",
+                              stats->getDomainNamesCardinality());
+
   lua_pushstring(vm, "server_contacts");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
@@ -251,77 +393,132 @@ void LocalHost::lua_contacts_stats(lua_State *vm) const {
 
 /* *************************************** */
 
-void LocalHost::lua(lua_State* vm, AddressTree *ptree,
-		    bool host_details, bool verbose,
-		    bool returnHost, bool asListElement) {
+void LocalHost::lua(lua_State* vm, AddressTree* ptree, bool host_details,
+                    bool verbose, bool veryBasicInfo, bool returnHost,
+                    bool asListElement) {
   char buf_id[64], *host_id = buf_id;
-  const char *local_net;
+  const char* local_net;
   bool mask_host = Utils::maskHost(isLocalHost());
+#ifdef NTOPNG_PRO
+  char asset_key[96];
+#endif
 
-  if((ptree && (!match(ptree))) || mask_host)
-    return;
+  if ((ptree && (!match(ptree))) || mask_host) return;
 
-  Host::lua(vm,
-	    NULL /* ptree already checked */,
-	    host_details, verbose, returnHost,
-	    false /* asListElement possibly handled later */);
+  Host::lua(vm, NULL /* ptree already checked */, host_details, verbose,
+            veryBasicInfo, returnHost,
+            false /* asListElement possibly handled later */);
 
   /* *** */
+
+  if (veryBasicInfo) return;
 
   Host::lua_blacklisted_flows(vm);
   lua_contacts_stats(vm);
+  if (usedPorts) usedPorts->lua(vm, iface);
 
   /* *** */
-  
+
+#ifdef NTOPNG_PRO
+  if (ntop->getPrefs()->isAssetInventoryEnabled()) {
+    snprintf(asset_key, sizeof(asset_key), ASSET_SERVICE_KEY,
+             getInterface()->get_id(), getRedisKey(buf_id, sizeof(buf_id)));
+
+    lua_push_str_table_entry(vm, "asset_key", asset_key);
+  }
+#endif
+
   lua_push_int32_table_entry(vm, "local_network_id", local_network_id);
+
+  lua_get_usernames(vm);
 
   local_net = ntop->getLocalNetworkName(local_network_id);
 
-  if(local_net == NULL)
+  if (local_net == NULL)
     lua_push_nil_table_entry(vm, "local_network_name");
   else
     lua_push_str_table_entry(vm, "local_network_name", local_net);
 
-  if(asListElement) {
+  if (router_mac_set) {
+    char router_buf[24];
+
+    lua_push_str_table_entry(
+        vm, "router",
+        Utils::formatMac(router_mac, router_buf, sizeof(router_buf)));
+  }
+
+  if (inconsistent_host_os)
+    lua_push_bool_table_entry(vm, "inconsistent_host_os", true);
+
+  if (tcp_fingerprint_host_os != ndpi_os_unknown) {
+    lua_newtable(vm);
+    lua_push_str_table_entry(vm, "os",
+                             ndpi_print_os_hint(tcp_fingerprint_host_os));
+    lua_pushstring(vm, "fingerprint");
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+  }
+
+  if (os_learning.size() > 0) {
+    lua_newtable(vm);
+
+    /* Theoretically we should lock here */
+    for (std::map<OSLearningMode, ndpi_os>::iterator it = os_learning.begin();
+         it != os_learning.end(); it++) {
+      lua_push_str_table_entry(vm, Utils::learningMode2str(it->first),
+                               Utils::OS2Str(it->second));
+    }
+
+    lua_pushstring(vm, "os_learning");
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+  }
+
+  /* Add new entries before this line! */
+
+  if (asListElement) {
     host_id = get_hostkey(buf_id, sizeof(buf_id));
 
     lua_pushstring(vm, host_id);
     lua_insert(vm, -2);
     lua_settable(vm, -3);
   }
-  
+
   /* Don't add anything beyond this line (due to lua indexing) */
 }
 
 /* *************************************** */
 
 // TODO move into nDPI
-void LocalHost::inlineSetOSDetail(const char *_os_detail) {
-  if((mac == NULL)
-     /*
-       When this happens then this is a (NAT+)router and
-       the OS would be misleading
-     */
-     || (mac->getDeviceType() == device_networking)
-     ) return;
+void LocalHost::inlineSetOSDetail(const char* _os_detail) {
+  if ((mac == NULL)
+      /*
+        When this happens then this is a (NAT+)router and
+        the OS would be misleading
+      */
+      || (mac->getDeviceType() == device_networking))
+    return;
 
-  if(os_detail || !_os_detail)
-    return; /* Already set */
+  if (os_detail || !_os_detail) return; /* Already set */
 
-  if((os_detail = strdup(_os_detail))) {
+  if ((os_detail = strdup(_os_detail))) {
+    ndpi_os hint;
+
     // TODO set mac device type
-    ;
-    DeviceType devtype = Utils::getDeviceTypeFromOsDetail(os_detail);
+    DeviceType devtype = Utils::getDeviceTypeFromOsDetail(os_detail, &hint);
 
-    if(devtype != device_unknown)
+    if (devtype != device_unknown) {
+      if (getDeviceType() == device_unknown) setDeviceType(devtype);
+
       mac->setDeviceType(devtype);
+    }
   }
 }
 
 /* *************************************** */
 
 void LocalHost::lua_peers_stats(lua_State* vm) const {
-  if(stats)
+  if (stats)
     stats->luaPeers(vm);
   else
     lua_pushnil(vm);
@@ -329,9 +526,12 @@ void LocalHost::lua_peers_stats(lua_State* vm) const {
 
 /* *************************************** */
 
-/* Optimized method to fetch timeseries data for the host. Only returns
+/*
+ *Optimized method to fetch timeseries data for the host. Only returns
  * the ::Lua of the needed fields. Moreover, some fields are represented
- * in a compact way to speedup insertion and lookup (e.g. nDPIStats::lua with tsLua) */
+ * in a compact way to speedup insertion and lookup (e.g. nDPIStats::lua with
+ *tsLua)
+ */
 void LocalHost::lua_get_timeseries(lua_State* vm) {
   char buf_id[64], *host_id;
 
@@ -339,15 +539,25 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
 
   /* The timeseries point */
   lua_newtable(vm);
-  ((LocalHostStats*)stats)->lua_get_timeseries(vm);
+
+  if (stats != NULL) {
+    LocalHostStats* l = (LocalHostStats*)stats;
+
+    l->lua_get_timeseries(vm);
+  }
 
   Host::lua_blacklisted_flows(vm);
-  
+  lua_unidirectional_tcp_udp_flows(vm, true);
+
   /* NOTE: the following data is *not* exported for the initial_point */
-  lua_push_uint64_table_entry(vm, "active_flows.as_client", getNumOutgoingFlows());
-  lua_push_uint64_table_entry(vm, "active_flows.as_server", getNumIncomingFlows());
-  lua_push_uint64_table_entry(vm, "contacts.as_client", getNumActiveContactsAsClient());
-  lua_push_uint64_table_entry(vm, "contacts.as_server", getNumActiveContactsAsServer());
+  lua_push_uint64_table_entry(vm, "active_flows.as_client",
+                              getNumOutgoingFlows());
+  lua_push_uint64_table_entry(vm, "active_flows.as_server",
+                              getNumIncomingFlows());
+  lua_push_uint64_table_entry(vm, "contacts.as_client",
+                              getNumActiveContactsAsClient());
+  lua_push_uint64_table_entry(vm, "contacts.as_server",
+                              getNumActiveContactsAsServer());
   lua_push_uint64_table_entry(vm, "engaged_alerts", getNumEngagedAlerts());
 
   lua_pushstring(vm, "ts_point");
@@ -356,7 +566,7 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
 
   /* Additional data/metadata */
   lua_push_str_table_entry(vm, "tskey", get_tskey(buf_id, sizeof(buf_id)));
-  if(initial_ts_point) {
+  if (initial_ts_point) {
     lua_push_uint64_table_entry(vm, "initial_point_time", initialization_time);
 
     /* Dump the initial host timeseries */
@@ -366,7 +576,7 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
     lua_insert(vm, -2);
     lua_settable(vm, -3);
 
-    delete(initial_ts_point);
+    delete (initial_ts_point);
     initial_ts_point = NULL;
   }
 
@@ -379,11 +589,44 @@ void LocalHost::lua_get_timeseries(lua_State* vm) {
 /* *************************************** */
 
 void LocalHost::freeLocalHostData() {
-  /* Better not to use a virtual function as it is called in the destructor as well */
-  if(os_detail) { free(os_detail); os_detail = NULL; }
-  
-  for(std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it = doh_dot_map.begin(); it != doh_dot_map.end(); ++it)
-    delete it->second;
+  /* Better not to use a virtual function as it is called in the destructor as
+   * well */
+
+  if (usedPorts) {
+    delete usedPorts;
+    usedPorts = NULL;
+  }
+
+  if (os_detail) {
+    free(os_detail);
+    os_detail = NULL;
+  }
+
+  if (tcp_fingerprint) {
+    free(tcp_fingerprint);
+    tcp_fingerprint = NULL;
+  }
+
+  if (usernames) {
+    free(usernames);
+    usernames = NULL;
+  }
+
+  if (kerberos_machine) {
+    free(kerberos_machine);
+    kerberos_machine = NULL;
+  }
+
+  /* So that the TCP fingerprint is learnt again */
+  tcp_fingerprint_host_os = ndpi_os_unknown;
+
+  /* NOTE: fingerprints is not deleted here, as it can be in use by the
+   * threads processing the flows (see deleteHostData) */
+
+#ifdef NTOPNG_PRO
+  /* NOTE: m locked by the caller (or host being deleted) */
+  freeJournalCauses();
+#endif
 }
 
 /* *************************************** */
@@ -395,24 +638,38 @@ void LocalHost::deleteHostData() {
   freeLocalHostData();
   m.unlock(__FILE__, __LINE__);
 
+  /* Emptied rather than deleted, as the threads processing the flows use it
+   * without locking (see Flow::updateCliJA4): its content is protected by its
+   * own lock */
+  if (fingerprints) {
+    fingerprints->ja4.reset();
+    fingerprints->hassh.reset();
+  }
+
   updateHostTrafficPolicy(NULL);
 }
 
 /* *************************************** */
 
-char * LocalHost::getMacBasedSerializationKey(char *redis_key, size_t size, char *mac_key) {
+char* LocalHost::getMacBasedSerializationKey(char* redis_key, size_t size,
+                                             char* mac_key, bool short_format) {
   /* Serialize both IP and MAC for static hosts */
-  snprintf(redis_key, size, HOST_BY_MAC_SERIALIZED_KEY, iface->get_id(), mac_key);
+  snprintf(redis_key, size,
+           short_format ? MAC_SERIALIZED_SHORT_KEY : HOST_BY_MAC_SERIALIZED_KEY,
+           iface->get_id(), mac_key);
 
-  return(redis_key);
+  return (redis_key);
 }
 
 /* *************************************** */
 
-char * LocalHost::getIpBasedSerializationKey(char *redis_key, size_t size) {
+char* LocalHost::getIPBasedSerializationKey(char* redis_key, size_t size,
+                                            bool short_format) {
   char buf[CONST_MAX_LEN_REDIS_KEY];
 
-  snprintf(redis_key, size, HOST_SERIALIZED_KEY, iface->get_id(), ip.print(buf, sizeof(buf)), vlan_id);
+  snprintf(redis_key, size,
+           short_format ? HOST_SERIALIZED_SHORT_KEY : HOST_SERIALIZED_KEY,
+           iface->get_id(), ip.print(buf, sizeof(buf)), vlan_id);
 
   return redis_key;
 }
@@ -422,64 +679,616 @@ char * LocalHost::getIpBasedSerializationKey(char *redis_key, size_t size) {
 /*
  * Reload non-critical host prefs. Such prefs are not reloaded inline to
  * avoid slowing down the packet capture. The default value (set into the
- * host initializer) will be returned until this delayed method is called. 
+ * host initializer) will be returned until this delayed method is called.
  */
-void LocalHost::reloadPrefs() {
-  Host::reloadPrefs();
-}
+void LocalHost::reloadPrefs() { Host::reloadPrefs(); }
 
 /* *************************************** */
 
-void LocalHost::incDohDoTUses(Host *host) {
-  u_int32_t key = host->get_ip()->key() + host->get_vlan_id();
-  std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it;
+void LocalHost::setRouterMac(Mac* gw) {
+  if (!router_mac_set) {
+    memcpy(router_mac, gw->get_mac(), 6), router_mac_set = true;
+  }
+}
 
-  m.lock(__FILE__, __LINE__);
-  it = doh_dot_map.find(key);
+/* ***************************************************** */
 
-  if(it == doh_dot_map.end()) {
-    if(doh_dot_map.size() < 8 /* Max # entries */) {
-      DoHDoTStats *doh_dot = new (nothrow) DoHDoTStats(*(host->get_ip()), host->get_vlan_id());
+void LocalHost::setServerPort(bool isTCP, u_int16_t port, ndpi_protocol* proto,
+                              time_t when) {
+#ifdef NTOPNG_PRO
+  bool set_port_status;
 
-      if(doh_dot) {
-	doh_dot->incUses();
-	doh_dot_map[key] = doh_dot;
+  if (!usedPorts) return;
+
+  set_port_status = usedPorts->setServerPort(isTCP, port, proto);
+
+  if (set_port_status && ntop->getPro()->is_enterprise_l_edition()) {
+    /* If the port is set for the first time set_port_status == true */
+    u_int32_t learning_period = ntop->getPrefs()->hostPortLearningPeriod();
+
+    if (when - get_first_seen() > learning_period) {
+      if (!contacted_server_ports.isFull()) {
+        /* ntop->getTrace()->traceEvent(TRACE_NORMAL, "*** port %u ***", port);
+         */
+        contacted_server_ports.enqueue({port, proto->proto.app_protocol}, true);
+      } else {
+        char ip_buf[64];
+
+        ntop->getTrace()->traceEvent(
+            TRACE_INFO,
+            "Server port %s:%d contacted but not reported: exceeded max number",
+            printMask(ip_buf, sizeof(ip_buf)), port);
       }
     }
-  } else
-    it->second->incUses();
+  }
+#endif
+}
 
+/* ***************************************************** */
+
+void LocalHost::lua_get_fingerprints(lua_State* vm) {
+  if (fingerprints) {
+    fingerprints->ja4.lua("ja4_fingerprint", vm);
+    fingerprints->hassh.lua("hassh_fingerprint", vm);
+  }
+
+  /* NOTE: under m, as tcp_fingerprint is freed by a data reset */
+  m.lock(__FILE__, __LINE__);
+  if (tcp_fingerprint != NULL)
+    lua_push_str_table_entry(vm, "tcp_fingerprint", tcp_fingerprint);
   m.unlock(__FILE__, __LINE__);
 }
 
 /* *************************************** */
 
-void LocalHost::luaDoHDot(lua_State *vm) {
-  u_int8_t i = 0;
+bool LocalHost::setService(HostService service_enum, Flow* f) {
+  const char* service_name;
   
-  if(doh_dot_map.size() == 0) return;
-  
-  lua_newtable(vm);
+  if(Host::setService(service_enum, f) == false)
+    return(false);
 
-  m.lock(__FILE__, __LINE__);
-  
-  for(std::unordered_map<u_int32_t, DoHDoTStats*>::iterator it = doh_dot_map.begin();
-      it != doh_dot_map.end(); ++it) {
-    lua_newtable(vm);
-    
-    it->second->lua(vm);
-    
-    lua_pushinteger(vm, i);
-    lua_insert(vm, -2);
-    lua_settable(vm, -3);
-    i++;
+  service_name = Utils::hostService2str(service_enum);
+
+  if (service_name) {
+    char key[64];
+    snprintf(key, sizeof(key), "%s_server", service_name);
+    addDataToAssets(key, (char*)"true");
   }
   
-  m.unlock(__FILE__, __LINE__);
-  
-  lua_pushstring(vm, "DoH_DoT");
-  lua_insert(vm, -2);
-  lua_settable(vm, -3);
+  return(true);
 }
 
 /* *************************************** */
+
+void LocalHost::offlineSetMDNSInfo(char* const str) {
+  Host::offlineSetMDNSInfo(str);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetMDNSName(const char* mdns_n) {
+  if (!isValidMDNSName(mdns_n)) return;
+
+  Host::offlineSetMDNSName(mdns_n);
+  addDataToAssets((char*)"mdns_name", (char*)mdns_n);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetDHCPName(const char* dhcp_n) {
+  if (!isValidDHCPName(dhcp_n)) return;
+
+  Host::offlineSetDHCPName(dhcp_n);
+  addDataToAssets((char*)"dhcp_name", (char*)dhcp_n);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetDhcpFingerprint(const char* fingerprint, Flow* f) {
+  if (fingerprint && (fingerprint[0] != '\0')) {
+    Mac* mac = getMac();
+
+    if (mac) {
+#ifdef NTOPNG_PRO
+      char cur_fingerprint[64];
+
+      /* Journal of the assets: the fingerprint is dumped with the Mac */
+      if ((mac->getDHCPfingerprint(cur_fingerprint,
+                                   sizeof(cur_fingerprint)) == NULL) ||
+          strcmp(cur_fingerprint, fingerprint))
+        addJournalCause(asset_journal_dhcp_fingerprint, 0, f);
+#endif
+
+      mac->setDHCPFingerprint(fingerprint);
+    }
+  }
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetMDNSTXTName(const char* mdns_n_txt) {
+  if (!isValidMDNSTXTName(mdns_n_txt)) return;
+
+  Host::offlineSetMDNSTXTName(mdns_n_txt);
+  addDataToAssets((char*)"mdns_txt_name", (char*)mdns_n_txt);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetNetbiosName(const char* netbios_n) {
+  if (!isValidNetBIOSName(netbios_n)) return;
+
+  Host::offlineSetNetbiosName(netbios_n);
+  addDataToAssets((char*)"netbios_name", (char*)netbios_n);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetTLSName(const char* tls_n) {
+  if (!isValidTLSName(tls_n)) return;
+
+  Host::offlineSetTLSName(tls_n);
+  addDataToAssets((char*)"tls_name", (char*)tls_n);
+}
+
+/* *************************************** */
+
+void LocalHost::offlineSetHTTPName(const char* http_n) {
+  if (!isValidHTTPName(http_n)) return;
+
+  Host::offlineSetHTTPName(http_n);
+  addDataToAssets((char*)"http_name", (char*)http_n);
+}
+
+/* *************************************** */
+
+/*
+  Kerberos client of a flow (the host that is not the KDC), from reliable data
+  only (see Flow::hosts_periodic_stats_update): a machine account (machine
+  set) sets the machine name (the most recent one), a user is one of the
+  usernames of the host.
+  Called at every periodic update of the flow, in no particular order: the
+  times decide, so that the result does not depend on the order and does not
+  flap when more flows are active.
+*/
+void LocalHost::setKerberosClient(const char* principal, const char* machine,
+                                  Flow* f) {
+  time_t last_seen = f ? f->get_last_seen() : time(NULL);
+  bool changed = false;
+
+  if ((principal == NULL) || (principal[0] == '\0')) return;
+
+  if (machine == NULL) {
+    setUsername(principal, NDPI_PROTOCOL_KERBEROS, f);
+    return;
+  }
+
+  m.lock(__FILE__, __LINE__);
+
+  if (kerberos_machine == NULL)
+    kerberos_machine = (struct LocalHostKerberosMachine*)calloc(1, sizeof(*kerberos_machine));
+
+  if (kerberos_machine) {
+    if (strcmp(kerberos_machine->machine_name, principal) == 0) {
+      if (last_seen > kerberos_machine->last_seen)
+        kerberos_machine->last_seen = last_seen;
+    } else if ((kerberos_machine->machine_name[0] == '\0') ||
+               (last_seen > kerberos_machine->last_seen)) {
+      snprintf(kerberos_machine->machine_name, sizeof(kerberos_machine->machine_name), "%s",
+               principal);
+      snprintf(kerberos_machine->machine, sizeof(kerberos_machine->machine), "%s", machine);
+      kerberos_machine->last_seen = last_seen;
+      changed = true;
+    }
+  }
+
+  m.unlock(__FILE__, __LINE__);
+
+  /* NOTE: after unlocking m (see addDataToAssets) */
+  if (changed && addDataToAssets((char*)"kerberos_name", (char*)principal)) {
+#ifdef NTOPNG_PRO
+    addJournalCause(asset_journal_kerberos_name, 0, f);
+#endif
+  }
+}
+
+/* *************************************** */
+
+/* Sorts the usernames of the asset */
+static int cmp_username_tokens(const void* a, const void* b) {
+  return (strcmp((const char*)a, (const char*)b));
+}
+
+/*
+  A username seen in the traffic of the host with a protocol (e.g. a Kerberos
+  client): the same name with another protocol is another username. When
+  full, the new one replaces the one with the oldest last_seen, unless it is
+  even older. Nothing changes when the username is already there, but
+  last_seen.
+  Asset: usernames = "<name> (<protocol>), ..." (sorted, so that it changes
+  only with the set), journaled per username (added, and replaced if any).
+*/
+void LocalHost::setUsername(const char* name, u_int16_t protocol, Flow* f) {
+  char token[300], evicted[300], sorted[MAX_USERNAMES_PER_HOST][300],
+      tokens[MAX_USERNAMES_PER_HOST * 302];
+  time_t first_seen = f ? f->get_first_seen() : time(NULL);
+  time_t last_seen = f ? f->get_last_seen() : time(NULL);
+  bool changed = false;
+  int i, slot = -1;
+
+  /* The asset stores the usernames as a list separated by "," */
+  if ((name == NULL) || (name[0] == '\0') ||
+      (strlen(name) >= sizeof(usernames->users[0].name)) || strchr(name, ','))
+    return;
+
+  tokens[0] = '\0', evicted[0] = '\0';
+  snprintf(token, sizeof(token), "%s (%s)", name, iface->get_ndpi_proto_name(protocol));
+
+  m.lock(__FILE__, __LINE__);
+
+  if (usernames == NULL)
+    usernames = (struct LocalHostUsernames*)calloc(1, sizeof(*usernames));
+
+  if (usernames == NULL) {
+    m.unlock(__FILE__, __LINE__);
+    return;
+  }
+
+  for (i = 0; i < usernames->num_users; i++) {
+    if ((usernames->users[i].protocol == protocol) &&
+        (strcmp(usernames->users[i].name, name) == 0)) {
+      if (last_seen > usernames->users[i].last_seen)
+        usernames->users[i].last_seen = last_seen;
+      break;
+    }
+  }
+
+  if (i == usernames->num_users) {
+    /* New username */
+    if (usernames->num_users < MAX_USERNAMES_PER_HOST)
+      slot = usernames->num_users++;
+    else {
+      slot = 0;
+      for (i = 1; i < usernames->num_users; i++)
+        if (usernames->users[i].last_seen < usernames->users[slot].last_seen) slot = i;
+
+      /* Older than all the usernames: it would be the one to replace */
+      if (last_seen <= usernames->users[slot].last_seen) slot = -1;
+    }
+
+    if (slot >= 0) {
+      /* A new slot is empty: a name there is the username replaced */
+      if (usernames->users[slot].name[0] != '\0')
+        snprintf(evicted, sizeof(evicted), "%s (%s)", usernames->users[slot].name,
+                 iface->get_ndpi_proto_name(usernames->users[slot].protocol));
+
+      snprintf(usernames->users[slot].name, sizeof(usernames->users[slot].name), "%s", name);
+      usernames->users[slot].protocol = protocol;
+      usernames->users[slot].first_seen = first_seen,
+      usernames->users[slot].last_seen = last_seen;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    int n = usernames->num_users, len = 0;
+
+    for (i = 0; i < n; i++)
+      snprintf(sorted[i], sizeof(sorted[i]), "%s (%s)", usernames->users[i].name,
+               iface->get_ndpi_proto_name(usernames->users[i].protocol));
+
+    qsort(sorted, n, sizeof(sorted[0]), cmp_username_tokens);
+
+    for (i = 0; i < n; i++)
+      len += snprintf(&tokens[len], sizeof(tokens) - len, "%s%s", i ? ", " : "", sorted[i]);
+  }
+
+  m.unlock(__FILE__, __LINE__);
+
+  /* NOTE: after unlocking m (see addDataToAssets) */
+  if (changed && addDataToAssets((char*)"usernames", tokens)) {
+#ifdef NTOPNG_PRO
+    addJournalListCause(asset_journal_username_added, token, f);
+
+    if (evicted[0] != '\0') {
+      char evidence[320];
+
+      snprintf(evidence, sizeof(evidence), "replaced by %s", token);
+      addJournalListCause(asset_journal_username_removed, evicted, f, evidence);
+    }
+#endif
+  }
+}
+
+/* *************************************** */
+
+/* Machine account principal (e.g. ws1$@corp.local), or the machine name only
+ * (e.g. ws1) */
+char* LocalHost::getKerberosName(char* const buf, ssize_t buf_len,
+                                 bool machine_only) {
+  if (buf && buf_len) {
+    m.lock(__FILE__, __LINE__);
+    snprintf(buf, buf_len, "%s",
+             kerberos_machine ? (machine_only ? kerberos_machine->machine
+                                              : kerberos_machine->machine_name)
+                              : "");
+    m.unlock(__FILE__, __LINE__);
+  }
+
+  return (buf);
+}
+
+/* *************************************** */
+
+/* usernames = [{name, protocol (its name), first_seen, last_seen}, ...] */
+void LocalHost::lua_get_usernames(lua_State* vm) {
+  m.lock(__FILE__, __LINE__);
+
+  if (usernames && usernames->num_users) {
+    lua_newtable(vm);
+
+    for (int i = 0; i < usernames->num_users; i++) {
+      lua_newtable(vm);
+      lua_push_str_table_entry(vm, "name", usernames->users[i].name);
+      lua_push_str_table_entry(vm, "protocol",
+                               iface->get_ndpi_proto_name(usernames->users[i].protocol));
+      lua_push_uint64_table_entry(vm, "first_seen", usernames->users[i].first_seen);
+      lua_push_uint64_table_entry(vm, "last_seen", usernames->users[i].last_seen);
+      lua_rawseti(vm, -2, i + 1);
+    }
+
+    lua_pushstring(vm, "usernames");
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+  }
+
+  m.unlock(__FILE__, __LINE__);
+}
+
+/* *************************************** */
+
+void LocalHost::setServerName(const char* server_n) {
+  Host::setServerName(server_n);
+}
+
+/* *************************************** */
+
+void LocalHost::setResolvedName(const char* resolved_name, Flow* f) {
+  char buf[64];
+
+  if (strcmp(get_ip()->print(buf, sizeof(buf)), resolved_name)) {
+    char name[256];
+
+    Host::setResolvedName(resolved_name, f);
+
+    /* Lowercase, as the name of the host (see Host::setResolvedName): host
+     * names are case insensitive, and the callers do not agree on the case
+     * (e.g. the resolver cache vs label_utils.lua), that would otherwise
+     * change the asset at every call */
+    snprintf(name, sizeof(name), "%s", resolved_name);
+    Utils::stringtolower(name);
+
+    if (addDataToAssets((char*)"dns_name", name)) {
+#ifdef NTOPNG_PRO
+      /* Journal of the assets: without flow, the name has been resolved by
+       * ntopng (or cached from a DNS response of another host) */
+      addJournalCause(asset_journal_dns_name, 0, f,
+                      f ? NULL : "reverse DNS lookup by ntopng");
+#endif
+    }
+  }
+}
+
+/* *************************************** */
+
+void LocalHost::setTCPfingerprint(char* _tcp_fingerprint, ndpi_os os,
+                                  Flow* f) {
+  bool already_set;
+
+  /* NOTE: tcp_fingerprint is accessed under m, as it is freed by a data reset
+   * and read by the Lua threads (lua_get_fingerprints) */
+  m.lock(__FILE__, __LINE__);
+  already_set = ((tcp_fingerprint != NULL) &&
+                 (strcmp(_tcp_fingerprint, tcp_fingerprint) == 0));
+  m.unlock(__FILE__, __LINE__);
+
+  if (already_set) return;
+
+  if (_tcp_fingerprint && _tcp_fingerprint[0] != '\0') {
+    if (addDataToAssets((char*)"tcp_fingerprint", (char*)_tcp_fingerprint)) {
+#ifdef NTOPNG_PRO
+      addJournalCause(asset_journal_tcp_fingerprint, 0, f);
+#endif
+    }
+  }
+
+  if (tcp_fingerprint_host_os == ndpi_os_unknown) {
+    /* Not yet set the host fingerprint */
+    ndpi_os l_os_type = os;
+
+    if (l_os_type != ndpi_os_unknown) {
+      if (setOS(l_os_type, os_learning_tcp_fingerprint, f)) {
+#ifdef NTOPNG_PRO
+        u_int64_t os_tag = getOSTag(l_os_type);
+
+        /* Journal of the assets: the fingerprint is the evidence of the OS
+         * (replaces the cause set by setOS) */
+        if (os_tag && _tcp_fingerprint) {
+          char evidence[128];
+
+          snprintf(evidence, sizeof(evidence), "TCP fingerprint %s (%s)",
+                   _tcp_fingerprint, Utils::OS2Str(l_os_type));
+          addJournalCause(asset_journal_tag_refreshed,
+                          (u_int8_t)Utils::bitmapGetNext(os_tag, 0), f, evidence);
+        }
+#endif
+      }
+    }
+
+    tcp_fingerprint_host_os = os;
+
+    char* new_fingerprint = strdup(_tcp_fingerprint);
+
+    m.lock(__FILE__, __LINE__);
+    if (tcp_fingerprint == NULL)
+      tcp_fingerprint = new_fingerprint, new_fingerprint = NULL;
+    m.unlock(__FILE__, __LINE__);
+
+    if (new_fingerprint) free(new_fingerprint); /* Already set */
+  } else if ((os != ndpi_os_unknown) && (tcp_fingerprint_host_os != os)) {
+    char buf[64];
+
+    if (!inconsistent_host_os) {
+      inconsistent_host_os = true;
+      ntop->getTrace()->traceEvent(
+          TRACE_DEBUG, "Found OS inconsistency %s vs %s [%s][%s]",
+          ndpi_print_os_hint(tcp_fingerprint_host_os), ndpi_print_os_hint(os),
+          _tcp_fingerprint ? _tcp_fingerprint : "",
+          get_ip()->print(buf, sizeof(buf)));
+    }
+  }
+}
+
+/* *************************************** */
+
+void LocalHost::setTagsRefreshed(u_int64_t bitmap, Flow* f,
+                                 const char* evidence) {
+#ifdef NTOPNG_PRO
+  /* Journal of the assets: the cause of the tags refreshed for the first time
+   * since the asset info has been dumped (f or evidence needed). NOTE: the
+   * first time is told by the same atomic operation that sets the bits */
+  u_int64_t first_time = bitmap & ~tags_refreshed_bitmap.fetch_or(bitmap);
+
+  tags_removed_bitmap &= ~bitmap, tags_assigned_bitmap &= ~bitmap;
+
+  if (f || evidence) {
+    for (int tag_id = Utils::bitmapGetNext(first_time, 0); tag_id != -1;
+         tag_id = Utils::bitmapGetNext(first_time, tag_id + 1))
+      addJournalCause(asset_journal_tag_refreshed, (u_int8_t)tag_id, f,
+                      evidence);
+  }
+#else
+  tags_refreshed_bitmap |= bitmap, tags_removed_bitmap &= ~bitmap,
+      tags_assigned_bitmap &= ~bitmap;
+#endif
+}
+
+/* *************************************** */
+
+#ifdef NTOPNG_PRO
+/* Journal of the assets: the evidence of the tag of an OS, e.g.
+ * "HTTP User-Agent "..." (Windows)", "TCP fingerprint 2_64_... (Linux)",
+ * "DHCP fingerprint 1,3,6 (Linux)", "Linux (TCP Fingerprint)" (OS hint, the
+ * flow has not yet its fingerprint), "Linux (Set by User via Lua)" */
+static char* journalOSEvidence(ndpi_os os, OSLearningMode mode, Flow* f,
+                               Mac* mac, char* buf, u_int buf_len) {
+  char dhcp_buf[64];
+  const char* ua = ((mode == os_learning_http_user_agent) && f)
+                       ? f->getHTTPUserAgent()
+                       : NULL;
+  const char* dhcp_fp = ((mode == os_learning_dhcp) && mac)
+                            ? mac->getDHCPfingerprint(dhcp_buf, sizeof(dhcp_buf))
+                            : NULL;
+  const char* tcp_fp = ((mode == os_learning_tcp_fingerprint) && f)
+                           ? f->getTCPFingerprint()
+                           : NULL;
+
+  if (ua && ua[0])
+    snprintf(buf, buf_len, "HTTP User-Agent \"%s\" (%s)", ua,
+             Utils::OS2Str(os));
+  else if (tcp_fp && tcp_fp[0])
+    snprintf(buf, buf_len, "TCP fingerprint %s (%s)", tcp_fp,
+             Utils::OS2Str(os));
+  else if (dhcp_fp && dhcp_fp[0])
+    snprintf(buf, buf_len, "DHCP fingerprint %s (%s)", dhcp_fp,
+             Utils::OS2Str(os));
+  else
+    snprintf(buf, buf_len, "%s (%s)", Utils::OS2Str(os),
+             Utils::learningMode2str(mode));
+
+  return (buf);
+}
+#endif
+
+/* *************************************** */
+
+bool LocalHost::setOS(ndpi_os _os, OSLearningMode mode, Flow* f) {
+#ifdef NTOPNG_PRO
+  char evidence[192];
+#endif
+
+  if (_os == ndpi_os_unknown) return (false);
+
+  if (getOS() == _os) {
+    /* Nothing changed: the OS has been observed again, refresh its tag.
+     * NOTE: not with DHCP, as in this case the OS is copied from the Mac when
+     * its info changes (see syncMACMetadata), that is not an observation */
+    if (mode != os_learning_dhcp) {
+      u_int64_t os_tag = getOSTag(_os);
+
+#ifdef NTOPNG_PRO
+      /* Journal of the assets: the evidence is needed only the first time the
+       * tag is refreshed (see setTagsRefreshed) */
+      if (os_tag & ~tags_refreshed_bitmap)
+        setTagsRefreshed(os_tag, f,
+                         journalOSEvidence(_os, mode, f, getMac(), evidence,
+                                           sizeof(evidence)));
+      else
+#endif
+        setTagsRefreshed(os_tag, f);
+    }
+  } else {
+    ndpi_os prev_os = getOS();
+
+    if (Host::setOS(_os, mode, f)) {
+      char buf[8];
+
+#ifdef NTOPNG_PRO
+      /* Journal of the assets: the tag of the new OS (refreshed by
+       * Host::setOS) replaces the one of the previous OS (if any) */
+      u_int64_t new_tag = getOSTag(_os), prev_tag = getOSTag(prev_os);
+
+      if (new_tag || prev_tag)
+        journalOSEvidence(_os, mode, f, getMac(), evidence, sizeof(evidence));
+
+      if (new_tag)
+        addJournalCause(asset_journal_tag_refreshed,
+                        (u_int8_t)Utils::bitmapGetNext(new_tag, 0), f, evidence);
+      if (prev_tag && (prev_tag != new_tag))
+        addJournalCause(asset_journal_tag_removed,
+                        (u_int8_t)Utils::bitmapGetNext(prev_tag, 0), f, evidence);
+#endif
+
+      os_learning[mode] = _os;
+
+      snprintf(buf, sizeof(buf), "%d", _os);
+
+      addDataToAssets((char*)"os_type", buf);
+      return (true);
+    }
+  }
+
+  return (false);
+}
+
+/* *************************************** */
+
+void LocalHost::setDeviceType(DeviceType devtype) {
+  if (device_type == devtype) return;
+
+  device_type = devtype;
+  asset_map_updated = true;
+  ntop->trackAssetChange("Host", "setDeviceType", NULL, NULL, this, NULL,
+                         (char*)Utils::deviceType2str(devtype));
+}
+
+/* *************************************** */
+
+void LocalHost::setMACmeaningful() {
+  if (!is_mac_meaningful) {
+    if (iface->isPacketInterface() && (!iface->isTrafficMirrored())) {
+      is_mac_meaningful = true;
+      asset_map_updated = true;
+    }
+  }
+}

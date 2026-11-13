@@ -1,0 +1,96 @@
+{
+	"id": "snmp_topology",
+	"data_url": "lua/pro/rest/v2/get/snmp/device/topology.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.snmp_topology",
+	"default_sort": {
+		"column_id": "interface",
+		"sort": 1
+	},
+	"columns": [
+		{
+			"title_i18n": "snmp.interface",
+			"data_field": "interface",
+			"min-width": "135px",
+			"sortable": true,
+			"class": [
+				"text-left"
+			]
+		},
+		{
+			"title_i18n": "device",
+			"data_field": "device",
+			"min-width": "135px",
+			"sortable": true,
+			"class": [
+				"text-left"
+			]
+		},
+		{
+			"title_i18n": "vlan",
+			"data_field": "vlan",
+			"min-width": "80px",
+			"sortable": true,
+			"class": [
+				"text-left"
+			]
+		},
+		{
+			"title_i18n": "throughput",
+			"data_field": "thpt",
+			"min-width": "110px",
+			"sortable": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "status",
+			"data_field": "port_status",
+			"min-width": "70px",
+			"sortable": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "snmp.lldpRemPortId",
+			"data_field": "lldp_remote_port_id",
+			"min-width": "150px",
+			"sortable": true,
+			"class": [
+				"text-right"
+			]
+		},
+		{
+			"title_i18n": "snmp.lldpRemSysName",
+			"data_field": "lldp_remote_sys_name",
+			"min-width": "135px",
+			"sortable": true,
+			"class": [
+				"text-right"
+			]
+		},
+		{
+			"title_i18n": "snmp.lldpRemPortDesc",
+			"data_field": "lldp_remote_port_descr",
+			"min-width": "150px",
+			"sortable": true,
+			"class": [
+				"text-right"
+			]
+		},
+		{
+			"title_i18n": "snmp.lldpRemSysDesc",
+			"data_field": "lldp_remote_sys_descr",
+			"min-width": "150px",
+			"sortable": true,
+			"class": [
+				"text-right"
+			]
+		}
+	]
+}

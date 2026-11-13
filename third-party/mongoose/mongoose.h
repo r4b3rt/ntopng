@@ -42,6 +42,7 @@ struct mg_request_info {
   unsigned long remote_ip;    // Client's IP address
   int remote_port;            // Client's port
   int is_ssl;                 // 1 if SSL-ed, 0 if not
+  int ntop_versioned_url;     // ntop: 1 if the URL has a query string (e.g. /dist/ntopng.js?<epoch>), see handle_file_request()
   void *user_data;            // User data pointer passed to mg_start()
 
   int num_headers;            // Number of HTTP headers
@@ -280,7 +281,8 @@ void mg_close_connection(struct mg_connection *conn);
 // File upload functionality. Each uploaded file gets saved into a temporary
 // file and MG_UPLOAD event is sent.
 // Return number of uploaded files.
-int mg_upload(struct mg_connection *conn, const char *destination_dir);
+int mg_upload(struct mg_connection *conn, const char *destination_dir,
+	      char *fname, u_int fname_len);
 
 
 // Convenience function -- create detached thread.

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -19,8 +19,6 @@ local checks_var = {
    network_entity = nil, 
    configset = nil,
    available_modules = nil,
-   do_benchmark = false,
-   do_print_benchmark = false
 }
 
 local granularity = "hour"
@@ -30,7 +28,7 @@ local do_trace = false
 
 local local_networks = interface.getNetworksStats()
 
-for _, net_stats in ipairs(local_networks) do
+for _, net_stats in pairs(local_networks) do
    network.select(net_stats.network_id)
    
    checks.localNetworkChecks(granularity, checks_var, do_trace) 

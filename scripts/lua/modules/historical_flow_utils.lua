@@ -1,32 +1,80 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
+local dirs = ntop.getDirs()
 
-local tag_utils = require "tag_utils"
+require "lua_utils_get"
+local flowfilter_utils = require "flowfilter_utils"
 local dscp_consts = require "dscp_consts"
 local alert_consts = require "alert_consts"
 local format_utils = require "format_utils"
-local flow_risk_utils = require "flow_risk_utils"
-local country_codes = require "country_codes"
-local historical_flow_details_formatter = require "historical_flow_details_formatter"
+local historical_format_utils = require "historical_format_utils"
+local qoe_utils
+local historical_ts_definitions
+if ntop.isEnterpriseM and ntop.isEnterpriseM() then
+    package.path = dirs.installdir .. "/pro/scripts/lua/modules/flow_db/?.lua;" .. package.path
+    historical_ts_definitions = require "historical_ts_definitions"
+end
+if ntop.isEnterpriseL and ntop.isEnterpriseL() then
+    package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+    qoe_utils = require "qoe_utils"
+end
+
+local tag_badge_utils = require "tag_badge_utils"
 
 local historical_flow_utils = {}
 
+local _all_tags_cache = nil
+local ntop_http_prefix = ntop.getHttpPrefix()
+local ntop_is_enterprise_l = (ntop.isEnterpriseL and ntop.isEnterpriseL()) or false
+
+local function get_all_tags()
+   if _all_tags_cache == nil then
+      _all_tags_cache = tag_badge_utils.getTags()
+   end
+   return _all_tags_cache
+end
+
+-- Parse TAGS_MAP hex string stored in ClickHouse into an array of name/color
+-- The same tag bitmaps are repeated over and over in the rows of a table: the tags matching a bitmap
+-- are computed once. Callers receive a fresh copy, so they are free to modify it.
+local tags_by_bitmap_cache = {}
+
+local function dt_format_tags_map(hex_str)
+   if isEmptyString(hex_str) then return nil end
+   local bitmap = tonumber(hex_str, 16)
+   if not bitmap or bitmap == 0 then return nil end
+
+   local cached = tags_by_bitmap_cache[bitmap]
+
+   if cached == nil then
+      cached = false
+
+      local result = {}
+      for _, label in ipairs(get_all_tags()) do
+         local bit_index = tonumber(label.id) or 0
+         if (bitmap & (1 << bit_index)) ~= 0 then
+            result[#result + 1] = { id = label.id, name = label.name, color = label.color }
+         end
+      end
+
+      if #result > 0 then cached = result end
+      tags_by_bitmap_cache[bitmap] = cached
+   end
+
+   if not cached then return nil end
+
+   local copy = {}
+   for i, t in ipairs(cached) do
+      copy[i] = { id = t.id, name = t.name, color = t.color }
+   end
+
+   return copy
+end
+
 ------------------------------------------------------------------------
 -- Utility Functions
-
--- #####################################
-
-function historical_flow_utils.formatHistoricalFlowDetails(flow)
-  local flow_details = {}
-
-  if flow then
-    flow_details = historical_flow_details_formatter.formatHistoricalFlowDetails(flow)
-  end
-
-  return flow_details
-end
 
 -- #####################################
 
@@ -43,7 +91,7 @@ function historical_flow_utils.fixWhereTypes(query)
          result = result:gsub(column .. " != ", column .. " != " .. info.where_func)
       end
    end
-
+   
    return result
 end
 
@@ -55,7 +103,7 @@ function historical_flow_utils.parse_asn(asn)
       local tmp_asn = asn
       asn = nil
       for _, p in pairs(split(tmp_asn, ",")) do
-         local p_info = split(p, tag_utils.SEPARATOR)
+         local p_info = split(p, flowfilter_utils.SEPARATOR)
 
          if not tonumber(p_info[1]) then
             local tmp = p_info[1]
@@ -68,7 +116,7 @@ function historical_flow_utils.parse_asn(asn)
          end
 
          if asn == nil then asn = '' else asn = asn .. "," end
-         asn = asn .. p_info[1] .. tag_utils.SEPARATOR .. p_info[2]
+         asn = asn .. p_info[1] .. flowfilter_utils.SEPARATOR .. p_info[2]
       end
    end
 
@@ -83,7 +131,7 @@ function historical_flow_utils.parse_l4_proto(l4_proto)
       local tmp_l4_proto = l4_proto
       l4_proto = nil
       for _, p in pairs(split(tmp_l4_proto, ",")) do
-         local p_info = split(p, tag_utils.SEPARATOR)
+         local p_info = split(p, flowfilter_utils.SEPARATOR)
 
          if not tonumber(p_info[1]) then
             local tmp = string.lower(p_info[1])
@@ -97,7 +145,7 @@ function historical_flow_utils.parse_l4_proto(l4_proto)
          end
 
          if l4_proto == nil then l4_proto = '' else l4_proto = l4_proto .. "," end
-         l4_proto = l4_proto .. p_info[1] .. tag_utils.SEPARATOR .. p_info[2]
+         l4_proto = l4_proto .. p_info[1] .. flowfilter_utils.SEPARATOR .. p_info[2]
       end
    end
 
@@ -112,7 +160,7 @@ function historical_flow_utils.parse_l7_cat(l7_cat)
       local tmp_l7_cat = l7_cat
       l7_cat = nil
       for _, p in pairs(split(tmp_l7_cat, ",")) do
-         local p_info = split(p, tag_utils.SEPARATOR)
+         local p_info = split(p, flowfilter_utils.SEPARATOR)
 
          if not tonumber(p_info[1]) then
             local tmp = string.lower(p_info[1])
@@ -126,15 +174,65 @@ function historical_flow_utils.parse_l7_cat(l7_cat)
          end
 
          if l7_cat == nil then l7_cat = '' else l7_cat = l7_cat.. "," end
-         l7_cat = l7_cat .. p_info[1] .. tag_utils.SEPARATOR .. p_info[2]
+         l7_cat = l7_cat .. p_info[1] .. flowfilter_utils.SEPARATOR .. p_info[2]
       end
    end
 
    return l7_cat
 end
 
+-- #####################################
+
+function historical_flow_utils.get_selected_filters(ifid)
+   local selected_filters = flowfilter_utils.get_flowfilter_filters_from_request()
+
+   if ifid ~= nil then
+      selected_filters['ifid'] = ifid
+   end
+
+   -- Exception parsing
+   if not isEmptyString(selected_filters['cli_asn']) then
+      selected_filters['cli_asn'] = historical_flow_utils.parse_asn(selected_filters["cli_asn"])
+   end
+   if not isEmptyString(selected_filters['srv_asn']) then
+      selected_filters['srv_asn'] = historical_flow_utils.parse_asn(selected_filters["srv_asn"])
+   end
+   if not isEmptyString(selected_filters['l7cat']) then
+      selected_filters['l7cat'] = historical_flow_utils.parse_l7_cat(selected_filters["l7cat"])
+   end
+
+   return selected_filters
+end
+
 ------------------------------------------------------------------------
 -- Functions to convert DB columns in the format used by the JS DataTable
+
+-- #####################################
+
+local function dt_format_generic(s)
+   return {
+      title = s,
+      label = s,
+      value = s,
+   } 
+end
+
+-- #####################################
+
+local function dt_format_first_flow_dump(s) 
+   return {
+      label = ternary(tonumber(s) == 1, i18n('yes'), i18n('no')),
+      value = tonumber(s),
+   }
+end
+
+-- #####################################
+
+local function dt_format_tcp_stats(s)
+   -- TODO Implement
+
+   return dt_format_generic(s)
+end
 
 -- #####################################
 
@@ -146,7 +244,7 @@ local function dt_format_info(info)
 
    return ({
       title = info,
-      label = shortenString(info, 32)
+      label = info
    })
 end
 
@@ -156,7 +254,7 @@ local function dt_format_l4_proto(proto)
    local title = l4_proto_to_string(tonumber(proto))
    local l4_proto = {
       title = title,
-      label = shortenString(title, 12),
+      label = title,
       value = tonumber(proto),
    }
 
@@ -219,8 +317,8 @@ local function dt_format_vlan(vlan_id)
    }
    if not isEmptyString(vlan_id) then
       vlan["value"] = tonumber(vlan_id)
-      vlan["title"] = getFullVlanName(vlan_id)
-      vlan["label"] = getFullVlanName(vlan_id, true)
+      vlan["title"] = getFullVlanName(vlan_id, false)
+      vlan["label"] = getFullVlanName(vlan_id, false)
    end
 
    return vlan
@@ -248,30 +346,36 @@ end
 -- #####################################
 
 local function dt_format_location(location)
-   local location_tag = {
-      label = '',
-   }
-
-   if not location then
-      return location_tag
-   end
+   local location_tag_value = ''
 
    if(location == "0") then -- Remote 
-      location_tag["label"] = i18n("details.label_short_remote")
+      location_tag_value = 'remote'
    elseif(location == "1") then -- Local
-      location_tag["label"] = i18n("details.label_short_local_host")
+      location_tag_value = 'local'
    elseif(location == "2") then -- Multicast
-      location_tag["label"] = i18n("short_multicast")
+      location_tag_value = 'multicast'
    end
-
-   location_tag["value"] = location
-
-   return location_tag
+   
+   return location_tag_value
 end
 
 -- #####################################
 
-local function dt_format_ip(ip, name, location, prefix, record)
+local unset_ip_addresses = {
+   [""] = true,
+   ["0.0.0.0"] = true,
+   ["::"] = true,
+   ["::0"] = true,
+   ["::ffff:0.0.0.0"] = true,
+}
+
+local function is_unset_ip(ip)
+   return (ip == nil) or (unset_ip_addresses[ip] == true)
+end
+
+-- #####################################
+
+local function dt_format_ip_common(ip, name, location, prefix, record)
    local vlan_id = tonumber(record["VLAN_ID"] or "0")
 
    -- IP
@@ -299,17 +403,32 @@ end
 
 -- #####################################
 
+local function dt_format_ip(ip, record, column_name)
+   if column_name == 'IPV4_ADDR' and (
+      (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '4') or 
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip))) 
+      then return nil end
+   if column_name == 'IPV6_ADDR' and (
+      (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '6') or
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip)))
+      then return nil end
+
+   return dt_format_ip_common(ip, record["HOST_LABEL"] or "", record["SERVER_LOCATION"], "srv", record)
+end
+
+-- #####################################
+
 local function dt_format_dst_ip(ip, record, column_name)
    if column_name == 'IPV4_DST_ADDR' and (
       (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '4') or 
-      (record['IP_PROTOCOL_VERSION'] == nil and ip == '0.0.0.0')) 
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip))) 
       then return nil end
    if column_name == 'IPV6_DST_ADDR' and (
-      (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '6') or 
-      (record['IP_PROTOCOL_VERSION'] == nil and ip == '::')) 
+      (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '6') or
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip)))
       then return nil end
 
-   return dt_format_ip(ip, record["DST_LABEL"] or "", record["SERVER_LOCATION"], "srv", record)
+   return dt_format_ip_common(ip, record["DST_LABEL"] or "", record["SERVER_LOCATION"], "srv", record)
 end
 
 -- #####################################
@@ -317,20 +436,37 @@ end
 local function dt_format_src_ip(ip, record, column_name)
    if column_name == 'IPV4_SRC_ADDR' and (
       (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '4') or
-      (record['IP_PROTOCOL_VERSION'] == nil and ip == '0.0.0.0'))
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip)))
       then return nil end
    if column_name == 'IPV6_SRC_ADDR' and (
       (record['IP_PROTOCOL_VERSION'] and record['IP_PROTOCOL_VERSION'] ~= '6') or
-      (record['IP_PROTOCOL_VERSION'] == nil and ip == '::'))
+      (record['IP_PROTOCOL_VERSION'] == nil and is_unset_ip(ip)))
       then return nil end
 
-   return dt_format_ip(ip, record["SRC_LABEL"] or "", record["CLIENT_LOCATION"], "cli", record)
+   return dt_format_ip_common(ip, record["SRC_LABEL"] or "", record["CLIENT_LOCATION"], "cli", record)
 end
 
 -- #####################################
 
 local function dt_format_mac(mac)
-   return mac
+   if mac == nil then return "" end
+   if type(mac) == "string" and isMacAddress(mac) then return mac end
+   mac = tonumber(mac)
+   if not mac or mac == 0 then return "" end
+   return ntop.decodeMac64(mac)
+end
+
+-- #####################################
+
+local function dt_format_mac_obj(mac)
+   local mac_str = dt_format_mac(mac)
+   local formatted_mac = {
+      title = mac_str,
+      label = mac_str,
+      value = mac_str,
+   } 
+
+   return formatted_mac
 end
 
 -- #####################################
@@ -341,9 +477,15 @@ local function dt_format_dscp(dscp_id)
 
    return ({
       title = title,
-      label = shortenString(title, 20) or "",
+      label = title or "",
       value = tonumber(dscp_id),
    })
+end
+
+-- #####################################
+
+local function dt_format_high_number(value)
+   return formatValue(value)
 end
 
 -- #####################################
@@ -351,15 +493,15 @@ end
 local function dt_format_l7_proto(l7_proto, record)
   
    if not isEmptyString(l7_proto) then
-    local title = interface.getnDPIProtoName(tonumber(l7_proto))
-    local confidence = format_confidence_from_json(record)
+      local title = interface.getnDPIProtoName(tonumber(l7_proto))
+      local confidence = format_confidence_from_json(record)
 
-    l7_proto = {
-      confidence = confidence,
-      title = title,
-      label = shortenString(title, 12),
-      value = tonumber(l7_proto),
-    } 
+      l7_proto = {
+         confidence = confidence,
+         title = title,
+         label = title,
+         value = tonumber(l7_proto),
+      } 
   end
    
    return l7_proto
@@ -377,12 +519,44 @@ end
 
 -- #####################################
 
-local function dt_format_time(time)
+local function dt_format_time(epoch)
+   local time = epoch
    if (time) and (tonumber(time)) then
       time = format_utils.formatPastEpochShort(time)
    end
 
-   return time
+   return {
+      epoch = tonumber(epoch),
+      time = time
+   }
+end
+
+-- #####################################
+
+local function dt_format_duration(time)
+   time = tonumber(time)
+   if time <= 0 then
+      time = 1
+   end
+   return secondsToTime(time)
+end
+
+-- #####################################
+
+local function dt_format_time_with_highlight(epoch, record)
+   local time = epoch
+   if (time) and (tonumber(time)) then
+      time = format_utils.formatPastEpochShort(time)
+   end
+
+   local severity_id = map_score_to_severity(tonumber(record["SCORE"]) or 0)
+   local severity = alert_consts.alertSeverityById(severity_id)
+
+   return {
+      epoch = tonumber(epoch),
+      time = time,
+      highlight = severity.color,
+   }
 end
 
 -- #####################################
@@ -406,72 +580,102 @@ end
 
 -- #####################################
 
-local function dt_format_asn(processed_record, record)
-   -- Client
-   if not isEmptyString(record["SRC_ASN"]) then
-      local cli_asn = {
-         title = "",
-         label = "No ASN",
-         value = 0
-      }
+local function dt_format_asn_common(ip, asn)
+   local asn_obj = {
+      title = "",
+      label = "No ASN",
+      value = 0
+   }
 
-      if record["SRC_ASN"] ~= "0" then
-         cli_asn["value"] = tonumber(record["SRC_ASN"])
-         cli_asn["label"] = cli_asn["value"]
-         local as_name = nil
-         if processed_record["cli_ip"]  then
-            as_name = ntop.getASName(processed_record["cli_ip"]["ip"])
-            cli_asn["label"] = cli_asn["label"].. " (" .. (as_name or "") .. ")"
-         end
-         cli_asn["title"] = as_name or cli_asn["value"]
+   if asn ~= "0" then
+      asn_obj["value"] = tonumber(asn)
+      asn_obj["label"] = asn_obj["value"]
+      local as_name = nil
+      if ip then
+         as_name = ntop.getASName(ip)
+         asn_obj["label"] = asn_obj["label"].. " (" .. (as_name or "") .. ")"
       end
-
-      processed_record["cli_asn"] = cli_asn
+      asn_obj["title"] = as_name or asn_obj["value"]
    end
-   
-   -- Server
-   if not isEmptyString(record["DST_ASN"]) then
-      local srv_asn = {
-         title = "",
-         label = "No ASN",
-         value = 0
-      }
 
-      if (record["DST_ASN"] ~= "0") then
-         srv_asn["value"] = tonumber(record["DST_ASN"])
-         srv_asn["label"] = srv_asn["value"]
-         local as_name = nil
-         if processed_record["srv_ip"]  then
-            as_name = ntop.getASName(processed_record["srv_ip"]["ip"])
-            srv_asn["label"] = srv_asn["label"] .. " (" .. (as_name or "") .. ")"
-         end
-         srv_asn["title"] = as_name or srv_asn["value"]
-      end
-
-      processed_record["srv_asn"] = srv_asn
-   end
+   return asn_obj
 end
 
 -- #####################################
 
+local function dt_format_asn(processed_record, record)
+
+   -- Client
+   if not isEmptyString(record["SRC_ASN"]) then
+      local ip
+      if processed_record["cli_ip"] and processed_record["cli_ip"]["ip"] then
+         ip = processed_record["cli_ip"]["ip"]
+      end
+      processed_record["cli_asn"] = dt_format_asn_common(ip, record["SRC_ASN"])
+   end
+   
+   -- Server
+   if not isEmptyString(record["DST_ASN"]) then
+      local ip
+      if processed_record["srv_ip"] and processed_record["srv_ip"]["ip"] then
+         ip = processed_record["srv_ip"]["ip"]
+      end
+      processed_record["srv_asn"] = dt_format_asn_common(ip, record["DST_ASN"])
+   end
+
+   -- Any (from queries)
+   if not isEmptyString(record["ASN"]) then
+      local ip
+      if processed_record["ip"] and processed_record["ip"]["ip"] then
+         ip = processed_record["ip"]["ip"]
+      end
+      processed_record["asn"] = dt_format_asn_common(ip, record["ASN"])
+   end
+
+end
+
+-- #####################################
+
+-- Risk strings and remediation links are static: computed once per risk id, not once per row
+local flow_risk_titles_cache = {}
+local risk_bit_position = {} -- (1 << n) -> n
+for n = 0, 63 do risk_bit_position[1 << n] = n end
+local flow_risk_links_cache = {}
+
 local function dt_format_flow_risk(flow_risk_id)
    local flow_risks = {}
+   local bitmap = tonumber(flow_risk_id)
 
-   for i = 1, 63 do
-      local cur_risk = (tonumber(flow_risk_id) >> i) & 0x1
+   -- Only the set bits are visited (bit 0 is never used)
+   bitmap = bitmap & ~1
 
-      if cur_risk > 0 then
-	 local cur_risk_id = i
-         local title = ntop.getRiskStr(cur_risk_id)
-	 local flow_risk = {
-	    title = title,
-	    label = title,
-	    value = cur_risk_id,
-            help  = flow_risk_utils.get_documentation_link(cur_risk_id),
-	 }
+   while bitmap ~= 0 do
+      local lowest = bitmap & -bitmap -- Lowest set bit
+      local cur_risk_id = risk_bit_position[lowest] -- Position of the lowest set bit
 
-	 flow_risks[#flow_risks + 1] = flow_risk
+      if cur_risk_id >= 1 and cur_risk_id <= 63 then
+         local title = flow_risk_titles_cache[cur_risk_id]
+         if title == nil then
+            title = ntop.getRiskStr(cur_risk_id)
+            flow_risk_titles_cache[cur_risk_id] = title
+         end
+
+         local remediation = flow_risk_links_cache[cur_risk_id]
+         if remediation == nil then
+            local flow_risk_utils = require "flow_risk_utils"
+            remediation = flow_risk_utils.get_remediation_documentation_link(cur_risk_id, "")
+            flow_risk_links_cache[cur_risk_id] = remediation
+         end
+
+         flow_risks[#flow_risks + 1] = {
+            title = title,
+            label = title,
+            value = cur_risk_id,
+            remediation = remediation
+         }
       end
+
+      bitmap = bitmap & ~lowest
    end
 
    return flow_risks
@@ -488,7 +692,7 @@ local function dt_format_flow_alert_id(flow_status)
 
    if not isEmptyString(flow_status) then
       flow_status = tonumber(flow_status)
-      local stats_str = i18n("flow_details.normal")
+      local stats_str = '' -- Normal, no alerts, i18n("flow_details.normal")
 
       -- No status setted
       if (flow_status ~= 0) then
@@ -496,7 +700,7 @@ local function dt_format_flow_alert_id(flow_status)
       end
 
       record_status["title"] = stats_str
-      record_status["label"] = shortenString(stats_str, 32)
+      record_status["label"] = stats_str
       record_status["value"] = flow_status
    end
 
@@ -506,8 +710,9 @@ end
 -- #####################################
 
 local function dt_format_score(score)
-   local score = tonumber(score)
-   local severity_id = ntop.mapScoreToSeverity(score or 0)
+  -- Score could be nil, in fact score could be not a selected column
+   local score = tonumber(score) or 0
+   local severity_id = map_score_to_severity(score or 0)
    local severity = {}
 
    if severity_id ~= 0 then
@@ -523,6 +728,18 @@ end
 
 -- #####################################
 
+local function dt_format_qoe_score(score)
+   local score = tonumber(score) or 0
+
+   return ({
+      value = score,
+      label = format_utils.formatValue(score),
+      color = nil,
+   })
+end
+
+-- #####################################
+
 local function dt_format_l7_category(l7_category)
    local formatted_cat = {
       title = "",
@@ -531,10 +748,10 @@ local function dt_format_l7_category(l7_category)
    } 
 
    if not isEmptyString(l7_category) then
-      local title = interface.getnDPICategoryName(tonumber(l7_category))
+      local title = getCategoryLabel(interface.getnDPICategoryName(tonumber(l7_category)), tonumber(l7_category))
       
       formatted_cat["title"] = title
-      formatted_cat["label"] = shortenString(title, 12)
+      formatted_cat["label"] = title
       formatted_cat["value"] = tonumber(l7_category)
    end
 
@@ -543,32 +760,67 @@ end
 
 -- #####################################
 
-local function dt_format_probe(probe_ip)
-   probe_ip = {
-      title     = probe_ip or "",
-      label     = probe_ip or "",
-      value     = probe_ip or "",
+local function dt_format_exporter(exporter_ip)
+   local exporter_info = {
+      title     = exporter_ip or "",
+      label     = exporter_ip or "",
+      value     = exporter_ip or "",
    }
 
-   if isEmptyString(probe_ip["label"]) or probe_ip["label"] == "0.0.0.0" or probe_ip["label"] == "0" then
-      probe_ip["title"] = ""
-      probe_ip["label"] = ""
+   if isEmptyString(exporter_ip) or exporter_ip == "0.0.0.0" or exporter_ip == "0" or exporter_ip == "::" then
+      exporter_info["title"] = ""
+      exporter_info["label"] = ""
+      exporter_info["value"] = ""
    else
-      probe_ip["label"] = getProbeName(probe_ip["label"])
-      if (probe_ip["label"]
-            and (probe_ip["title"] ~= probe_ip["label"]) 
-            and not isEmptyString(probe_ip["label"])) then
-         probe_ip["title"] = probe_ip["title"] .. " [" .. probe_ip["label"] .. "]"
+      local display_ip = exporter_ip
+      exporter_info["title"] = display_ip
+      exporter_info["value"] = exporter_ip
+      exporter_info["label"] = getExporterName(display_ip)
+      if (exporter_info["label"]
+            and (exporter_info["title"] ~= exporter_info["label"])
+            and not isEmptyString(exporter_info["label"])) then
+         exporter_info["title"] = exporter_info["title"] .. " [" .. exporter_info["label"] .. "]"
       end
    end
 
-   return probe_ip
+   return exporter_info
+end
+
+-- #####################################
+
+local function dt_format_site(site_id)
+   local site = {
+      title     = i18n("unknown"),
+      label     = i18n("unknown"),
+      value     = tonumber(site_id) or 0,
+   }
+
+   if tonumber(site["value"]) ~= 0 then
+      local site_utils = require "site_utils"
+      local sites = site_utils.getSites() or {}
+      for _, s in pairs(sites) do
+         if s.id == tostring(site_id) then
+            site["title"] = s.name
+            site["label"] = s.name
+            break
+         end
+      end
+   else
+      site["title"] = i18n("default")
+      site["label"] = i18n("default")
+   end
+
+   return site
 end
 
 -- #####################################
 
 local function dt_format_thpt(thpt)
-   return bitsToSize(tonumber(thpt) or 0)
+   if getThroughputType() == "bps" then
+      return bitsToSize(tonumber(thpt) or 0)
+   else
+      return pktsToSize(tonumber(thpt) or 0)
+   end
 end
 
 -- #####################################
@@ -586,8 +838,68 @@ end
 
 -- #####################################
 
+local function dt_format_connection_state(id, major)
+   local i18n_conn_states = "flow_fields_description.minor_connection_states"
+   local name = ""
+   if (major) then
+      i18n_conn_states = "flow_fields_description.major_connection_states"
+      name = ternary(tonumber(id) == 0, "", i18n(string.format("%s.%u",i18n_conn_states,id)))
+   else 
+      name = ternary(tonumber(id) == 0, "", i18n(string.format("%s.%u",i18n_conn_states,id)) .. " - " .. i18n(string.format("%s.%u","flow_fields_description.minor_connection_states_info",id))) 
+   end
+    
+   
+   local conn_state_tag = {
+      value = id,
+      label = name,
+      title = name
+   }
+   return conn_state_tag
+end
+
+local function dt_format_major_connection_state(id)
+   return dt_format_connection_state(id, true --[[ major ]])
+end
+
+local function dt_format_minor_connection_state(id)
+   return dt_format_connection_state(id, false --[[ is minor ]])
+end
+
+local function dt_format_port(value)
+   local label = value
+   if value == '0' then
+      label = ''
+   end
+   return {
+      value = label,
+      label = label,
+      title = label
+   }
+end
+
+local function dt_format_nat_ip(value)
+   local label = value
+   if value == '0.0.0.0' then
+      label = ''
+   end
+   return {
+      value = label,
+      label = label,
+      title = label
+   }
+end
+
+-- #####################################
+
+local country_code_cache = {}
+
 local function dt_format_country(id)
-   local country_code = interface.convertCountryU162Code(id)
+   local country_codes = require "country_codes"
+   local country_code = country_code_cache[id]
+   if country_code == nil then
+      country_code = interface.convertCountryU162Code(id)
+      country_code_cache[id] = country_code
+   end
    local label = ""
    if country_codes[country_code] then
       label = country_codes[country_code]
@@ -603,11 +915,25 @@ end
 
 -- #####################################
 
-local function dt_format_network(network)
-   local networks_stats = interface.getNetworksStats()
+-- Title of a network from its id. Called for every row: the networks table of the interface is
+-- built by the C++ core at every call
 
-   -- If network is (u_int8_t)-1 then return an empty value
-   if network == "65535" then
+local function compute_network_title(network_id)
+   local title = nil
+
+   for n, ns in pairs(interface.getNetworksStats()) do
+      if ns.network_id == network_id then
+         title = getFullLocalNetworkName(ns.network_key)
+      end
+   end
+
+   return title
+end
+
+local function dt_format_network(network)
+   local network_consts = require "network_consts"
+   if isEmptyString(network)
+      or tonumber(network) >= network_consts.UNKNOWN_NETWORK then
      return { value = 0, label = "", title = "" }
    end
 
@@ -617,11 +943,12 @@ local function dt_format_network(network)
       title = network,
    }
 
-   for n, ns in pairs(networks_stats) do
-      if ns.network_id == tonumber(network) then
-         network_tag.title = getFullLocalNetworkName(ns.network_key)
-         network_tag.label = network_tag.title
-      end
+   local network_id = tonumber(network)
+   local title = compute_network_title(network_id)
+
+   if title then
+      network_tag.title = title
+      network_tag.label = network_tag.title
    end
 
    return network_tag
@@ -633,16 +960,37 @@ local function dt_format_snmp_interface(interface, flow)
   local exporter = flow["PROBE_IP"]
   local label = interface
   local value = interface
+  
+  local display_ip = exporter
 
-  if tostring(interface) ~= "0" and not isEmptyString(exporter) then
-    label = format_portidx_name(exporter, tostring(interface))
-    value = exporter .. "_" .. tostring(interface)
+  if tostring(interface) ~= "0" and not isEmptyString(display_ip) and display_ip ~= "::" then
+    label = format_portidx_name_with_role(display_ip, tostring(interface), true)
+    value = display_ip .. "_" .. tostring(interface)
   end
-    
+
   local interface_tag = {
     value = value,
     label = label,
     title = interface,
+  }
+
+  return interface_tag
+end
+
+-- #####################################
+
+local function dt_format_interface(interface_id)
+  local ifid = tonumber(interface_id) or 0
+  local label = getInterfaceName(ifid)
+
+  if isEmptyString(label) then
+    label = tostring(ifid)
+  end
+
+  local interface_tag = {
+    value = ifid,
+    label = label,
+    title = label,
   }
 
   return interface_tag
@@ -668,9 +1016,17 @@ end
 
 -- #####################################
 
+local function simple_format_ip(value, record)
+   if not isEmptyString(record["HOST_LABEL"]) then
+      record["label"] = record["HOST_LABEL"]
+   end
+end
+
+-- #####################################
+
 local function simple_format_src_ip(value, record)
    if not isEmptyString(record["SRC_LABEL"]) then
-      record["label"] = shortenString(record["SRC_LABEL"], 12)
+      record["label"] = record["SRC_LABEL"]
    end
 end
 
@@ -678,7 +1034,21 @@ end
 
 local function simple_format_dst_ip(value, record)
    if not isEmptyString(record["DST_LABEL"]) then
-      record["label"] = shortenString(record["DST_LABEL"], 12)
+      record["label"] = record["DST_LABEL"]
+   end
+end
+
+-- #####################################
+
+local function simple_format_asn(value, record)
+   local ip = record["IPV4_ADDR"] or record["IPV6_ADDR"]
+
+   if not isEmptyString(ip) then
+      if tonumber(value) == 0 then 
+         record["label"] = "No ASN"
+      else
+         record["label"] = ntop.getASName(ip)
+      end
    end
 end
 
@@ -691,7 +1061,7 @@ local function simple_format_src_asn(value, record)
       if tonumber(value) == 0 then 
          record["label"] = "No ASN"
       else
-         record["label"] = shortenString(ntop.getASName(ip), 12)
+         record["label"] = ntop.getASName(ip)
       end
    end
 end
@@ -702,26 +1072,45 @@ local function simple_format_dst_asn(value, record)
    local ip = record["IPV4_DST_ADDR"] or record["IPV6_DST_ADDR"]
 
    if not isEmptyString(ip) then
-      if tonumber(value) == 0 then 
+      if tonumber(value) == 0 then
          record["label"] = "No ASN"
       else
-         record["label"] = shortenString(ntop.getASName(ip), 12)
+         record["label"] = ntop.getASName(ip)
       end
    end
 end
 
 -- #####################################
 
-local function dt_add_alerts_url(processed_record, record)
+local function simple_format_interface_role(value)
+   local role_labels = {
+      [0] = i18n("prefs.snmp_interface_role_list.other"),
+      [1] = i18n("prefs.snmp_interface_role_list.transit"),
+      [2] = i18n("prefs.snmp_interface_role_list.peering"),
+      [3] = i18n("prefs.snmp_interface_role_list.internal_interface"),
+      [4] = i18n("prefs.snmp_interface_role_list.ix"),
+      [5] = i18n("prefs.snmp_interface_role_list.customer_interface"),
+      [6] = i18n("prefs.snmp_interface_role_list.internet_connectivity"),
+   }
+   return role_labels[tonumber(value)] or tostring(value)
+end
+
+-- #####################################
+
+local function dt_add_alerts_url(processed_record, record, is_aggregated)
 
    if not record["FIRST_SEEN"] or
       not record["LAST_SEEN"] then
       return -- not from the row flow page
    end
 
-   local op_suffix = tag_utils.SEPARATOR .. 'eq'
+   local op_suffix = flowfilter_utils.SEPARATOR .. 'eq'
+   local cli_port = ''
+   if (not is_aggregated and processed_record.cli_port and  processed_record.cli_port.value) then
+      cli_port = processed_record.cli_port.value
+   end
    processed_record["alerts_url"] = string.format('%s/lua/alert_stats.lua?page=flow&status=historical&epoch_begin=%u&epoch_end=%u&%s=%s%s&%s=%s%s&cli_port=%s%s&srv_port=%s%s', -- &l4proto=%s%s',
-         ntop.getHttpPrefix(), 
+         ntop_http_prefix, 
          tonumber(record["FIRST_SEEN"]) - (5*60),
          tonumber(record["LAST_SEEN"]) + (5*60),
          --[[ Use name if available, IP otherwise
@@ -731,9 +1120,52 @@ local function dt_add_alerts_url(processed_record, record)
          -- Always use IP
          "cli_ip", processed_record.cli_ip.ip, op_suffix,
          "srv_ip", processed_record.srv_ip.ip, op_suffix,
-         ternary(processed_record.cli_port and processed_record.cli_port.value, processed_record.cli_port.value, ''), op_suffix,
+         cli_port, op_suffix,
          ternary(processed_record.srv_port and processed_record.srv_port.value, processed_record.srv_port.value, ''), op_suffix)
          --ternary(processed_record.l4proto ~= nil, processed_record.l4proto.value, ''), op_suffix)
+end
+
+-- #####################################
+
+-- All the alerts of the flow for the Status column (as the live flows alerts column):
+-- ALERT_JSON.alerts has them with their score, STATUS is the predominant one.
+-- shortcut: rows stored before ALERT_JSON.alerts existed show only the predominant alert
+local alert_label_cache = {} -- alert_id -> label, same for every row of the request
+local function dt_add_alerts(processed_record, record)
+   local status = processed_record.alert_id
+   if type(status) ~= "table" or tonumber(status.value or 0) == 0 or isEmptyString(record.ALERT_JSON) then
+      return
+   end
+
+   local alert_json = require("dkjson").decode(record.ALERT_JSON)
+   if type(alert_json) ~= "table" or type(alert_json.alerts) ~= "table" then
+      return
+   end
+
+   local flow_entity_id = require("alert_entities").flow.entity_id
+   local predominant = tonumber(status.value)
+   local alerts = {}
+   for id, info in pairs(alert_json.alerts) do
+      local alert_id = tonumber(id)
+      if alert_id then
+         local score = tonumber(type(info) == "table" and info.score) or 0
+         local severity = alert_consts.alertSeverityById(map_score_to_severity(score))
+         local label = alert_label_cache[alert_id]
+         if not label then
+            label = alert_consts.alertTypeLabel(alert_id, true, flow_entity_id)
+            alert_label_cache[alert_id] = label
+         end
+         alerts[#alerts + 1] = {
+            alert_id = alert_id,
+            alert_label = label,
+            is_predominant = (alert_id == predominant),
+            score = score,
+            badge = severity and severity.label,
+            severity = severity and i18n(severity.i18n_title),
+         }
+      end
+   end
+   status.alerts = alerts
 end
 
 -- #####################################
@@ -744,18 +1176,25 @@ local function dt_format_flow(processed_record, record)
    local vlan_id = processed_record["vlan_id"]
 
    if cli and srv and _GET["visible_columns"] and string.find(_GET["visible_columns"], "flow") then
+      local cli_ip_alias = getHostAltName({host = cli["ip"], vlan = vlan_id})
+      local srv_ip_alias = getHostAltName({host = srv["ip"], vlan = vlan_id})
+
       -- Add flow info to the processed_record, in place of cli_ip/srv_ip
       local flow = {}
+      local vlan = {}
       local cli_ip = {}
       local srv_ip = {}
-      local vlan = {}
+      local cli_port = {}
+      local srv_port = {}
 
+      local cli_mac = processed_record["cli_mac"]
+      local srv_mac = processed_record["srv_mac"]
       -- Converting to the same format used for alert flows (see DataTableRenders.formatFlowTuple)
 
-      cli_ip["value"]      = cli["ip"]    -- IP address
-      cli_ip["name"]       = cli["name"]  -- Host name
-      cli_ip["label"]      = cli["label"] -- Label - This can be shortened if required
-      cli_ip["label_long"] = cli["title"] -- Label - This is not shortened
+      cli_ip["value"]      = cli["ip"]                                                        -- IP address
+      cli_ip["name"]       = cli["name"]                                                      -- Host name
+      cli_ip["label"]      = ternary(isEmptyString(cli_ip_alias), cli["label"], cli_ip_alias) -- Label - This can be shortened if required
+      cli_ip["label_long"] = cli["title"]                                                     -- Label - This is not shortened
       cli_ip["reference"]  = cli["reference"]
       cli_ip["location"]   = dt_format_location(record["CLIENT_LOCATION"])
 
@@ -765,7 +1204,7 @@ local function dt_format_flow(processed_record, record)
 
       srv_ip["value"]      = srv["ip"]
       srv_ip["name"]       = srv["name"]
-      srv_ip["label"]      = srv["label"]
+      srv_ip["label"]      = ternary(isEmptyString(srv_ip_alias), srv["label"], srv_ip_alias)
       srv_ip["label_long"] = srv["title"]
       srv_ip["reference"]  = srv["reference"]
       srv_ip["location"]   = dt_format_location(record["SERVER_LOCATION"])
@@ -778,26 +1217,30 @@ local function dt_format_flow(processed_record, record)
       vlan["label"] = vlan_id["label"]
       vlan["title"] = vlan_id["title"]
 
+      if processed_record["cli_port"] then
+         cli_port["value"] = processed_record["cli_port"]["value"]
+         cli_port["label"] = getservbyport(tonumber(cli_port["value"]))
+      end
+
+      if processed_record["srv_port"] then
+         srv_port["value"] = processed_record["srv_port"]["value"]
+         srv_port["label"] = getservbyport(tonumber(srv_port["value"]))
+      end
+
+      flow["vlan"] = vlan
       flow["cli_ip"] = cli_ip
       flow["srv_ip"] = srv_ip
-      flow["vlan"] = vlan
-
-      flow["cli_port"] = ""
-      if processed_record["cli_port"] then
-         flow["cli_port"] = processed_record["cli_port"]["value"]
-      end
-
-      flow["srv_port"] = ""
-      if processed_record["srv_port"] then
-         flow["srv_port"] = processed_record["srv_port"]["value"]
-      end
-
-      local severity_id = ntop.mapScoreToSeverity(tonumber(record["SCORE"]))
-      local severity = alert_consts.alertSeverityById(severity_id)
-
-      flow["highlight"] = severity.color
-
+      flow["cli_port"] = cli_port
+      flow["srv_port"] = srv_port
+      flow["cli_mac"] = cli_mac
+      flow["srv_mac"] = srv_mac
       processed_record["flow"] = flow
+      processed_record["tags"] = processed_record["tags_map"]
+      processed_record["tags_map"] = nil
+      processed_record["src_tags"] = processed_record["src_tags_map"]
+      processed_record["src_tags_map"] = nil
+      processed_record["dst_tags"] = processed_record["dst_tags_map"]
+      processed_record["dst_tags_map"] = nil
 
       processed_record["cli_ip"] = nil
       processed_record["srv_ip"] = nil
@@ -816,17 +1259,19 @@ local function dt_add_filter(record)
    local rules = {}
 
    if record["IP_PROTOCOL_VERSION"] and tonumber(record["IP_PROTOCOL_VERSION"]) == 4 then
-      rules[#rules+1] = "host " .. record["IPV4_SRC_ADDR"]
-      rules[#rules+1] = "host " .. record["IPV4_DST_ADDR"]
+      if record["IPV4_SRC_ADDR"] then rules[#rules+1] = "host " .. record["IPV4_SRC_ADDR"] end
+      if record["IPV4_DST_ADDR"] then rules[#rules+1] = "host " .. record["IPV4_DST_ADDR"] end
    elseif record["IP_PROTOCOL_VERSION"] and tonumber(record["IP_PROTOCOL_VERSION"]) == 6 then
-      rules[#rules+1] = "host " .. record["IPV6_SRC_ADDR"]
-      rules[#rules+1] = "host " .. record["IPV6_DST_ADDR"]
+      if record["IPV6_SRC_ADDR"] then rules[#rules+1] = "host " .. record["IPV6_SRC_ADDR"] end
+      if record["IPV6_DST_ADDR"] then rules[#rules+1] = "host " .. record["IPV6_DST_ADDR"] end
    end
 
    if record["IP_SRC_PORT"] and tonumber(record["IP_SRC_PORT"]) > 0 then
       rules[#rules+1] = "port " .. record["IP_SRC_PORT"] 
-      rules[#rules+1] = "port " .. record["IP_DST_PORT"] 
    end 
+   if record["IP_DST_PORT"] and tonumber(record["IP_DST_PORT"]) > 0 then
+      rules[#rules+1] = "port " .. record["IP_DST_PORT"] 
+   end
 
    record["filter"] = {
       epoch_begin = tonumber(record["FIRST_SEEN"] or 0),
@@ -860,7 +1305,7 @@ local function format_flow_score(score, flow)
    local score = tonumber(score)
    local label = format_utils.formatValue(score)
 
-   local severity_id = ntop.mapScoreToSeverity(score or 0)
+   local severity_id = map_score_to_severity(score or 0)
    if severity_id ~= 0 then
       local severity = alert_consts.alertSeverityById(severity_id)
       label = "<span style='color: "..severity.color.."'>"..label.."</span>"
@@ -869,19 +1314,30 @@ local function format_flow_score(score, flow)
    return label
 end
 
-local function format_flow_observation_point(id, flow)
-   return getFullObsPointName(tonumber(id), nil, true)
+local function format_flow_qoe_score(score, flow)
+   local score = tonumber(score)
+   local label = format_utils.formatValue(score)
+
+   return label
 end
 
-local function format_flow_latency(latency, flow)
-   return (tonumber(latency) / 1000) .. " msec"
+local function chart_format_flow_qoe_score(score, flow)
+    local label = tonumber(score)
+    if qoe_utils then
+        label = qoe_utils.getQoELabel(label)
+    end
+    return label
+end
+
+local function format_flow_observation_point(id, flow)
+   return getFullObsPointName(tonumber(id), nil, true)
 end
 
 ------------------------------------------------------------------------
 
 -- List of flow columns in the database
 --
--- Keep in sync with ClickHouseFlowDB.cpp and tag_utils.lua
+-- Keep in sync with ClickHouseDB.cpp and flowfilter_utils.lua
 --
 -- - select_func is used in SELECT clause to convert DB-to-Lua the value (e.g. IP addresses)
 -- - where_func is used in WHERE clause to convert Lua-to-DB the value
@@ -889,78 +1345,173 @@ end
 -- - dt_func is used to convert the value in the format expected by the js datatable
 -- - order is used to sort the fields in the flow details
 local flow_columns = {
-   ['FLOW_ID'] =              { tag = "rowid" },
-   ['IP_PROTOCOL_VERSION'] =  {},
-   ['FIRST_SEEN'] =           { tag = "first_seen",   dt_func = dt_format_time },
-   ['LAST_SEEN'] =            { tag = "last_seen",    dt_func = dt_format_time },
-   ['VLAN_ID'] =              { tag = "vlan_id",      dt_func = dt_format_vlan },
-   ['PACKETS'] =              { tag = "packets",      dt_func = dt_format_pkts },
-   ['TOTAL_BYTES'] =          { tag = "bytes",        dt_func = dt_format_bytes, js_chart_func = "bytesToSize"  },
-   ['SRC2DST_BYTES'] =        {},
-   ['DST2SRC_BYTES'] =        {},
-   ['SRC2DST_DSCP'] =         { tag = "src2dst_dscp", dt_func = dt_format_dscp, simple_dt_func = dscp_consts.dscp_class_descr },
-   ['DST2SRC_DSCP'] =         { tag = "dst2src_dscp", dt_func = dt_format_dscp, simple_dt_func = dscp_consts.dscp_class_descr },
-   ['PROTOCOL'] =             { tag = "l4proto",      dt_func = dt_format_l4_proto, simple_dt_func = l4_proto_to_string },
-   ['IPV4_SRC_ADDR'] =        { tag = "cli_ip",       dt_func = dt_format_src_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_src_ip },
-   ['IPV6_SRC_ADDR'] =        { tag = "cli_ip",       dt_func = dt_format_src_ip, select_func = "IPv6NumToString", where_func = "IPv6StringToNum", simple_dt_func = simple_format_src_ip },
-   ['IP_SRC_PORT'] =          { tag = "cli_port",     dt_func = dt_format_port },
-   ['IPV4_DST_ADDR'] =        { tag = "srv_ip",       dt_func = dt_format_dst_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_dst_ip },
-   ['IPV6_DST_ADDR'] =        { tag = "srv_ip",       dt_func = dt_format_dst_ip, select_func = "IPv6NumToString", where_func = "IPv6StringToNum", simple_dt_func = simple_format_dst_ip },
-   ['IP_DST_PORT'] =          { tag = "srv_port",     dt_func = dt_format_port },
-   ['L7_PROTO'] =             { tag = "l7proto",      dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName },
-   ['L7_CATEGORY'] =          { tag = "l7cat",        dt_func = dt_format_l7_category, simple_dt_func = interface.getnDPICategoryName },
-   ['FLOW_RISK'] =            { tag = "flow_risk",    dt_func = dt_format_flow_risk },
-   ['INFO'] =                 { tag = "info",         dt_func = dt_format_info, format_func = format_flow_info, i18n = i18n("info"), order = 11 },
-   ['PROFILE'] =              {},
-   ['NTOPNG_INSTANCE_NAME'] = {},
-   ['INTERFACE_ID'] =         { tag = "interface_id" },
-   ['STATUS'] =               { tag = "alert_id",       dt_func = dt_format_flow_alert_id, format_func = format_flow_alert_id, i18n = i18n("status"), simple_dt_func = format_flow_alert_id , order = 8 },
-   ['SRC_COUNTRY_CODE'] =     { tag = "cli_country", dt_func = dt_format_country },
-   ['DST_COUNTRY_CODE'] =     { tag = "srv_country", dt_func = dt_format_country },
-   ['SRC_LABEL'] =            { tag = "cli_name" },
-   ['DST_LABEL'] =            { tag = "srv_name" },
-   ['SRC_MAC'] =              { tag = "cli_mac", dt_func = dt_format_mac },
-   ['DST_MAC'] =              { tag = "srv_mac", dt_func = dt_format_mac },
-   ['COMMUNITY_ID'] =         { format_func = format_flow_info, i18n = i18n("flow_fields_description.community_id"), order = 10 },
-   ['SRC_ASN'] =              { tag = "cli_asn", simple_dt_func = simple_format_src_asn },
-   ['DST_ASN'] =              { tag = "srv_asn", simple_dt_func = simple_format_dst_asn },
-   ['PROBE_IP'] =             { tag = "probe_ip",     dt_func = dt_format_probe, select_func = "IPv4NumToString", where_func = "IPv4StringToNum" },
-   ['OBSERVATION_POINT_ID'] = { tag = "observation_point_id", dt_func = dt_format_obs_point, format_func = format_flow_observation_point, i18n = i18n("details.observation_point_id"), order = 12 },
-   ['SRC2DST_TCP_FLAGS'] =    { tag = "src2dst_tcp_flags", dt_func = dt_format_tcp_flags },
-   ['DST2SRC_TCP_FLAGS'] =    { tag = "dst2src_tcp_flags", dt_func = dt_format_tcp_flags },
-   ['SCORE'] =                { tag = "score",        dt_func = dt_format_score, format_func = format_flow_score, i18n = i18n("score"), order = 9 },
-   ['L7_PROTO_MASTER'] =      { tag = "l7proto_master", dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName },
-   ['CLIENT_NW_LATENCY_US'] = { tag = "cli_nw_latency", dt_func = dt_format_latency_ms, format_func = format_flow_latency, i18n = i18n("db_search.cli_nw_latency"), order = 13 },
-   ['SERVER_NW_LATENCY_US'] = { tag = "srv_nw_latency", dt_func = dt_format_latency_ms,format_func = format_flow_latency, i18n = i18n("db_search.srv_nw_latency"), order = 14 },
-   ['CLIENT_LOCATION'] =      { tag = "cli_location", dt_func = dt_format_location },
-   ['SERVER_LOCATION'] =      { tag = "srv_location", dt_func = dt_format_location },
-   ['SRC_NETWORK_ID'] =       { tag = "cli_network", dt_func = dt_format_network },
-   ['DST_NETWORK_ID'] =       { tag = "srv_network", dt_func = dt_format_network },
-   ['INPUT_SNMP'] =           { tag = "input_snmp", dt_func = dt_format_snmp_interface },
-   ['OUTPUT_SNMP'] =          { tag = "output_snmp", dt_func = dt_format_snmp_interface },
-   ['SRC_HOST_POOL_ID'] =     { tag = "cli_host_pool_id", dt_func = dt_format_pool_id },
-   ['DST_HOST_POOL_ID'] =     { tag = "srv_host_pool_id", dt_func = dt_format_pool_id },
-   ['ALERTS_MAP'] =           { tag = "alerts_map" },
-   ['SEVERITY'] =             { tag = "severity" },
-   ['IS_CLI_ATTACKER'] =      { tag = "is_cli_attacker" },
-   ['IS_CLI_VICTIM'] =        { tag = "is_cli_victim" },
-   ['IS_CLI_BLACKLISTED'] =   { tag = "is_cli_blacklisted" },
-   ['IS_SRV_ATTACKER'] =      { tag = "is_srv_attacker" },
-   ['IS_SRV_VICTIM'] =        { tag = "is_srv_victim" },
-   ['IS_SRV_BLACKLISTED'] =   { tag = "is_srv_blacklisted" },
-   ['ALERT_JSON'] =           { tag = "alert_json" },
+   ['FLOW_ID'] =              { flowfilter = "rowid", db_type = "Number", db_raw_type = "Uint64" },
+   ['IP_PROTOCOL_VERSION'] =  { db_type = "Number", db_raw_type = "Uint8" },
+   ['FIRST_SEEN'] =           { flowfilter = "first_seen",   dt_func = dt_format_time_with_highlight, db_type = "DateTime", db_raw_type = "DateTime" },
+   ['LAST_SEEN'] =            { flowfilter = "last_seen",    dt_func = dt_format_time, db_type = "DateTime", db_raw_type = "DateTime" },
+   ['VLAN_ID'] =              { flowfilter = "vlan_id",      dt_func = dt_format_vlan, db_type = "Number", db_raw_type = "Uint16" },
+   ['PACKETS'] =              { flowfilter = "packets",      dt_func = dt_format_pkts, db_type = "Number", db_raw_type = "Uint32" },
+   ['TOTAL_BYTES'] =          { flowfilter = "bytes",        dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64" },
+   ['SRC2DST_BYTES'] =        { flowfilter = "cli2srv_bytes", dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64" },
+   ['DST2SRC_BYTES'] =        { flowfilter = "srv2cli_bytes", dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64" },
+   ['SRC2DST_PACKETS'] =      { flowfilter = "cli2srv_packets", dt_func = dt_format_pkts, db_type = "Number", db_raw_type = "Uint32" },
+   ['DST2SRC_PACKETS'] =      { flowfilter = "srv2cli_packets", dt_func = dt_format_pkts, db_type = "Number", db_raw_type = "Uint32" },
+   ['SRC2DST_DSCP'] =         { flowfilter = "src2dst_dscp", dt_func = dt_format_dscp, simple_dt_func = dscp_consts.dscp_class_descr, db_type = "Number", db_raw_type = "Uint8" },
+   ['DST2SRC_DSCP'] =         { flowfilter = "dst2src_dscp", dt_func = dt_format_dscp, simple_dt_func = dscp_consts.dscp_class_descr, db_type = "Number", db_raw_type = "Uint8" },
+   ['PROTOCOL'] =             { flowfilter = "l4proto",      dt_func = dt_format_l4_proto, simple_dt_func = l4_proto_to_string, db_type = "Number", db_raw_type = "Uint8" },
+   ['IPV4_SRC_ADDR'] =        { flowfilter = "cli_ip",       dt_func = dt_format_src_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_src_ip, db_type = "Number", db_raw_type = "Uint32" },
+   ['IPV6_SRC_ADDR'] =        { flowfilter = "cli_ip",       dt_func = dt_format_src_ip, where_func = "IPv6StringToNum", simple_dt_func = simple_format_src_ip, db_type = "IPv6", db_raw_type = "IPv6" },
+   ['IP_SRC_PORT'] =          { flowfilter = "cli_port",     dt_func = dt_format_port, db_type = "Number", db_raw_type = "Uint16" },
+   ['IPV4_DST_ADDR'] =        { flowfilter = "srv_ip",       dt_func = dt_format_dst_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_dst_ip, db_type = "Number", db_raw_type = "Uint32" },
+   ['IPV6_DST_ADDR'] =        { flowfilter = "srv_ip",       dt_func = dt_format_dst_ip, where_func = "IPv6StringToNum", simple_dt_func = simple_format_dst_ip, db_type = "IPv6", db_raw_type = "IPv6" },
+   ['IP_DST_PORT'] =          { flowfilter = "srv_port",     dt_func = dt_format_port, db_type = "Number", db_raw_type = "Uint16" },
+   ['L7_PROTO'] =             { flowfilter = "l7proto",      dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName, db_type = "Number", db_raw_type = "Uint16" },
+   ['L7_CATEGORY'] =          { flowfilter = "l7cat",        dt_func = dt_format_l7_category, simple_dt_func = interface.getnDPICategoryName, db_type = "Number", db_raw_type = "Uint16" },
+   ['FLOW_RISK'] =            { flowfilter = "flow_risk",    dt_func = dt_format_flow_risk, db_type = "Number", db_raw_type = "Uint64" },
+   ['INFO'] =                 { flowfilter = "info",         dt_func = dt_format_info, format_func = format_flow_info, i18n = i18n("info"), order = 11, db_type = "String", db_raw_type = "String" },
+   ['PROFILE'] =              { db_type = "String", db_raw_type = "String" },
+   ['NTOPNG_INSTANCE_NAME'] = { db_type = "String", db_raw_type = "String" },
+   ['INTERFACE_ID'] =         { flowfilter = "ntopng_interface", dt_func = dt_format_interface, db_type = "Number", db_raw_type = "Uint16" },
+   ['STATUS'] =               { flowfilter = "alert_id",       dt_func = dt_format_flow_alert_id, format_func = format_flow_alert_id, i18n = i18n("status"), simple_dt_func = format_flow_alert_id , order = 8, db_type = "Number", db_raw_type = "Uint8" },
+   ['SRC_COUNTRY_CODE'] =     { flowfilter = "cli_country", dt_func = dt_format_country, db_type = "Number", db_raw_type = "Uint16" },
+   ['DST_COUNTRY_CODE'] =     { flowfilter = "srv_country", dt_func = dt_format_country, db_type = "Number", db_raw_type = "Uint16" },
+   ['SRC_LABEL'] =            { flowfilter = "cli_name", db_type = "String", db_raw_type = "String" },
+   ['DST_LABEL'] =            { flowfilter = "srv_name", db_type = "String", db_raw_type = "String" },
+   ['SRC_MAC'] =              { flowfilter = "cli_mac", dt_func = dt_format_mac, db_type = "Number", db_raw_type = "Uint64" },
+   ['DST_MAC'] =              { flowfilter = "srv_mac", dt_func = dt_format_mac, db_type = "Number", db_raw_type = "Uint64" },
+   -- ['COMMUNITY_ID'] =         { flowfilter = "community_id", format_func = format_flow_info, i18n = i18n("flow_fields_description.community_id"), order = 10, db_type = "String", db_raw_type = "String" },
+   ['CLIENT_FINGERPRINT'] =   { flowfilter = "cli_fingerprint", dt_func = dt_format_generic, order = 11, db_type = "String", db_raw_type = "String" },
+   -- ['TCP_FINGERPRINT'] =      { flowfilter = "tcp_fingerprint", dt_func = dt_format_generic, order = 11, db_type = "String", db_raw_type = "String" },
 
+   -- ['TCP_STATS_SRC_TO_DST'] = { flowfilter = "tcp_stats_src_to_dst", dt_func = dt_format_tcp_stats, order = 11, db_type = "String", db_raw_type = "String" },
+   -- ['TCP_STATS_SRC_TO_DST'] = { flowfilter = "tcp_stats_src_to_dst", dt_func = dt_format_tcp_stats, order = 11, db_type = "String", db_raw_type = "String" },
+   
+   ['SRC_ASN'] =              { flowfilter = "cli_asn", simple_dt_func = simple_format_src_asn, db_type = "Number", db_raw_type = "Uint32" },
+   ['DST_ASN'] =              { flowfilter = "srv_asn", simple_dt_func = simple_format_dst_asn, db_type = "Number", db_raw_type = "Uint32" },
+   ['PROBE_IP'] =             { flowfilter = "exporter_ip", dt_func = dt_format_exporter, where_func = "toIPv6", db_type = "IPv6", db_raw_type = "IPv6" },
+   ['EXPORTER_SITE'] =        { flowfilter = "site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['NEXT_HOP_IP'] =          { flowfilter = "next_hop_ip", dt_func = dt_format_exporter, where_func = "toIPv6", db_type = "IPv6", db_raw_type = "IPv6" },
+   ['NEXT_HOP_SITE'] =        { flowfilter = "next_hop_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['OBSERVATION_POINT_ID'] = { flowfilter = "observation_point_id", dt_func = dt_format_obs_point, format_func = format_flow_observation_point, i18n = i18n("details.observation_point_id"), order = 12 , db_type = "Number", db_raw_type = "Uint16" },
+   ['SRC2DST_TCP_FLAGS'] =    { flowfilter = "src2dst_tcp_flags", dt_func = dt_format_tcp_flags, db_type = "Number", db_raw_type = "Uint8" },
+   ['DST2SRC_TCP_FLAGS'] =    { flowfilter = "dst2src_tcp_flags", dt_func = dt_format_tcp_flags, db_type = "Number", db_raw_type = "Uint8" },
+   ['SCORE'] =                { flowfilter = "score",        dt_func = dt_format_score, format_func = format_flow_score, i18n = i18n("score"), order = 9, db_type = "Number", db_raw_type = "Uint16" },
+   ['QOE_SCORE'] =            { flowfilter = "qoe_score",    dt_func = dt_format_qoe_score, format_func = format_flow_qoe_score, simple_dt_func = chart_format_flow_qoe_score, i18n = i18n("db_search.flowfilters.qoe_score"), order = 10, db_type = "Number", db_raw_type = "Uint8" },
+   ['L7_PROTO_MASTER'] =      { flowfilter = "l7proto_master", dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName, hide = true },
+   ['CLIENT_NW_LATENCY_US'] = { flowfilter = "cli_nw_latency", dt_func = dt_format_latency_ms, i18n = i18n("db_search.cli_nw_latency"), order = 13, db_type = "Number", db_raw_type = "Uint32" },
+   ['SERVER_NW_LATENCY_US'] = { flowfilter = "srv_nw_latency", dt_func = dt_format_latency_ms, i18n = i18n("db_search.srv_nw_latency"), order = 14, db_type = "Number", db_raw_type = "Uint32" },
+   ['APPL_LATENCY_US'] =      { flowfilter = "appl_latency",   dt_func = dt_format_latency_ms, i18n = i18n("db_search.appl_latency"), order = 15, db_type = "Number", db_raw_type = "Uint32" },
+   ['CLIENT_LOCATION'] =      { flowfilter = "cli_location", dt_func = dt_format_location, db_type = "Number", db_raw_type = "Uint8" },
+   ['SERVER_LOCATION'] =      { flowfilter = "srv_location", dt_func = dt_format_location, db_type = "Number", db_raw_type = "Uint8" },
+   ['SRC_NETWORK_ID'] =       { flowfilter = "cli_network", dt_func = dt_format_network, db_type = "Number", db_raw_type = "Uint32" },
+   ['DST_NETWORK_ID'] =       { flowfilter = "srv_network", dt_func = dt_format_network, db_type = "Number", db_raw_type = "Uint32" },
+   ['SRC_SITE_ID'] =          { flowfilter = "cli_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['DST_SITE_ID'] =          { flowfilter = "srv_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['INPUT_SNMP'] =           { flowfilter = "input_snmp", dt_func = dt_format_snmp_interface, db_type = "Number", db_raw_type = "Uint32" },
+   ['OUTPUT_SNMP'] =          { flowfilter = "output_snmp", dt_func = dt_format_snmp_interface, db_type = "Number", db_raw_type = "Uint32" },
+   ['SRC_HOST_POOL_ID'] =     { flowfilter = "cli_host_pool_id", dt_func = dt_format_pool_id, db_type = "Number", db_raw_type = "Uint16" },
+   ['DST_HOST_POOL_ID'] =     { flowfilter = "srv_host_pool_id", dt_func = dt_format_pool_id, db_type = "Number", db_raw_type = "Uint16" },
+   ['ALERTS_MAP'] =           { flowfilter = "alerts_map" },
+   ['TAGS_MAP'] =           { flowfilter = "tags_map", dt_func = dt_format_tags_map, db_type = "String", db_raw_type = "String" },
+   ['SRC_TAGS_MAP'] =       { flowfilter = "src_tags_map", dt_func = dt_format_tags_map, db_type = "String", db_raw_type = "String" },
+   ['DST_TAGS_MAP'] =       { flowfilter = "dst_tags_map", dt_func = dt_format_tags_map, db_type = "String", db_raw_type = "String" },
+   ['SEVERITY'] =             { flowfilter = "severity" },
+   ['IS_CLI_ATTACKER'] =      { flowfilter = "is_cli_attacker" },
+   ['IS_CLI_VICTIM'] =        { flowfilter = "is_cli_victim" },
+   ['IS_CLI_BLACKLISTED'] =   { flowfilter = "is_cli_blacklisted" },
+   ['IS_SRV_ATTACKER'] =      { flowfilter = "is_srv_attacker" },
+   ['IS_SRV_VICTIM'] =        { flowfilter = "is_srv_victim" },
+   ['IS_SRV_BLACKLISTED'] =   { flowfilter = "is_srv_blacklisted" },
+   ['PROTOCOL_INFO_JSON'] =   { flowfilter = "protocol_info_json", dt_func = historical_format_utils.parseInfoJson },
+   ['THROUGHPUT'] =           { flowfilter = "throughput", dt_func = dt_format_thpt, exclude_from_details = true },
+   ['ALERT_JSON'] =           { flowfilter = "json" },
+   ['SRC_PROC_NAME'] =        { flowfilter = "cli_proc_name", db_type = "String", db_raw_type = "String" },
+   ['DST_PROC_NAME'] =        { flowfilter = "srv_proc_name", db_type = "String", db_raw_type = "String" },
+   ['SRC_PROC_USER_NAME'] =   { flowfilter = "cli_user_name", db_type = "String", db_raw_type = "String" },
+   ['DST_PROC_USER_NAME'] =   { flowfilter = "srv_user_name", db_type = "String", db_raw_type = "String" },
+   ['MAJOR_CONNECTION_STATE'] = { flowfilter = "major_connection_state", dt_func = dt_format_major_connection_state, db_type = "Number", db_raw_type = "Uint8" },
+   ['MINOR_CONNECTION_STATE'] = { flowfilter = "minor_connection_state", dt_func = dt_format_minor_connection_state, db_type = "Number", db_raw_type = "Uint8" },
+   ['POST_NAT_IPV4_SRC_ADDR'] = { flowfilter = "post_nat_ipv4_src_addr", dt_func = dt_format_nat_ip, select_func = "IPv4NumToString", db_type = "Number", db_raw_type = "Uint32"  },
+   ['POST_NAT_SRC_PORT']      = { flowfilter = "post_nat_src_port", dt_func = dt_format_port, db_type = "Number", db_raw_type = "Uint16" },
+   ['POST_NAT_IPV4_DST_ADDR'] = { flowfilter = "post_nat_ipv4_dst_addr", dt_func = dt_format_nat_ip, select_func = "IPv4NumToString", db_type = "Number", db_raw_type = "Uint32"  },
+   ['POST_NAT_DST_PORT']      = { flowfilter = "post_nat_dst_port", dt_func = dt_format_port, db_type = "Number", db_raw_type = "Uint16" },
+   --['WLAN_SSID']              = { flowfilter = "wlan_ssid", dt_func = dt_format_generic, db_type = "String", db_raw_type = "String" },
+   --['WTP_MAC_ADDRESS']        = { flowfilter = "apn_mac", dt_func = dt_format_mac_obj, db_type = "Number", db_raw_type = "Uint64" },
+   ['DOMAIN_NAME']            = { flowfilter = "domain_name", dt_func = dt_format_generic, db_type = "String", db_raw_type = "String" },
+   ['REQUESTED_SERVER_NAME']  = { flowfilter = "requested_server_name", dt_func = dt_format_generic, db_type = "String", db_raw_type = "String" },
+   ['IS_FIRST_DUMP']          = { flowfilter = "first_flow_dump", dt_func = dt_format_first_flow_dump, db_type = "Boolean", db_raw_type = "Boolean" },
+   
+   --[[ TODO: this column is for the aggregated_flow_columns but the parsing Function
+              only parses these columns, so a new logic to parse only the aggregated_flow_columns
+              is needed 
+   ]]
+   --['NUM_FLOWS'] =            { flowfilter = "flows_number", dt_func = dt_format_high_number },
+   
    -- Alert data
-   ['ALERT_STATUS'] =         { tag = "alert_status" },
-   ['USER_LABEL'] =           { tag = "user_label" },
-   ['USER_LABEL_TSTAMP'] =    { tag = "user_label_tstamp" },
+   ['ALERT_STATUS'] =         { flowfilter = "alert_status" },
+   ['REQUIRE_ATTENTION'] =    { flowfilter = "require_attention" },
+   ['USER_LABEL'] =           { flowfilter = "user_label" },
+   ['USER_LABEL_TSTAMP'] =    { flowfilter = "user_label_tstamp" },
+   ['SRC_PEER_ASN'] =         { flowfilter = "src_peer_asn" },
+   ['DST_PEER_ASN'] =         { flowfilter = "dst_peer_asn" },
+   ['INPUT_INTERFACE_ROLE'] =   { flowfilter = "in_iface_role", simple_dt_func = simple_format_interface_role, db_type = "Number", db_raw_type = "Uint8" },
+   ['OUTPUT_INTERFACE_ROLE'] =  { flowfilter = "out_iface_role", simple_dt_func = simple_format_interface_role, db_type = "Number", db_raw_type = "Uint8" },
 }
-
+local aggregated_flow_columns = {
+   ['FLOW_ID'] =              { flowfilter = "rowid", db_type = "Number", db_raw_type = "Uint64" },
+   ['IP_PROTOCOL_VERSION'] =  { db_type = "Number", db_raw_type = "Uint8" },
+   ['FIRST_SEEN'] =           { flowfilter = "first_seen",   dt_func = dt_format_time_with_highlight, db_type = "DateTime", db_raw_type = "DateTime" },
+   ['LAST_SEEN'] =            { flowfilter = "last_seen",    dt_func = dt_format_time, db_type = "DateTime", db_raw_type = "DateTime" },
+   ['VLAN_ID'] =              { flowfilter = "vlan_id",      dt_func = dt_format_vlan, db_type = "Number", db_raw_type = "Uint16"  },
+   ['PACKETS'] =              { flowfilter = "packets",      dt_func = dt_format_pkts, db_type = "Number", db_raw_type = "Uint32" },
+   ['TOTAL_BYTES'] =          { flowfilter = "bytes",        dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64"  },
+   ['SRC2DST_BYTES'] =        { flowfilter = "src2dst_bytes", dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64"  },
+   ['DST2SRC_BYTES'] =        { flowfilter = "dst2src_bytes", dt_func = dt_format_bytes, js_chart_func = "bytesToSize", db_type = "Number", db_raw_type = "Uint64"  },
+   ['PROTOCOL'] =             { flowfilter = "l4proto",      dt_func = dt_format_l4_proto, simple_dt_func = l4_proto_to_string, db_type = "Number", db_raw_type = "Uint8" },
+   ['IPV4_SRC_ADDR'] =        { flowfilter = "cli_ip",       dt_func = dt_format_src_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_src_ip, db_type = "Number", db_raw_type = "Uint32" },
+   ['IPV6_SRC_ADDR'] =        { flowfilter = "cli_ip",       dt_func = dt_format_src_ip, where_func = "IPv6StringToNum", simple_dt_func = simple_format_src_ip, db_type = "IPv6", db_raw_type = "IPv6"  },
+   ['IPV4_DST_ADDR'] =        { flowfilter = "srv_ip",       dt_func = dt_format_dst_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_dst_ip, db_type = "Number", db_raw_type = "Uint32" },
+   ['IPV6_DST_ADDR'] =        { flowfilter = "srv_ip",       dt_func = dt_format_dst_ip, where_func = "IPv6StringToNum", simple_dt_func = simple_format_dst_ip, db_type = "IPv6", db_raw_type = "IPv6"  },
+   ['IP_DST_PORT'] =          { flowfilter = "srv_port",     dt_func = dt_format_port, db_type = "Number", db_raw_type = "Uint16" },
+   ['L7_PROTO'] =             { flowfilter = "l7proto",      dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName, db_type = "Number", db_raw_type = "Uint16" },
+   ['NTOPNG_INSTANCE_NAME'] = { db_type = "String", db_raw_type = "String" },
+   ['SCORE'] =                { flowfilter = "score",        dt_func = dt_format_score, format_func = format_flow_score, i18n = i18n("score"), order = 9, db_type = "Number", db_raw_type = "Uint16" },
+   ['L7_PROTO_MASTER'] =      { flowfilter = "l7proto_master", dt_func = dt_format_l7_proto, simple_dt_func = interface.getnDPIProtoName },
+   ['NUM_FLOWS'] =            { flowfilter = "flows_number", dt_func = dt_format_high_number },
+   ['FLOW_RISK'] =            { flowfilter = "flow_risk",    dt_func = dt_format_flow_risk, db_type = "Number", db_raw_type = "Uint64" },
+   ['SRC_LABEL'] =            { flowfilter = "cli_name", db_type = "String", db_raw_type = "String" },
+   ['DST_LABEL'] =            { flowfilter = "srv_name", db_type = "String", db_raw_type = "String" },
+   ['SRC_MAC'] =              { flowfilter = "cli_mac", dt_func = dt_format_mac, db_type = "Number", db_raw_type = "Uint64" },
+   ['DST_MAC'] =              { flowfilter = "srv_mac", dt_func = dt_format_mac, db_type = "Number", db_raw_type = "Uint64" },
+   ['PROBE_IP'] =             { flowfilter = "exporter_ip", dt_func = dt_format_exporter, where_func = "toIPv6", db_type = "IPv6", db_raw_type = "IPv6" },
+   ['EXPORTER_SITE'] =        { flowfilter = "site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['NEXT_HOP_IP'] =          { flowfilter = "next_hop_ip", dt_func = dt_format_exporter, where_func = "toIPv6", db_type = "IPv6", db_raw_type = "IPv6" },
+   ['NEXT_HOP_SITE'] =        { flowfilter = "next_hop_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['SRC_COUNTRY_CODE'] =     { flowfilter = "cli_country", dt_func = dt_format_country, db_type = "Number", db_raw_type = "Uint16" },
+   ['DST_COUNTRY_CODE'] =     { flowfilter = "srv_country", dt_func = dt_format_country, db_type = "Number", db_raw_type = "Uint16" },
+   ['SRC_ASN'] =              { flowfilter = "cli_asn", simple_dt_func = simple_format_src_asn, db_type = "Number", db_raw_type = "Uint32" },
+   ['DST_ASN'] =              { flowfilter = "srv_asn", simple_dt_func = simple_format_dst_asn, db_type = "Number", db_raw_type = "Uint32" },
+   ['INPUT_SNMP'] =           { flowfilter = "input_snmp", dt_func = dt_format_snmp_interface, db_type = "Number", db_raw_type = "Uint32" },
+   ['OUTPUT_SNMP'] =          { flowfilter = "output_snmp", dt_func = dt_format_snmp_interface, db_type = "Number", db_raw_type = "Uint32" },
+   ['SRC_NETWORK_ID'] =       { flowfilter = "cli_network", dt_func = dt_format_network, db_type = "Number", db_raw_type = "Uint32" },
+   ['DST_NETWORK_ID'] =       { flowfilter = "srv_network", dt_func = dt_format_network, db_type = "Number", db_raw_type = "Uint32" },
+   --['WLAN_SSID'] =            { flowfilter = "wlan_ssid", db_type = "String", db_raw_type = "String" },
+   --['WTP_MAC_ADDRESS'] =      { flowfilter = "apn_mac", dt_func = dt_format_mac, db_type = "Number", db_raw_type = "Uint64" },
+   ['SRC_SITE_ID'] =          { flowfilter = "cli_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['DST_SITE_ID'] =          { flowfilter = "srv_site", dt_func = dt_format_site, db_type = "Number", db_raw_type = "Uint16" },
+   ['INTERFACE_ID'] =         { flowfilter = "ntopng_interface", dt_func = dt_format_interface, db_type = "Number", db_raw_type = "Uint16" },
+}
 -- Extra columns (e.g. result of SQL functions)
 local additional_flow_columns = {
-   ['bytes'] =                { tag = "bytes",        dt_func = dt_format_bytes },
-   ['packets'] =              { tag = "packets",      dt_func = dt_format_pkts },
-   ['THROUGHPUT'] =           { tag = "throughput",   dt_func = dt_format_thpt },
+   ['bytes'] =                { flowfilter = "bytes",        dt_func = dt_format_bytes },
+   ['packets'] =              { flowfilter = "packets",      dt_func = dt_format_pkts }, 
+   ['IPV4_ADDR'] =            { flowfilter = "ip",           dt_func = dt_format_ip, select_func = "IPv4NumToString", where_func = "IPv4StringToNum", simple_dt_func = simple_format_ip },
+   ['IPV6_ADDR'] =            { flowfilter = "ip",           dt_func = dt_format_ip, where_func = "IPv6StringToNum", simple_dt_func = simple_format_ip },
+   ['NETWORK_ID'] =           { flowfilter = "network", dt_func = dt_format_network },
+   ['ASN'] =                  { flowfilter = "asn", simple_dt_func = simple_format_asn },
+   ['COUNTRY_CODE'] =         { flowfilter = "country", dt_func = dt_format_country },
+   ['snmp_interface'] =       { flowfilter = "snmp_interface", dt_func = dt_format_snmp_interface },
+   ['iface_role'] =       { flowfilter = "iface_role", dt_func = dt_format_snmp_interface },
 }
 
 -- #####################################
@@ -977,27 +1528,71 @@ historical_flow_utils.min_db_columns = {
    "IPV6_DST_ADDR",
    "IP_SRC_PORT",
    "IP_DST_PORT",
+   "PROTOCOL",
    "PROBE_IP",
    "SRC_LABEL",
    "DST_LABEL",
    "CLIENT_LOCATION",
    "SERVER_LOCATION",
-   "COMMUNITY_ID",
+   --"COMMUNITY_ID",
+   "TAGS_MAP",
+   "SRC_TAGS_MAP",
+   "DST_TAGS_MAP",
+   "NTOPNG_INSTANCE_NAME"
+}
+
+historical_flow_utils.min_aggregated_flow_db_columns = {
+   "FLOW_ID",
+   "FIRST_SEEN",
+   "LAST_SEEN",
+   "VLAN_ID",
+   "PACKETS",
+   "TOTAL_BYTES",
+   "SRC2DST_BYTES",
+   "DST2SRC_BYTES",
+   "SCORE",
+   "PROTOCOL",
+   "IP_PROTOCOL_VERSION",
+   "IPV4_SRC_ADDR",
+   "IPV4_DST_ADDR",
+   "IPV6_SRC_ADDR",
+   "IPV6_DST_ADDR",
+   "SRC_LABEL",
+   "DST_LABEL",
+   "IP_DST_PORT",
+   "L7_PROTO",
+   "L7_PROTO_MASTER",
+   "NTOPNG_INSTANCE_NAME",
+   "NUM_FLOWS",
+   "FLOW_RISK",
+   "SRC_MAC",
+   "DST_MAC",
+   "PROBE_IP",
+   "SRC_COUNTRY_CODE",
+   "DST_COUNTRY_CODE",
+   "SRC_ASN",
+   "DST_ASN",
+   "INPUT_SNMP",
+   "OUTPUT_SNMP",
+   "SRC_NETWORK_ID",
+   "DST_NETWORK_ID"
 }
 
 historical_flow_utils.extra_db_columns = {
-   ["throughput"] = "ABS(LAST_SEEN - FIRST_SEEN) as TIME_DELTA, (TOTAL_BYTES / (TIME_DELTA + 1)) * 8 as THROUGHPUT",
+   ["throughput"] = "ABS(LAST_SEEN - FIRST_SEEN) as TIME_DELTA, (" .. ternary(getThroughputType() == "bps", "TOTAL_BYTES", "PACKETS") .. " / (TIME_DELTA + 1)) * 8 as THROUGHPUT",
+   ["duration"] = "ABS(LAST_SEEN - FIRST_SEEN) as DURATION",
+   ["protocol_info_json"] = "PROTOCOL_INFO_JSON",
    ["alert_json"] = "ALERT_JSON"
 }
 
 historical_flow_utils.ordering_special_columns = {
-   ["srv_ip"]   = {[4] = "IPv4StringToNum(IPV4_DST_ADDR)", [6] = "IPv6StringToNum(IPV6_DST_ADDR)"},
-   ["cli_ip"]   = {[4] = "IPv4StringToNum(IPV4_SRC_ADDR)", [6] = "IPv6StringToNum(IPV6_SRC_ADDR)"},
+   ["srv_ip"]   = {[4] = "IPv4NumToString(IPV4_DST_ADDR)", [6] = "IPv6NumToString(IPV6_DST_ADDR)"},
+   ["cli_ip"]   = {[4] = "IPv4NumToString(IPV4_SRC_ADDR)", [6] = "IPv6NumToString(IPV6_SRC_ADDR)"},
    ["l7proto"]  = "L7_PROTO_MASTER",
    ["throughput"] = "THROUGHPUT"
 }
 
-historical_flow_utils.extra_where_tags = {
+historical_flow_utils.extra_where_flowfilters = {
    ["ip"]       = { [4] = { "IPV4_DST_ADDR", "IPV4_SRC_ADDR" } , [6] = { "IPV6_DST_ADDR", "IPV6_SRC_ADDR" } },
    ["srv_ip"]   = { [4] = "IPV4_DST_ADDR", [6] = "IPV6_DST_ADDR" },
    ["cli_ip"]   = { [4] = "IPV4_SRC_ADDR", [6] = "IPV6_SRC_ADDR" },
@@ -1013,9 +1608,17 @@ historical_flow_utils.extra_where_tags = {
    ["cli_country"] = "SRC_COUNTRY_CODE",
    ["srv_country"] = "DST_COUNTRY_CODE",
    ["vlan_id"] = "VLAN_ID",
+   --["community_id"] = "COMMUNITY_ID",
+   ["cli_fingerprint"] = "CLIENT_FINGERPRINT",
+   --["tcp_fingerprint"] = "TCP_FINGERPRINT",
+   ["duration"] = "DURATION",
+   ["site"] = "EXPORTER_SITE", -- required?
+   ["next_hop_site"] = "NEXT_HOP_SITE",
+   ["cli_site"] = "SRC_SITE_ID",
+   ["srv_site"] = "DST_SITE_ID",
 }
 
-historical_flow_utils.topk_tags_v4 = {
+historical_flow_utils.topk_flowfilters_v4 = {
    ["host"]   = {
       "IPV4_DST_ADDR",
       "IPV4_SRC_ADDR",
@@ -1025,7 +1628,7 @@ historical_flow_utils.topk_tags_v4 = {
    }
 }
 
-historical_flow_utils.topk_tags_v6 = {
+historical_flow_utils.topk_flowfilters_v6 = {
    ["host"]   = {
       "IPV6_DST_ADDR",
       "IPV6_SRC_ADDR",
@@ -1038,21 +1641,63 @@ historical_flow_utils.topk_tags_v6 = {
 historical_flow_utils.builtin_presets = {
    {
       id = "",
-      count = nil,
-      i18n_name = "queries.raw_flows_records",
-      name = i18n("queries.raw_flows_records"),
+      i18n_name = "queries.raw_flows",
+      name = i18n("queries.raw_flows"),
+      chart_type = "heatmap",
+      chart_height = 60,
+      chart =
+         {
+            {
+               unit_measure = "",
+               params = {
+                  count = historical_ts_definitions and historical_ts_definitions.get_available_query_types()[4]
+               }
+            }
+         },
+   },
+   {
+      id = "raw_flows_thpt",
+      i18n_name = "queries.raw_flows_thpt",
+      name = i18n("queries.raw_flows_thpt"),
+      chart_type = "histogram",
+      chart =
+         {
+            {
+               unit_measure = "bps_no_scale",
+               params = {
+                  count = historical_ts_definitions and historical_ts_definitions.get_available_query_types()[1]
+               }
+            }
+         },
    },
    {
       id = "raw_flows_bytes",
-      count = "TOTAL_BYTES",
       i18n_name = "queries.raw_flows_bytes",
       name = i18n("queries.raw_flows_bytes"),
+      chart_type = "histogram",
+      chart =
+         {
+            {
+               unit_measure = "bytes",
+               params = {
+                  count = historical_ts_definitions and historical_ts_definitions.get_available_query_types()[2]
+               }
+            }
+         },
    },
    {
       id = "raw_flows_score",
-      count = "SCORE",
       i18n_name = "queries.raw_flows_score",
       name = i18n("queries.raw_flows_score"),
+      chart_type = "histogram",
+      chart =
+         {
+            {
+               params = {
+                    count = historical_ts_definitions and historical_ts_definitions.get_available_query_types()[3]
+               }
+            }
+         },
    },
 }
 
@@ -1064,15 +1709,34 @@ end
 
 -- #####################################
 
-function historical_flow_utils.get_extended_flow_columns()
-   local extended_flow_columns = {}
+-- The merged tables are built once: this function is called for every record of every query
+-- and callers never modify the returned table
+local extended_flow_columns_cache = {}
 
-   for k, v in pairs(flow_columns) do
-      extended_flow_columns[k] = v
+function historical_flow_utils.get_extended_flow_columns(use_aggregated)
+   local cache_key = use_aggregated and "aggregated" or "raw"
+   local extended_flow_columns = extended_flow_columns_cache[cache_key]
+
+   if extended_flow_columns then
+      return extended_flow_columns
+   end
+
+   extended_flow_columns = {}
+
+   if not use_aggregated then
+      for k, v in pairs(flow_columns) do
+         extended_flow_columns[k] = v
+      end
+   else
+      for k, v in pairs(aggregated_flow_columns) do
+         extended_flow_columns[k] = v
+      end
    end
    for k, v in pairs(additional_flow_columns) do
       extended_flow_columns[k] = v
    end
+
+   extended_flow_columns_cache[cache_key] = extended_flow_columns
 
    return extended_flow_columns
 end
@@ -1088,57 +1752,127 @@ end
 
 -- #####################################
 
-function historical_flow_utils.get_tags()
+function historical_flow_utils.get_flowfilters()
    local columns = historical_flow_utils.get_flow_columns()
-   local tags = tag_utils.defined_tags
-   local flow_defined_tags = {}
+   local filters = flowfilter_utils.defined_filters
+   local flow_defined_filters = {}
 
    for _, v in pairs(columns) do
-      if v.tag and tag_utils.defined_tags[v.tag] then
-         local tag = tag_utils.defined_tags[v.tag]
-         if not tag.hide then
-            flow_defined_tags[v.tag] = tag_utils.defined_tags[v.tag]
+      if v.flowfilter and flowfilter_utils.defined_filters[v.flowfilter] then
+         local flowfilter = flowfilter_utils.defined_filters[v.flowfilter]
+         if not flowfilter.hide then
+            flow_defined_filters[v.flowfilter] = flowfilter_utils.defined_filters[v.flowfilter]
          end
       end
    end
 
    -- Add extra tags
-   flow_defined_tags["ip"] = tag_utils.defined_tags["ip"]
-   flow_defined_tags["name"] = tag_utils.defined_tags["name"]
-   flow_defined_tags["mac"] = tag_utils.defined_tags["mac"]
-   flow_defined_tags["snmp_interface"] = tag_utils.defined_tags["snmp_interface"]
-   flow_defined_tags["country"] = tag_utils.defined_tags["country"]
-   flow_defined_tags["l7_error_id"] = tag_utils.defined_tags["l7_error_id"]
-   flow_defined_tags["cli_location"] = tag_utils.defined_tags["cli_location"]
-   flow_defined_tags["srv_location"] = tag_utils.defined_tags["srv_location"]
-   flow_defined_tags["traffic_direction"] = tag_utils.defined_tags["traffic_direction"]
-   flow_defined_tags["confidence"] = tag_utils.defined_tags["confidence"]
+   flow_defined_filters["ip"] = flowfilter_utils.defined_filters["ip"]
+   flow_defined_filters["name"] = flowfilter_utils.defined_filters["name"]
+   flow_defined_filters["mac"] = flowfilter_utils.defined_filters["mac"]
+   flow_defined_filters["snmp_interface"] = flowfilter_utils.defined_filters["snmp_interface"]
+   flow_defined_filters["country"] = flowfilter_utils.defined_filters["country"]
+   flow_defined_filters["l7_error_id"] = flowfilter_utils.defined_filters["l7_error_id"]
+   -- flow_defined_filters["ja4_client"] = flowfilter_utils.defined_filters["ja4_client"]
+   flow_defined_filters["issuer_dn"] = flowfilter_utils.defined_filters["issuer_dn"]
+   flow_defined_filters["http_method"] = flowfilter_utils.defined_filters["http_method"]
+   flow_defined_filters["http_url"] = flowfilter_utils.defined_filters["http_url"]
+   flow_defined_filters["http_return"] = flowfilter_utils.defined_filters["http_return"]
+   flow_defined_filters["user_agent"] = flowfilter_utils.defined_filters["user_agent"]
+   flow_defined_filters["last_server"] = flowfilter_utils.defined_filters["last_server"]
+   flow_defined_filters["netbios_name"] = flowfilter_utils.defined_filters["netbios_name"]
+   flow_defined_filters["dns_query"] = flowfilter_utils.defined_filters["dns_query"]
+   flow_defined_filters["dns_answer"] = flowfilter_utils.defined_filters["dns_answer"]
+   flow_defined_filters["mdns_answer"] = flowfilter_utils.defined_filters["mdns_answer"]
+   flow_defined_filters["mdns_name"] = flowfilter_utils.defined_filters["mdns_name"]
+   flow_defined_filters["mdns_name_txt"] = flowfilter_utils.defined_filters["mdns_name_txt"]
+   flow_defined_filters["mdns_ssid"] = flowfilter_utils.defined_filters["mdns_ssid"]
+   flow_defined_filters["cli_location"] = flowfilter_utils.defined_filters["cli_location"]
+   flow_defined_filters["srv_location"] = flowfilter_utils.defined_filters["srv_location"]
+   flow_defined_filters["traffic_direction"] = flowfilter_utils.defined_filters["traffic_direction"]
+   flow_defined_filters["confidence"] = flowfilter_utils.defined_filters["confidence"]
+   flow_defined_filters["network_cidr"] = flowfilter_utils.defined_filters["network_cidr"]
+   flow_defined_filters["srv_network_cidr"] = flowfilter_utils.defined_filters["srv_network_cidr"]
+   flow_defined_filters["cli_network_cidr"] = flowfilter_utils.defined_filters["cli_network_cidr"]
+   flow_defined_filters["duration"] = flowfilter_utils.defined_filters["duration"]
+   flow_defined_filters["network"] = flowfilter_utils.defined_filters["network"]
+   flow_defined_filters["retransmissions"] = flowfilter_utils.defined_filters["retransmissions"]
+   flow_defined_filters["out_of_order"] = flowfilter_utils.defined_filters["out_of_order"]
+   flow_defined_filters["lost"] = flowfilter_utils.defined_filters["lost"]
+   flow_defined_filters["l4proto"] = flowfilter_utils.defined_filters["l4proto"]
+   flow_defined_filters["post_nat_ipv4_src_addr"] = flowfilter_utils.defined_filters["post_nat_ipv4_src_addr"]
+   flow_defined_filters["post_nat_src_port"] = flowfilter_utils.defined_filters["post_nat_src_port"]
+   flow_defined_filters["post_nat_ipv4_dst_addr"] = flowfilter_utils.defined_filters["post_nat_ipv4_dst_addr"]
+   flow_defined_filters["post_nat_dst_port"] = flowfilter_utils.defined_filters["post_nat_dst_port"]
+   flow_defined_filters["verdict"] = flowfilter_utils.defined_filters["verdict"]
+   flow_defined_filters["ndpi_fingerprint"] = flowfilter_utils.defined_filters["ndpi_fingerprint"]
+   flow_defined_filters["community_id"] = flowfilter_utils.defined_filters["community_id"]
+   flow_defined_filters["app_name"] = flowfilter_utils.defined_filters["app_name"]
+   flow_defined_filters["user_name"] = flowfilter_utils.defined_filters["user_name"]
+   flow_defined_filters["tcp_fingerprint"] = flowfilter_utils.defined_filters["tcp_fingerprint"]
+   flow_defined_filters["apn_mac"] = flowfilter_utils.defined_filters["apn_mac"]
+   flow_defined_filters["wlan_ssid"] = flowfilter_utils.defined_filters["wlan_ssid"]
+   flow_defined_filters["site"] = flowfilter_utils.defined_filters["site"] -- required?
+   flow_defined_filters["next_hop_site"] = flowfilter_utils.defined_filters["next_hop_site"]
+   flow_defined_filters["network_site"] = flowfilter_utils.defined_filters["network_site"]
+   flow_defined_filters["cli_site"] = flowfilter_utils.defined_filters["cli_site"]
+   flow_defined_filters["srv_site"] = flowfilter_utils.defined_filters["srv_site"]
+   flow_defined_filters["asn"] = flowfilter_utils.defined_filters["asn"]
+   flow_defined_filters["tag"] = flowfilter_utils.defined_filters["tag"]
+   flow_defined_filters["cli_tag"] = flowfilter_utils.defined_filters["cli_tag"]
+   flow_defined_filters["srv_tag"] = flowfilter_utils.defined_filters["srv_tag"]
+   flow_defined_filters["iface_role"] = flowfilter_utils.defined_filters["iface_role"]
 
-   return flow_defined_tags
+   return flow_defined_filters
 end
 
 -- #####################################
 
-function historical_flow_utils.get_flow_columns_to_tags()
-   local c2t = {}
+function historical_flow_utils.get_flow_columns_to_flowfilters(aggregated, real_cols_only)
 
-   for k, v in pairs(flow_columns) do
-      if v.tag then
-         c2t[k] = v.tag
+   local c2t = {}
+   local t2c = {}
+
+   if aggregated then
+      for k, v in pairs(aggregated_flow_columns) do
+
+         if v.flowfilter then
+            c2t[k] = v.flowfilter
+            t2c[v.flowfilter] = k
+         end
+      end
+   else
+      for k, v in pairs(flow_columns) do
+         if v.flowfilter then
+            c2t[k] = v.flowfilter
+            t2c[v.flowfilter] = k
+         end
       end
    end
 
+   -- if real_cols_only is provided, exclude additional_flow_columns for historical flow export errors
+   if not real_cols_only then
+      for k, v in pairs(additional_flow_columns) do
+         if v.flowfilter then 
+            if not t2c[v.flowfilter] then -- flowfilter not already defined in real columns
+               c2t[k] = v.flowfilter
+               -- t2c[v.flowfilter] = k
+            end
+         end
+      end
+   end
+      
    return c2t 
 end
 
 -- #####################################
 
--- Return a table with a list of DB columns for each tag
+-- Return a table with a list of DB columns for each flowfilter
 -- Example:
 -- { ["srv_ip"] = ["IPV4_DST_ADDR"], ["IPV6_DST_ADDR"], .. }
-local function get_flow_tags_to_columns()
+local function get_flow_flowfilters_to_columns(aggregated)
    local t2c = {}
-   local c2t = historical_flow_utils.get_flow_columns_to_tags()
+   local c2t = historical_flow_utils.get_flow_columns_to_flowfilters(aggregated)
 
    for c, t in pairs(c2t) do
       if not t2c[t] then
@@ -1150,15 +1884,15 @@ local function get_flow_tags_to_columns()
    return t2c
 end
 
--- Return DB select by tag
+-- Return DB select by flowfilter
 -- Example: 'srv_ip' -> "IPV4_DST_ADDR, IPV6_DST_ADDR"
-function historical_flow_utils.get_flow_select_by_tag(tag)
-   local tags_to_columns = get_flow_tags_to_columns()
+function historical_flow_utils.get_flow_select_by_flowfilter(filter_key, aggregated)
+   local flowfilters_to_columns = get_flow_flowfilters_to_columns(aggregated)
    local s = ''
 
    ::next::
-   if tags_to_columns[tag] then
-      for _, column in ipairs(tags_to_columns[tag]) do
+   if flowfilters_to_columns[filter_key] then
+      for _, column in ipairs(flowfilters_to_columns[filter_key]) do
          if isEmptyString(s) then
             s = column
          else
@@ -1167,8 +1901,8 @@ function historical_flow_utils.get_flow_select_by_tag(tag)
       end
 
       -- l7proto also includes l7proto_master
-      if tag == 'l7proto' then
-         tag = 'l7proto_master'
+      if filter_key == 'l7proto' then
+         filter_key = 'l7proto_master'
          goto next
       end
    end
@@ -1176,18 +1910,18 @@ function historical_flow_utils.get_flow_select_by_tag(tag)
    return s
 end
 
--- Return DB column by tag
+-- Return DB column by flowfilter
 -- First or ip_version-based in case of multiple
--- nil in case of undefined tag
-function historical_flow_utils.get_flow_column_by_tag(tag, ip_version)
-   local tags_to_columns = get_flow_tags_to_columns()
+-- nil in case of undefined flowfilter
+function historical_flow_utils.get_flow_column_by_flowfilter(filter_key, ip_version, aggregated)
+   local flowfilters_to_columns = get_flow_flowfilters_to_columns(aggregated)
 
-   if tags_to_columns[tag] then
-      if tag:ends('ip') and ip_version and ip_version == 6 then
-         return tags_to_columns[tag][2]
+   if flowfilters_to_columns[filter_key] then
+      if filter_key:ends('ip') and ip_version and ip_version == 6 then
+         return flowfilters_to_columns[filter_key][2]
       end
 
-      return tags_to_columns[tag][1]
+      return flowfilters_to_columns[filter_key][1]
    end
 
    return nil
@@ -1195,13 +1929,13 @@ end
 
 -- Return the javascript formatter for chart Y
 function historical_flow_utils.get_js_chart_formatter(field)
-   local db_columns = historical_flow_utils.get_flow_columns()
+    local db_columns = historical_flow_utils.get_flow_columns()
 
-   if db_columns[field] and db_columns[field].js_chart_func then
-      return db_columns[field].js_chart_func
-   end
+    if db_columns[field] and db_columns[field].js_chart_func then
+        return db_columns[field].js_chart_func
+    end
 
-   return "formatValue" --default
+    return "formatValue" --default
 end
 
 ------------------------------------------------------------------------
@@ -1233,10 +1967,9 @@ function historical_flow_utils.format_record(record, csv_format, formatted_recor
       for column_name, value in pairs(record) do
          local new_column_name = nil
          local new_value = nil
-
          -- Format the values and pass to the answer
          if extended_flow_columns[column_name] then
-            new_column_name = extended_flow_columns[column_name]["tag"]
+            new_column_name = extended_flow_columns[column_name]["flowfilter"]
             new_value = extended_flow_columns[column_name]["dt_func"](value, record, column_name, formatted_record)
          end
          
@@ -1248,7 +1981,7 @@ function historical_flow_utils.format_record(record, csv_format, formatted_recor
       -- NB: Currently we need to add a dt_format_asn
       -- TODO: add this automatically
       dt_format_asn(processed_record, record)
-      dt_add_alerts_url(processed_record, record)
+      dt_add_alerts_url(processed_record, record,false)
       dt_format_flow(processed_record, record)
    end
 
@@ -1257,7 +1990,7 @@ end
 
 -- #####################################
 
-function historical_flow_utils.format_clickhouse_record(record, csv_format, formatted_record)
+function historical_flow_utils.format_clickhouse_record(record, csv_format, formatted_record, is_aggregated)
    local processed_record = {}
 
    ----------------------------------
@@ -1272,604 +2005,104 @@ function historical_flow_utils.format_clickhouse_record(record, csv_format, form
 
       processed_record = string.sub(processed_record, 1, -2)
    else
-      local extended_flow_columns = historical_flow_utils.get_extended_flow_columns()
-
+      local extended_flow_columns = historical_flow_utils.get_extended_flow_columns(is_aggregated)
+      
       dt_add_tstamp(record)
       dt_add_filter(record)
 
       ----------------------------------
       -- Cycling the value of the record
+      local tracing = (do_trace == "1")
       for column_name, value in pairs(record) do
-         local new_column_name = nil
-         local new_value = nil
+	 if tracing then traceError(TRACE_NORMAL, TRACE_CONSOLE, column_name .. " start") end
+         local new_column_name = column_name
+         local new_value = value
+         local column_def = extended_flow_columns[column_name]
 
       	 -- Format the values and pass to the answer
-      	 if extended_flow_columns[column_name] and extended_flow_columns[column_name]["dt_func"] then
-      	    new_column_name = extended_flow_columns[column_name]["tag"]
-      	    new_value = extended_flow_columns[column_name]["dt_func"](value, record, column_name, formatted_record)
-         else
-            new_column_name = column_name
-            new_value = value
+      	 if column_def and column_def["flowfilter"] then
+            new_column_name = column_def["flowfilter"]
+
+            local dt_func = column_def["dt_func"]
+            if dt_func then
+               new_value = dt_func(value, record, column_name, formatted_record)
+            end
       	 end
 
       	 if new_column_name and new_value then
             processed_record[new_column_name] = new_value
       	 end
+	 if tracing then traceError(TRACE_NORMAL, TRACE_CONSOLE, column_name .. " end") end
       end
 
       dt_format_asn(processed_record, record)
       dt_unify_l7_proto(processed_record)
-      dt_add_alerts_url(processed_record, record)
+      dt_add_alerts_url(processed_record, record, is_aggregated)
+      dt_add_alerts(processed_record, record)
       dt_format_flow(processed_record, record)
    end
 
    return processed_record
 end
 
-------------------------------------------------------------------------
--- JS DataTable columns
-
 -- #####################################
 
-local function build_datatable_js_column_default(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap'}]] 
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_number(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined)
-          return NtopUtils.formatValue(]] .. name .. [[);
-      }}]]
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_ip(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        let html_ref = '';
-        let location = '';
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined) {
-            if (]] .. name .. [[.reference !== undefined)
-                html_ref = ]] .. name .. [[.reference;
-
-            if (]] .. name .. [[.location)
-               location = ]] .. name .. [[.location.label;
-
-                
-            return `<a class='tag-filter' data-tag-key='${]] .. name .. [[.tag_key}' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a> ${location} ${html_ref}`;
-        }}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_port(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-          if (type !== 'display') return ]] .. name .. [[;
-          if (]] .. name .. [[ !== undefined)
-             return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' href='#'>${]] .. name .. [[.label}</a>`;
-      }}]] 
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_flow(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', orderable: false, className: 'text-nowrap', width: '100%', render: DataTableRenders.formatFlowTuple, createdCell: DataTableRenders.applyCellStyle}]] 
-   }
-
-end
-
--- #####################################
-
-local function build_datatable_js_column_nw_latency(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-          if (type !== 'display') return ]] .. name .. [[;
-          if (]] .. name .. [[ !== undefined)
-             return `<a class='tag-filter' data-tag-value='${]] .. name .. [[}' href='#'>${NtopUtils.msecToTime(]] .. name .. [[)}</a>`;
-      }}]] 
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_asn(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined && ]] .. name .. [[.value != 0)
-          return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-        return ''}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_snmp_interface(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined && ]] .. name .. [[.value != 0)
-          return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-        return ''}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_network(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined) {
-          return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-      }}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_pool_id(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined) {
-          return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-      }}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_country(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined) {
-          return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-      }}}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_packets(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined)
-          return NtopUtils.formatPackets(]] .. name .. [[);
-      }}]]
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_bytes(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap'}]] 
-   }
-end
-
--- #####################################
-
-local function build_datatable_js_column_tcp_flags(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-        {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-          if (type !== 'display') return ]] .. name .. [[;
-          if (]] .. name .. [[ !== undefined)
-            return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-        }}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_dscp(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-        {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. data_name .. [[', className: 'no-wrap', render: (]] .. name .. [[, type) => {
-            if (type !== 'display') return ]] .. name .. [[;
-            if (]] .. name .. [[ !== undefined)
-               return `<a class='tag-filter' data-tag-value='${]] .. name .. [[.value}' title='${]] .. name .. [[.title}' href='#'>${]] .. name .. [[.label}</a>`;
-        }}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_float(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. name .. [[', className: 'text-right', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined)
-          return (]] .. name .. [[ > 0) ? NtopUtils.ffloat(]] .. name .. [[) : "";
-      }}]] }
-end
-
--- #####################################
-
-local function build_datatable_js_column_msec(name, data_name, label, order, hide)
-   return {
-      i18n = label,
-      order = order,
-      visible_by_default = not hide,
-      js = [[
-      {name: ']] .. name .. [[', responsivePriority: 2, data: ']] .. name .. [[', className: 'text-right', render: (]] .. name .. [[, type) => {
-        if (type !== 'display') return ]] .. name .. [[;
-        if (]] .. name .. [[ !== undefined)
-          return (]] .. name .. [[ > 0) ? NtopUtils.msecToTime(]] .. name .. [[) : "";
-      }}]] }
-end
-
--- #####################################
-
-historical_flow_utils.datatable_js_column_builder_by_type = {
-   ['default'] = build_datatable_js_column_default,
-   ['number'] = build_datatable_js_column_number,
-   ['ip'] = build_datatable_js_column_ip,
-   ['port'] = build_datatable_js_column_port,
-   ['asn'] = build_datatable_js_column_asn,
-   ['tcp_flags'] = build_datatable_js_column_tcp_flags,
-   ['dscp'] = build_datatable_js_column_dscp,
-   ['packets'] = build_datatable_js_column_packets,
-   ['bytes'] = build_datatable_js_column_bytes,
-   ['float'] = build_datatable_js_column_float,
-   ['msec'] = build_datatable_js_column_msec,
-   ['network'] = build_datatable_js_column_network,
-   ['pool_id'] = build_datatable_js_column_pool_id,
-   ['country'] = build_datatable_js_column_country,
-   ['snmp_interface'] = build_datatable_js_column_snmp_interface,
-}
-
--- #####################################
-
-local all_datatable_js_columns_by_tag = {
-   ["flow"] = build_datatable_js_column_flow("flow", "flow", i18n("flow"), 0),
-   ['vlan_id'] = {
-      i18n = i18n("db_search.vlan_id"),
-      order = 1,
-      visible_by_default = interface.hasVLANs(),
-      js = [[
-        {name: 'vlan_id', responsivePriority: 2, data: 'vlan_id', visible: ]] ..ternary(interface.hasVLANs(), "true", "false").. [[, className: 'no-wrap', render: (vlan_id, type) => {
-            if (type !== 'display') 
-                return vlan_id;
-            if (vlan_id !== undefined)
-                return `<a class='tag-filter' data-tag-value='${vlan_id.value}' title='${vlan_id.title}' href='#'>${vlan_id.label}</a>`;
-        }}]] },
-   ['cli_ip'] = build_datatable_js_column_ip('cli_ip', 'cli_ip', i18n("db_search.client"), 2),
-   ['srv_ip'] = build_datatable_js_column_ip('srv_ip', 'srv_ip', i18n("db_search.server"), 3),
-   ['cli_port'] = build_datatable_js_column_port('cli_port', 'cli_port', i18n("db_search.cli_port"), 4),
-   ['srv_port'] = build_datatable_js_column_port('srv_port', 'srv_port', i18n("db_search.srv_port"), 5),
-   ['l4proto'] = {
-      i18n = i18n("db_search.l4proto"),
-      order = 6,
-      visible_by_default = true,
-      js = [[
-      {name: 'l4proto', responsivePriority: 2, data: 'l4proto', className: 'no-wrap', render: (l4proto, type) => {
-        if (type !== 'display') return l4proto;
-        if (l4proto !== undefined)
-           return `<a class='tag-filter' data-tag-value='${l4proto.label}' data-tag-realvalue='${l4proto.value}' title='${l4proto.title}' href='#'>${l4proto.label}</a>`;
-      }}]] },
-   ['l7proto'] = {
-      i18n = i18n("db_search.l7proto"),
-      order = 7,
-      visible_by_default = true,
-      js = [[
-      {name: 'l7proto', responsivePriority: 2, data: 'l7proto', className: 'no-wrap', render: (proto, type, row) => {
-        if (type !== 'display') return proto;
-        if (proto !== undefined) {
-          let confidence = ""
-          if (proto.confidence !== undefined) {
-            (proto.confidence == "DPI") ? confidence = `<span class="badge bg-success">${proto.confidence}</span>` : confidence = `<span class="badge bg-warning">${proto.confidence}</span>` 
-          }
-
-           return `<a class='tag-filter' data-tag-value='${proto.value}' title='${proto.title}' href='#'>${proto.label} ${confidence}</a>`;
-        }
-      }}]] },
-   ['score'] = {
-      i18n = i18n("score"),
-      order = 8,
-      visible_by_default = true,
-      js = [[
-      {name: 'score', responsivePriority: 2, data: 'score', className: 'text-center', render: (score, type) => {
-        if (type !== 'display') return score;
-        if (score !== undefined && score.value != 0)
-          return `<a class='tag-filter' data-tag-value='${score.value}' href='#'><span style='color: ${score.color}'>` + NtopUtils.fint(score.value) + `</span></a>`;
-      }}]] },
-   ['packets'] = build_datatable_js_column_packets('packets', 'packets', i18n("db_search.packets"), 9, true),
-   ['bytes'] = build_datatable_js_column_bytes('bytes', 'bytes', i18n("db_search.bytes"), 10),
-   ['throughput'] = {
-      i18n = i18n("db_search.throughput"),
-      order = 11,
-      visible_by_default = true,
-      js = [[
-      {name: 'throughput', responsivePriority: 2, data: 'throughput', className: 'no-wrap'}]] },
-   ['first_seen'] = {
-      i18n = i18n("db_search.first_seen"),
-      order = 12,
-      visible_by_default = true,
-      js = [[
-      {name: 'first_seen', responsivePriority: 2, data: 'first_seen', className: 'no-wrap'}]] },
-   ['last_seen'] = {
-      i18n = i18n("db_search.last_seen"),
-      order = 13,
-      visible_by_default = true,
-      js = [[
-      {name: 'last_seen', responsivePriority: 2, data: 'last_seen', className: 'no-wrap'}]] },
-   ['cli_asn'] = build_datatable_js_column_asn('cli_asn', 'cli_asn', i18n("db_search.cli_asn"), 14, true),
-   ['srv_asn'] = build_datatable_js_column_asn('srv_asn', 'srv_asn', i18n("db_search.srv_asn"), 15, true),
-   ['l7cat'] = {
-      i18n = i18n("db_search.l7cat"),
-      order = 16,
-      visible_by_default = true,
-      js = [[
-      {name: 'l7cat', responsivePriority: 2, data: 'l7cat', className: 'no-wrap', render: (l7cat, type) => {
-        if (type !== 'display') return l7cat;
-        if (l7cat !== undefined) {
-           const label = (l7cat.label || l7cat.value);
-           const value = l7cat.value;
-           return `<a class='tag-filter' data-tag-value='${value}' title='${l7cat.title}' href='#'>${label}</a>`;
-        }
-      }}]] },
-   ['alert_id'] = {
-      i18n = i18n("db_search.alert_id"),
-      order = 17,
-      visible_by_default = true,
-      js = [[
-      {name: 'alert_id', responsivePriority: 2, data: 'alert_id', className: 'no-wrap', render: (alert_id, type) => {
-        if (type !== 'display') return alert_id;
-        if (alert_id !== undefined)
-           return `<a class='tag-filter' data-tag-value='${alert_id.value}' title='${alert_id.title}' href='#'>${alert_id.label}</a>`;
-      }}]] },
-   ['flow_risk'] = {
-      i18n = i18n("db_search.flow_risk"),
-      order = 18,
-      visible_by_default = true,
-      js = [[
-      {name: 'flow_risk', responsivePriority: 2, data: 'flow_risk', className: 'no-wrap', render: (flow_risks, type) => {
-        if (type !== 'display') return flow_risks;
-        if (flow_risks !== undefined) {
-           let res = [];
-
-           for (let i = 0; i < flow_risks.length; i++) {
-             const flow_risk = flow_risks[i];
-             const flow_risk_label = (flow_risk.label || flow_risk.value);
-             const flow_risk_help = (flow_risk.help);
-             // res.push(`<a class='tag-filter' data-tag-value='${flow_risk.value}' title='${flow_risk.title}' href='#'>${flow_risk_label}</a>`);
-             res.push(`${flow_risk_label} ${flow_risk_help}`);
-           }
-           return res.join(', ');
-        }
-      }}]] },
-   ['src2dst_tcp_flags'] = build_datatable_js_column_tcp_flags('src2dst_tcp_flags', 'src2dst_tcp_flags', i18n("db_search.src2dst_tcp_flags"), 19, true),
-   ['dst2src_tcp_flags'] = build_datatable_js_column_tcp_flags('dst2src_tcp_flags', 'dst2src_tcp_flags', i18n("db_search.dst2src_tcp_flags"), 20, true),
-   ['src2dst_dscp'] = build_datatable_js_column_dscp('src2dst_dscp', 'src2dst_dscp', i18n("db_search.src2dst_dscp"), 21, true),
-   ['dst2src_dscp'] = build_datatable_js_column_dscp('dst2src_dscp', 'dst2src_dscp', i18n("db_search.dst2src_dscp"), 22, true),
-   ['cli_nw_latency'] = build_datatable_js_column_nw_latency('cli_nw_latency', 'cli_nw_latency', i18n("db_search.cli_nw_latency"), 23, true),
-   ['srv_nw_latency'] = build_datatable_js_column_nw_latency('srv_nw_latency', 'srv_nw_latency', i18n("db_search.srv_nw_latency"), 24, true),
-   ['info'] = {
-      i18n = i18n("db_search.info"),
-      order = 25,
-      visible_by_default = true,
-      js = [[
-        {name: 'info', responsivePriority: 2, data: 'info', orderable: true, render: (info, type) => {
-            if (type !== 'display') return info;
-            if (info !== undefined)
-                return `<a class='tag-filter' data-tag-value='${info.title}' title='${info.title}' href='#'>${info.label}</a>`;
-        }}]] },
-   ['observation_point_id'] = {
-      i18n = i18n("db_search.observation_point_id"),
-      order = 26,
-      visible_by_default = false,
-      js = [[
-        {name: 'observation_point_id', responsivePriority: 2, data: 'observation_point_id', visible: ]] ..ternary(not interface.isPacketInterface(), "true", "false").. [[, className: 'no-wrap', render: (observation_point_id, type) => {
-            if (type !== 'display') return observation_point_id;
-            if (observation_point_id !== undefined)
-               return `<a class='tag-filter' data-tag-value='${observation_point_id.value}' title='${observation_point_id.title}' href='#'>${observation_point_id.label}</a>`;
-        }}]] },
-   ['probe_ip'] = {
-      i18n = i18n("db_search.probe_ip"),
-      order = 27,
-      visible_by_default = false,
-      js = [[
-        {name: 'probe_ip', responsivePriority: 2, data: 'probe_ip', visible: ]] ..ternary(not interface.isPacketInterface(), "true", "false").. [[, className: 'no-wrap', render: (probe_ip, type) => {
-            if (type !== 'display') return probe_ip;
-            if (probe_ip !== undefined)
-               //return `<span title='${probe_ip.title}'>${probe_ip.label}</span>`;
-                return `<a class='tag-filter' data-tag-value='${probe_ip.value}' title='${probe_ip.title}' href='#'>${probe_ip.label}</a>`;
-        }}]] },
-   ['cli_network'] = build_datatable_js_column_network('cli_network', 'cli_network', i18n("db_search.tags.cli_network"), 28, true),
-   ['srv_network'] = build_datatable_js_column_network('srv_network', 'srv_network', i18n("db_search.tags.srv_network"), 29, true),
-   ['cli_host_pool_id'] = build_datatable_js_column_pool_id('cli_host_pool_id', 'cli_host_pool_id', i18n("db_search.tags.cli_host_pool_id"), 30, true),
-   ['srv_host_pool_id'] = build_datatable_js_column_pool_id('srv_host_pool_id', 'srv_host_pool_id', i18n("db_search.tags.srv_host_pool_id"), 31, true),
-   ["input_snmp"] = build_datatable_js_column_snmp_interface("input_snmp", "input_snmp", i18n("db_search.tags.input_snmp"), 32),
-   ["output_snmp"] = build_datatable_js_column_snmp_interface("output_snmp", "output_snmp", i18n("db_search.tags.output_snmp"), 33),
-   ['cli_country'] = build_datatable_js_column_country('cli_country', 'cli_country', i18n("db_search.tags.cli_country"), 34, true),
-   ['srv_country'] = build_datatable_js_column_country('srv_country', 'srv_country', i18n("db_search.tags.srv_country"), 35, true),
-}
-
--- #####################################
-
-function historical_flow_utils.get_datatable_js_columns_by_tag(tag)
-   if all_datatable_js_columns_by_tag[tag] then
-      return all_datatable_js_columns_by_tag[tag]
-   else
-      return build_datatable_js_column_default(tag, tag, i18n("db_search.tags."..tag) or tag, 0)
-   end
-end
-
--- #####################################
-
-local function get_js_columns_to_display()
-   -- Display selected columns in the flows table
-   local js_columns = {}
-
-   js_columns["flow"]       = build_datatable_js_column_flow("flow", "flow", i18n("flow"), 0)
-   js_columns["l4proto"]    = historical_flow_utils.get_datatable_js_columns_by_tag("l4proto")
-   js_columns["l7proto"]    = historical_flow_utils.get_datatable_js_columns_by_tag("l7proto")
-   js_columns["score"]      = historical_flow_utils.get_datatable_js_columns_by_tag("score")
-   js_columns["packets"]    = historical_flow_utils.get_datatable_js_columns_by_tag("packets")
-   js_columns["bytes"]      = historical_flow_utils.get_datatable_js_columns_by_tag("bytes")
-   js_columns["throughput"] = historical_flow_utils.get_datatable_js_columns_by_tag("throughput")
-   js_columns["first_seen"] = historical_flow_utils.get_datatable_js_columns_by_tag("first_seen")
-   js_columns["last_seen"]  = historical_flow_utils.get_datatable_js_columns_by_tag("last_seen")
-   js_columns["l7cat"]      = historical_flow_utils.get_datatable_js_columns_by_tag("l7cat")
-   js_columns["alert_id"]     = historical_flow_utils.get_datatable_js_columns_by_tag("alert_id")
-   js_columns["flow_risk"]  = historical_flow_utils.get_datatable_js_columns_by_tag("flow_risk")
-   js_columns["info"]       = historical_flow_utils.get_datatable_js_columns_by_tag("info")
-   js_columns["cli_asn"]    = historical_flow_utils.get_datatable_js_columns_by_tag("cli_asn")
-   js_columns["srv_asn"]    = historical_flow_utils.get_datatable_js_columns_by_tag("srv_asn")
-   js_columns["src2dst_tcp_flags"] = historical_flow_utils.get_datatable_js_columns_by_tag("src2dst_tcp_flags")
-   js_columns["dst2src_tcp_flags"] = historical_flow_utils.get_datatable_js_columns_by_tag("dst2src_tcp_flags")
-   js_columns["cli_nw_latency"] = historical_flow_utils.get_datatable_js_columns_by_tag("cli_nw_latency")
-   js_columns["srv_nw_latency"] = historical_flow_utils.get_datatable_js_columns_by_tag("srv_nw_latency")
-   js_columns["observation_point_id"] = historical_flow_utils.get_datatable_js_columns_by_tag("observation_point_id")
-   js_columns["probe_ip"]   = historical_flow_utils.get_datatable_js_columns_by_tag("probe_ip")
-   js_columns["cli_network"] = historical_flow_utils.get_datatable_js_columns_by_tag("cli_network")
-   js_columns["srv_network"] = historical_flow_utils.get_datatable_js_columns_by_tag("srv_network")
-   js_columns["cli_host_pool_id"] = historical_flow_utils.get_datatable_js_columns_by_tag("cli_host_pool_id")
-   js_columns["srv_host_pool_id"] = historical_flow_utils.get_datatable_js_columns_by_tag("srv_host_pool_id")
-   js_columns["cli_country"] = historical_flow_utils.get_datatable_js_columns_by_tag("cli_country")
-   js_columns["srv_country"] = historical_flow_utils.get_datatable_js_columns_by_tag("srv_country")
-   js_columns["input_snmp"]  = historical_flow_utils.get_datatable_js_columns_by_tag("input_snmp")
-   js_columns["output_snmp"] = historical_flow_utils.get_datatable_js_columns_by_tag("output_snmp")
-
-   return js_columns
-
-   -- Or print all columns defined
-   --return all_datatable_js_columns_by_tag
-end
-
--- #####################################
-
-local function order_asc(a, b)
-   return asc(a.order, b.order)
-end
-
--- #####################################
-
-function historical_flow_utils.get_datatable_js_columns() 
-   local str = "["
-
-   local js_columns = get_js_columns_to_display()
-   for _, column in pairsByValues(js_columns, order_asc) do
-      str = str .. column.js .. ","
-   end
-   str = str:sub(1, -2)
-   str = str .. "]"
-
-   return str
-end
-
-function historical_flow_utils.get_datatable_default_hidden_columns()
-   local hidden_columns = ""
-   
-   local js_columns = get_js_columns_to_display()
-   local idx = 0
-   for name, column in pairsByValues(js_columns, order_asc) do
-      if not column.visible_by_default then
-         hidden_columns = hidden_columns .. idx .. ","
-      end
-      idx = idx + 1
-   end
-
-   if not isEmptyString(hidden_columns) then
-      hidden_columns = hidden_columns:sub(1, -2)
-   end
-
-   return hidden_columns
-end
-
-function historical_flow_utils.get_datatable_i18n_columns() 
-   local columns = {}
-
-   local js_columns = get_js_columns_to_display()
-   for _, column in pairsByValues(js_columns, order_asc) do
-      columns[#columns + 1] = column.i18n
-   end
-
-   return columns
-end
-
--- #####################################
-
-function historical_flow_utils.get_historical_url(label, tag, value, add_hyperlink, title)
+function historical_flow_utils.get_historical_url(label, flowfilter, value, add_hyperlink, title, add_copy_button)
    if not add_hyperlink then 
       return label
    else
-      return "<a href=\"" .. ntop.getHttpPrefix() .. "/lua/pro/db_search.lua?" .. 
-         tag .. "=" .. value .. tag_utils.SEPARATOR .. "eq\" " .. 
-         ternary(title ~= nil, "title=\"" .. (title or "") .."\"", "") .. 
-         " target='_blank'>" .. label .. "</a>"
+      if add_copy_button ~= nil and add_copy_button then
+         return "<span><button data-to-copy='"..value.."' class='copy-http-url btn btn-light btn-sm border ms-1' style='cursor: pointer;'><i class='fas fa-copy'></i></button> <a href=\"" .. ntop_http_prefix .. "/lua/pro/db_search.lua?" .. 
+            flowfilter .. "=" .. value .. flowfilter_utils.SEPARATOR .. "eq\" " .. 
+            ternary(title ~= nil, "title=\"" .. (title or "") .."\"", "") .. 
+            " target='_blank'>" .. label .. "</a>"
+      end
+      return "<a href=\"" .. ntop_http_prefix .. "/lua/pro/db_search.lua?" .. 
+            flowfilter .. "=" .. value .. flowfilter_utils.SEPARATOR .. "eq\" " .. 
+            ternary(title ~= nil, "title=\"" .. (title or "") .."\"", "") .. 
+            " target='_blank'>" .. label .. "</a>"
+      
    end
+end
+
+-- #####################################
+
+function historical_flow_utils.get_historical_mac(mac, info)
+   -- live mac data (OLD URL)
+   --return "<a href=\"" .. ntop_http_prefix .. "/lua/hosts_stats.lua?mac=" .. mac .. "\">" .. mac .. "</a>"
+
+   local url = ntop_http_prefix .. "/lua/pro/db_search.lua?"
+   
+   -- Add ifid
+   if info.interface_id then
+      local interface_id
+      if type(info.interface_id) == "table" then
+         interface_id = info.interface_id.value
+      else
+         interface_id = info.interface_id
+      end
+      url = url .. "ifid=" .. interface_id .. "&"
+   end
+   
+   -- Add epoch begin and end from filter or first_seen/last_seen
+   if info.filter and info.filter.epoch_begin and info.filter.epoch_end then
+      url = url .. "epoch_begin=" .. info.filter.epoch_begin .. "&"
+      url = url .. "epoch_end=" .. info.filter.epoch_end .. "&"
+   elseif info.first_seen and info.last_seen then
+      url = url .. "epoch_begin=" .. info.first_seen.epoch .. "&"
+      url = url .. "epoch_end=" .. info.last_seen.epoch .. "&"
+   end
+   
+   -- Add parameters for hist flow filter
+   url = url .. "aggregated=false&"
+   url = url .. "count=traffic_presence&"
+   url = url .. "query_preset=&"
+   
+   -- Add MAC addr for hist filtering
+   local encoded_mac = string.gsub(mac, ":", "%%3A")
+   url = url .. "mac=" .. encoded_mac .. "%3Beq"
+   
+   return "<a href=\"" .. url .. "\">" .. mac .. "</a>"
 end
 
 -- #####################################
@@ -1897,26 +2130,26 @@ function historical_flow_utils.getHistoricalFlowLabel(record, add_hyperlinks, ad
    end
 
    if info.cli_country and not isEmptyString(info.cli_country.value) then
-    label = label .. ' <img src="' .. ntop.getHttpPrefix() .. '/dist/images/blank.gif" class="flag flag-' .. string.lower(info.cli_country.value) .. '">'
+    label = label .. ' <img src="' .. ntop_http_prefix .. '/dist/images/blank.gif" class="flag flag-' .. string.lower(info.cli_country.value) .. '" alt="' .. info.cli_country.value .. '" >'
    end
 
-   if add_hyperlinks and info.cli_location and not isEmptyString(info.cli_location.label) then
-      label = label .. " " .. info.cli_location.label
+   if add_hyperlinks and info.cli_location and not isEmptyString(info.cli_location) then
+      label = label .. " " .. format_location_badge(info.cli_location)
    end
 
    if info.cli_port and not isEmptyString(info.cli_port.label) then
       label = label .. ":" ..historical_flow_utils.get_historical_url(info.cli_port.label, "cli_port", info.cli_port.value, add_hyperlinks)
    end
 
-   if info.IS_CLI_ATTACKER and info.IS_CLI_ATTACKER == '1' then
+   if info.is_cli_attacker and info.is_cli_attacker == '1' then
     label = label .. ' <i class="fas fa-skull" title="' .. i18n('db_explorer.is_attacker') .. '"></i> '
    end
    
-   if info.IS_CLI_VICTIM and info.IS_CLI_VICTM == '1' then
+   if info.is_cli_victim and info.is_cli_victim == '1' then
     label = label .. ' <i class="fas fa-sad-tear" title="' .. i18n('db_explorer.is_victim') .. '"></i> '
    end
    
-   if info.IS_CLI_BLACKLISTED and info.IS_CLI_BLACKLISTED == '1' then
+   if info.is_cli_blacklisted and info.is_cli_blacklisted == '1' then
     label = label .. ' <i class="fas fa-ban fa-sm" title="' .. i18n('db_explorer.is_blacklisted') .. '"></i> '
    end
    
@@ -1924,8 +2157,17 @@ function historical_flow_utils.getHistoricalFlowLabel(record, add_hyperlinks, ad
       if info.cli_asn and info.cli_asn.value > 0 and not isEmptyString(info.cli_asn.title) then
          label = label .. " [ " ..historical_flow_utils.get_historical_url(info.cli_asn.title, "cli_asn", info.cli_asn.value, add_hyperlinks) .. " ]"
       elseif not isEmptyString(info.cli_mac) and (info.cli_mac ~= '00:00:00:00:00:00') then
-         label = label .. " [ " .. info. cli_mac .. " ]"
+         local manufacturer = get_manufacturer_mac(info.cli_mac)
+         local mac = historical_flow_utils.get_historical_mac(info.cli_mac, info)
+         if not isEmptyString(manufacturer) then
+            mac = string.format("%s (%s)", mac, manufacturer)
+         end
+         label = label .. " [ " .. mac .. " ]"
       end
+   end
+
+   if ntop_is_enterprise_l and hasClickHouseSupport() and isWazuhEnabled() and (info.cli_location and info.cli_location == "local") then
+      label = label .."<a title='" .. i18n('alerts_dashboard.wazuh_check_alerts') .. "' href='" .. ntop_http_prefix .. "/lua/pro/wazuh_alert_config.lua?map_search=" .. info.cli_ip.ip .. "&epoch_begin=" .. info.first_seen.epoch - 30*60 --[[ 30 minutes ]] .. "&epoch_end=" .. info.last_seen.epoch + 30*60 .. "'> <i class='fas fa-shield-alt'></i></a>"
    end
    
    label = label .. "&nbsp; <i class=\"fas fa-exchange-alt fa-lg\"  aria-hidden=\"true\"></i> &nbsp;"
@@ -1941,26 +2183,26 @@ function historical_flow_utils.getHistoricalFlowLabel(record, add_hyperlinks, ad
    end
 
    if info.srv_country and not isEmptyString(info.srv_country.value) then
-    label = label .. ' <img src="' .. ntop.getHttpPrefix() .. '/dist/images/blank.gif" class="flag flag-' .. string.lower(info.srv_country.value) .. '">'
+    label = label .. ' <img src="' .. ntop_http_prefix .. '/dist/images/blank.gif" class="flag flag-' .. string.lower(info.srv_country.value) .. '" alt="' .. info.srv_country.value .. '" >'
    end
 
-   if add_hyperlinks and info.srv_location and not isEmptyString(info.srv_location.label) then
-      label = label .. " " .. info.srv_location.label
+   if add_hyperlinks and info.srv_location and not isEmptyString(info.srv_location) then
+      label = label .. " " .. format_location_badge(info.srv_location)
    end
 
    if info.srv_port and not isEmptyString(info.srv_port.label) then
       label = label .. ":" ..historical_flow_utils.get_historical_url(info.srv_port.label, "srv_port", info.srv_port.value, add_hyperlinks)
    end
 
-   if info.IS_SRV_ATTACKER and info.IS_SRV_ATTACKER == '1' then
+   if info.is_srv_attacker and info.is_srv_attacker == '1' then
     label = label .. ' <i class="fas fa-skull" title="' .. i18n('db_explorer.is_attacker') .. '"></i> '
    end
    
-   if info.IS_SRV_VICTIM and info.IS_SRV_VICTIM == '1' then
+   if info.is_srv_victim and info.is_srv_victim == '1' then
     label = label .. ' <i class="fas fa-sad-tear" title="' .. i18n('db_explorer.is_victim') .. '"></i> '
    end
    
-   if info.IS_SRV_BLACKLISTED and info.IS_SRV_BLACKLISTED == '1' then
+   if info.is_srv_blacklisted and info.is_srv_blacklisted == '1' then
     label = label .. ' <i class="fas fa-ban fa-sm" title="' .. i18n('db_explorer.is_blacklisted') .. '"></i> '
    end
 
@@ -1968,8 +2210,17 @@ function historical_flow_utils.getHistoricalFlowLabel(record, add_hyperlinks, ad
       if info.srv_asn and info.srv_asn.value > 0 and not isEmptyString(info.srv_asn.title) then
          label = label .. " [ " ..historical_flow_utils.get_historical_url(info.srv_asn.title, "srv_asn", info.srv_asn.value, add_hyperlinks) .. " ]"
       elseif not isEmptyString(info.srv_mac) and (info.srv_mac ~= '00:00:00:00:00:00') then
-         label = label .. " [ " .. info. srv_mac .. " ]"
+         local manufacturer = get_manufacturer_mac(info.srv_mac)
+         local mac = historical_flow_utils.get_historical_mac(info.srv_mac, info)
+         if not isEmptyString(manufacturer) then
+            mac = string.format("%s (%s)", mac, manufacturer)
+         end
+         label = label .. " [ " .. mac .. " ]"
       end
+   end
+
+   if ntop_is_enterprise_l and hasClickHouseSupport() and isWazuhEnabled() and (info.srv_location and info.srv_location == "local") then
+      label = label .."<a title='" .. i18n('alerts_dashboard.wazuh_check_alerts') .. "' href='" .. ntop_http_prefix .. "/lua/pro/wazuh_alert_config.lua?map_search=" .. info.srv_ip.ip .. "&epoch_begin=" .. info.first_seen.epoch - 30*60 --[[ 30 minutes ]] .. "&epoch_end=" .. info.last_seen.epoch + 30*60 .. "'> <i class='fas fa-shield-alt'></i></a>"
    end
 
    return label
@@ -1982,8 +2233,7 @@ function historical_flow_utils.getHistoricalProtocolLabel(record, add_hyperlinks
   local label = ""
 
   local info = historical_flow_utils.format_clickhouse_record(record)
-  local alert_json = json.decode(info["ALERT_JSON"] or '') or {}
-  
+
   if info.l4proto then
     label = label ..historical_flow_utils.get_historical_url(info.l4proto.label, "l4proto", info.l4proto.value, add_hyperlinks)
   end
@@ -1995,11 +2245,20 @@ function historical_flow_utils.getHistoricalProtocolLabel(record, add_hyperlinks
   end
 
   if info.l7cat then
-    label = label .. " (" ..historical_flow_utils.get_historical_url(info.l7cat.label, "l7cat", info.l7cat.value, add_hyperlinks) .. ")"
+      local blacklist_name = ""
+      if (info.l7cat.label == 'Malware') then
+         local json_info = json.decode(info.json)
+         if (json_info and json_info.custom_cat_file) then
+            blacklist_name = " @ " ..json_info.custom_cat_file
+         end
+      end
+    label = label .. " (" ..historical_flow_utils.get_historical_url(info.l7cat.label, "l7cat", info.l7cat.value, add_hyperlinks) .. blacklist_name .. ")"
   end
 
-  if (alert_json.proto) and (alert_json.proto.confidence) and (not isEmptyString(alert_json.proto.confidence)) then
-    label = label .. " [" .. i18n("confidence") .. ": " .. get_confidence(alert_json.proto.confidence) .. "]"
+  local protocol_info_json = json.decode(record["PROTOCOL_INFO_JSON"] or '') or {}
+
+  if (protocol_info_json.proto) and (protocol_info_json.proto.confidence) and (not isEmptyString(protocol_info_json.proto.confidence)) then
+   label = label .. "[Confidence: " .. format_confidence_badge(protocol_info_json.proto.confidence) .. "]"
   end
 
   return label
@@ -2010,7 +2269,6 @@ end
 function historical_flow_utils.simpleColumnFormatter(records, label)
    local extended_flow_columns = historical_flow_utils.get_extended_flow_columns()
    local process_records = records["results"] or {}
-   local extended_flow_columns = historical_flow_utils.get_extended_flow_columns()
 
    -- Cycling the value of the record
    for _, record in pairs(process_records) do
@@ -2049,6 +2307,139 @@ function historical_flow_utils.getSimpleColumnFormatter(label, data)
 
    return data
 end
+
+-- #####################################
+
+-- Return the list of available DB columns and 
+-- relative tags used to filter info
+function historical_flow_utils.getAvailableColumns()
+  if not interfaceHasClickHouseSupport() then
+    return {}
+  end
+  local extended_flow_columns = historical_flow_utils.get_extended_flow_columns()
+  local data = {}
+
+  for column_name, column_options in pairs(extended_flow_columns) do
+    data[#data + 1] = {
+      column_name = column_name,
+      flowfilter = column_options["flowfilter"]
+    }
+  end
+
+  return data
+end
+
+-- #####################################
+
+-- Given a flow returned from clickhouse, transform into the flow_alert format
+function historical_flow_utils.convertFlowToAlert(flow)
+   local alert = {}
+   local alert_entities = require "alert_entities"
+
+   if flow and table.len(flow) > 0 then
+      local cli_ip = flow.IPV4_SRC_ADDR
+      local srv_ip = flow.IPV4_DST_ADDR
+      if is_unset_ip(cli_ip) then
+         cli_ip = flow.IPV6_SRC_ADDR
+      end
+      if is_unset_ip(srv_ip) then
+         srv_ip = flow.IPV6_DST_ADDR
+      end
+      alert = {
+         cli2srv_bytes = flow.SRC2DST_BYTES,
+         info = flow.INFO,
+         tstamp_end_epoch = flow.LAST_SEEN,
+         src2dst_tcp_flags = flow.SRC2DST_TCP_FLAGS,
+         src2dst_dscp = flow.SRC2DST_DSCP,
+         exporter_ip = flow.PROBE_IP,
+         tstamp_epoch = flow.FIRST_SEEN,
+         cli_host_pool_id = flow.SRC_HOST_POOL_ID,
+         alerts_map = flow.ALERTS_MAP,
+         tstamp_end = flow.LAST_SEEN,
+         srv_port = flow.IP_DST_PORT,
+         cli_name = flow.SRC_LABEL,
+         require_attention = flow.REQUIRE_ATTENTION,
+         output_snmp = flow.OUTPUT_SNMP,
+         interface_id = flow.INTERFACE_ID,
+         first_seen = flow.FIRST_SEEN,
+         user_label = flow.USER_LABEL,
+         duration = flow.LAST_SEEN - flow.FIRST_SEEN,
+         user_label_tstamp = flow.USER_LABEL_TSTAMP,
+         minor_connection_state = flow.MINOR_CONNECTION_STATE,
+         l7_proto = flow.L7_PROTO,
+         major_connection_state = flow.MAJOR_CONNECTION_STATE,
+         src_asn = flow.SRC_ASN,
+         srv2cli_bytes = flow.DST2SRC_BYTES,
+         srv_ip = srv_ip,
+         ip_version = flow.IP_PROTOCOL_VERSION,
+         severity = flow.SEVERITY,
+         --community_id = flow.COMMUNITY_ID,
+         cli_fingerprint = flow.CLIENT_FINGERPRINT,
+         --tcp_fingerprint = flow.TCP_FINGERPRINT,
+         srv_network = flow.DST_NETWORK_ID,
+         is_cli_victim = flow.IS_CLI_VICTIM,
+         l7_cat = flow.L7_CATEGORY,
+         flow_risk_bitmap = flow.FLOW_RISK,
+         is_srv_attacker = flow.IS_SRV_ATTACKER,
+         is_srv_victim = flow.IS_SRV_VICTIM,
+         score = flow.SCORE,
+         qoe_score = flow.QOE_SCORE,
+         l7_master_proto = flow.L7_PROTO_MASTER,
+         vlan_id = flow.VLAN_ID,
+         srv_location = flow.SERVER_LOCATION,
+         srv_host_pool_id = flow.DST_HOST_POOL_ID,
+         dst2src_dscp = flow.DST2SRC_DSCP,
+         total_bytes = flow.TOTAL_BYTES,
+         cli_network = flow.SRC_NETWORK_ID,
+         is_cli_attacker = flow.IS_CLI_ATTACKER,
+         cli_location = flow.CLIENT_LOCATION,
+         srv_blacklisted = flow.IS_SRV_BLACKLISTED,
+         tstamp = flow.tstamp,
+         cli_port = flow.IP_SRC_PORT,
+         proto = flow.PROTOCOL,
+         cli_blacklisted = flow.IS_CLI_BLACKLISTED,
+         srv_name = flow.DST_LABEL,
+         packets = flow.PACKETS,
+         ["flow_alerts_view.total_bytes"] = flow.TOTAL_BYTES,
+         cli_ip = cli_ip,
+         ntopng_instance_name = flow.NTOPNG_INSTANCE_NAME,
+         alert_status = flow.ALERT_STATUS,
+         input_snmp = flow.INPUT_SNMP,
+         dst_asn = flow.DST_ASN,
+         alert_json = flow.ALERT_JSON,
+         dst2src_tcp_flags = flow.DST2SRC_TCP_FLAGS,
+         entity_id = alert_entities.flow.entity_id,
+      }
+   end
+
+   return alert
+end
+
+-- #####################################
+
+-- Given a flow returned from clickhouse, transform into the flow_alert format
+function historical_flow_utils.convertToLiveFlowFormat(historical_flow)
+   -- TODO: currently only used for modbus, add here when needed the other info
+   local flow = {}
+   if historical_flow["PROTOCOL_INFO_JSON"] then
+      require "flow_utils"
+      local json = require "dkjson"
+      local proto_info = json.decode(historical_flow["PROTOCOL_INFO_JSON"])
+      if proto_info and proto_info.proto then
+         local modbus_info = formatModbusInfo(proto_info.proto)
+         local s7comm_info = formatS7CommInfo(proto_info.proto)
+         local profinet_info = formatProfinetInfo(proto_info.proto)
+         flow.modbus = modbus_info
+         flow.s7comm = s7comm_info
+         flow.profinet = profinet_info
+         flow.bgp = proto_info.bgp
+      end
+   end
+
+   return flow
+end
+
+-- #####################################
 
 return historical_flow_utils
 

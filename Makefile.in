@@ -7,6 +7,7 @@ SHELL=/bin/sh
 OS := $(shell uname -s)
 PWD=@PWD@
 
+
 INSTALL_DIR=$(DESTDIR)$(prefix)
 MAN_DIR=$(DESTDIR)@MAN_DIR@
 
@@ -29,10 +30,22 @@ MONGOOSE_HOME=${PWD}/third-party/mongoose
 MONGOOSE_INC=-I$(MONGOOSE_HOME)
 ######
 
-LUA_PLATFORM=generic
-LUA_HOME=${PWD}/third-party/lua-5.4.3
+LUA_PLATFORM=posix
+LUA_HOME=${PWD}/third-party/lua-5.4.6
 LUA_INC=-I$(LUA_HOME)/src
 LUA_LIB=$(LUA_HOME)/src/liblua.a
+
+HAVE_CLICKHOUSE=@HAVE_CLICKHOUSE@
+CLICKHOUSE_HOME=
+CLICKHOUSE_INC=
+CLICKHOUSE_LIB=
+CLICKHOUSE_DEP_LIBS=
+ifeq ($(HAVE_CLICKHOUSE),1)
+CLICKHOUSE_HOME=@CLICKHOUSE_HOME@
+CLICKHOUSE_INC=-I$(CLICKHOUSE_HOME) -I$(CLICKHOUSE_HOME)/contrib/absl
+CLICKHOUSE_LIB=$(CLICKHOUSE_HOME)/build/clickhouse/libclickhouse-cpp-lib.a
+CLICKHOUSE_DEP_LIBS=$(CLICKHOUSE_HOME)/build/clickhouse/cityhash/libcityhash.a $(CLICKHOUSE_HOME)/build/contrib/lz4/lz4/liblz4.a $(ZSTD_LIB)
+endif
 
 ifeq ($(OS),Linux)
 	LUA_PLATFORM=linux
@@ -43,21 +56,15 @@ else ifeq ($(OS), $(filter $(OS), FreeBSD))
 	LUA_LIB=/usr/local/lib/liblua-5.3.a
 endif
 
+# Locales precompiled to Lua bytecode, only with the bundled Lua (see the rule below)
+ifeq ($(LUA_LIB),$(LUA_HOME)/src/liblua.a)
+LOCALES_LUAC = $(patsubst %.lua,%.luac,$(wildcard scripts/locales/*.lua))
+endif
 
 ######
-LIBRRDTOOL_HOME=${PWD}/third-party/rrdtool-1.4.8
-HAS_LIBRRDTOOL=$(shell $(PKG_CONFIG) --atleast-version=1.4.8 librrd && echo 0)
-ifeq ($(HAS_LIBRRDTOOL), 0)
-	LIBRRDTOOL_INC = $(shell $(PKG_CONFIG) --cflags librrd)
-	LIBRRDTOOL_LIB = @LIBRRD_LD_FLAGS@
-else
-	LIBRRDTOOL_INC=-I$(LIBRRDTOOL_HOME)/src/
-	ifeq ($(OS), $(filter $(OS), OpenBSD FreeBSD))
-		LIBRRDTOOL_LIB=$(LIBRRDTOOL_HOME)/src/.libs/librrd_th.a -lm -lgobject-2.0 -lgmodule-2.0 -lglib-2.0	
-	else
-		LIBRRDTOOL_LIB=$(LIBRRDTOOL_HOME)/src/.libs/librrd_th.a -lm -lgobject-2.0 -lgmodule-2.0 -ldl -lglib-2.0
-	endif
-endif
+
+LIBRRDTOOL_INC = $(shell $(PKG_CONFIG) --cflags librrd)
+LIBRRDTOOL_LIB = @LIBRRD_LD_FLAGS@
 
 ######
 
@@ -65,8 +72,8 @@ HTTPCLIENT_INC=${PWD}/third-party/http-client-c/src/
 
 ######
 
-JSON_INC=@JSON_INC@
-JSON_LIB=@JSON_LIB@
+JSON_INC=@JSON_CFLAGS@
+JSON_LIB=@JSON_LIBS@
 
 ######
 
@@ -86,12 +93,27 @@ endif
 
 ######
 TARGET = ntopng
-LIBS = $(NDPI_LIB) $(LIBPCAP) $(LUA_LIB) $(LIBRRDTOOL_LIB) $(ZEROMQ_LIB) $(JSON_LIB) $(SNMP_LIB) @MAXMINDDB_LIB@ $(SODIUM_LIB) @HIREDIS_LIB@ @SQLITE_LIB@ @MYSQL_LIB@ @RADCLI_LIB@ @EXPAT_LIB@ @SSL_LIB@ @LINK_OPTS@ @LDFLAGS@ @PRO_LIBS@ @LIBS@ $(ZSTD_LIB) -lm -lpthread
-CPP=@CXX@
-CPPFLAGS = @CFLAGS@ -std=c++1y @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(SNMP_INC) $(SODIUM_INC) $(NDPI_INC) $(LUA_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) @MYSQL_INC@ @CPPFLAGS@ -I$(HTTPCLIENT_INC) @SSL_INC@ @PRO_INCS@ -DDATA_DIR='"$(datadir)"' # -D_GLIBCXX_DEBUG
+LIBS = $(NDPI_LIB) $(LIBPCAP) $(LUA_LIB) $(CLICKHOUSE_LIB) $(CLICKHOUSE_DEP_LIBS) $(LIBRRDTOOL_LIB) $(ZEROMQ_LIB) $(JSON_LIB) $(SNMP_LIB) @MAXMINDDB_LIBS@ $(SODIUM_LIB) @NTOPCLOUD_LIB@ @HIREDIS_LIB@ @SQLITE_LIB@ @RADCLI_LIB@ @EXPAT_LIB@ @SSL_LIB@ @ZMQ_LIBS@ @LINK_OPTS@ @LDFLAGS@ @PRO_LIBS@ @LIBS@ $(ZSTD_LIB) @JE@  -lm -lpthread
+
+#
+# https://www.redhat.com/en/blog/hardening-elf-binaries-using-relocation-read-only-relro
+# Maximum protection. The entire GOT (Global Offset Table) is hardened and cannot be overwritten at runtime.
+# Only apply RELRO on Linux
+#
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+   LIBS +=  -Wl,-z,relro,-z,now -Wl,-z,noexecstack
+endif
+
+
+CC := @CC@ -fPIE -fPIC
+CXX := @CXX@ -fPIE -fPIC
+CPPFLAGS := @CPPFLAGS@
+CFLAGS := @CFLAGS@
+CXXFLAGS = $(CFLAGS) -std=c++17 @HIREDIS_INC@ @MAXMINDDB_CFLAGS@ $(MONGOOSE_INC) $(JSON_INC) $(SNMP_INC) $(SODIUM_INC) $(NDPI_INC) $(LUA_INC) $(CLICKHOUSE_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) @ZMQ_CFLAGS@ @CXXFLAGS@ -I$(HTTPCLIENT_INC) @SSL_INC@ @PRO_INCS@ -DDATA_DIR='"$(datadir)"' # -D_GLIBCPP_DEBUG
 ######
 # ntopng-1.0_1234.x86_64.rpm
-PLATFORM = `uname -p`
+PLATFORM = `uname -m`
 REVISION = @GIT_RELEASE@
 PACKAGE_VERSION = @PACKAGE_VERSION@
 NTOPNG_VERSION = @NTOPNG_VERSION@
@@ -101,17 +123,17 @@ RPM_DATA_PKG = $(TARGET)-data-$(NTOPNG_VERSION)-@REVISION@.noarch.rpm
 
 LIB_TARGETS = $(LUA_LIB)
 
+ifeq ($(HAVE_CLICKHOUSE),1)
+LIB_TARGETS += $(CLICKHOUSE_LIB)
+endif
+
 ifneq ($(HAS_ZEROMQ), 0)
 LIB_TARGETS += $(ZEROMQ_LIB)
 endif
 
-ifneq ($(HAS_LIBRRDTOOL), 0)
-LIB_TARGETS += $(LIBRRDTOOL_LIB)
-endif
-
 .PHONY: default all clean docs test
 
-default: hooks/.enabled $(NDPI_LIB_DEP) $(LIB_TARGETS) $(TARGET)
+default: hooks/.enabled $(NDPI_LIB_DEP) $(LIB_TARGETS) $(TARGET) $(LOCALES_LUAC)
 
 all: default
 
@@ -124,38 +146,64 @@ TEST_FILES = $(wildcard tests/src/*.cpp)
 TEST_HEADERS = $(wildcard tests/include/*.h)
 
 %.o: %.c $(HEADERS) $(INC) Makefile
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) @MFLAGS@ -c $< -o $@
 
 %.o: %.cpp $(HEADERS) $(INC) Makefile
-	$(CPP) $(CPPFLAGS) -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) @MFLAGS@ -c $< -o $@
 
 .PRECIOUS: $(TARGET) $(OBJECTS)
 
-$(TARGET): $(OBJECTS) $(LIB_TARGETS) Makefile
-	$(CXX) $(CPPFLAGS) $(LDFLAGS) $(OBJECTS) -lm -Wall $(LIBS) -o $@
+$(TARGET): @PRO_DEP@ $(OBJECTS) $(LIB_TARGETS) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) -lm -Wall $(LIBS) -o $@
+
+ifneq ($(wildcard pro/utils/gen_build_keys.sh),)
+# Per-build embedded keys (see pro/utils/gen_build_keys.sh), generated if missing.
+# The signing key hash is written last, so it stands for all of them.
+PRO_BUILD_KEYS = pro/utils/build_keys/sign_key_hash.c.inc
+
+$(PRO_BUILD_KEYS):
+	CC="$(CC)" pro/utils/gen_build_keys.sh
+
+pro/src/LuaHandler.o pro/src/NtopPro.o: $(PRO_BUILD_KEYS) pro/utils/key_obfuscation.h
+endif
 
 unit_test: $(TEST_FILES) $(OBJECTS_NO_MAIN) ${TEST_HEADERS} $(LIB_TARGETS)
-	$(CXX) $(CPPFLAGS) $(LDFLAGS) $(TEST_FILES) $(OBJECTS_NO_MAIN) -lm -lgtest $(LIBS) -o ./tests/unit_tests
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(TEST_FILES) $(OBJECTS_NO_MAIN) -lm -lgtest $(LIBS) -o ./tests/unit_tests
 
 test_fifo_queue: $(OBJECTS_NO_MAIN) $(LIB_TARGETS)
 	rm src/FifoStringsQueue.o
 	$(MAKE) CPPFLAGS="${CPPFLAGS} -DTEST_FIFO_QUEUE -DDEBUG_FIFO_QUEUE" src/FifoStringsQueue.o
-	$(CXX) $(CPPFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
 
 test_alert_engine: $(OBJECTS_NO_MAIN) $(LIB_TARGETS)
 	rm src/AlertCheckLuaEngine.o
 	$(MAKE) CPPFLAGS="${CPPFLAGS} -DTEST_CHECK_ENGINE" src/AlertCheckLuaEngine.o
-	$(CXX) $(CPPFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS_NO_MAIN) -Wall $(LIBS) -o $@
 
 $(LUA_LIB):
 	$(MAKE) -C $(LUA_HOME) $(LUA_PLATFORM)
 
+# Locales precompiled to Lua bytecode (see locales_utils.lua): loading the
+# bytecode is ~10x faster than parsing the large .lua locale files, which is
+# done by most of the requests. The bytecode depends on the Lua version, so it
+# is generated only with the bundled Lua (luac is built with liblua)
+ifeq ($(LUA_LIB),$(LUA_HOME)/src/liblua.a)
+scripts/locales/%.luac: scripts/locales/%.lua $(LUA_LIB)
+	$(LUA_HOME)/src/luac -s -o $@ $<
+endif
+
+ifeq ($(HAVE_CLICKHOUSE),1)
+$(CLICKHOUSE_LIB):
+	cd $(CLICKHOUSE_HOME) && cmake -B build -DWITH_OPENSSL=ON .
+	cd $(CLICKHOUSE_HOME) && cmake --build build
+endif
+
+ifeq ($(HAVE_CLICKHOUSE),1)
+CLICKHOUSE_CLEAN = cd $(CLICKHOUSE_HOME) && cmake --build build --target clean -- --no-print-directory
+endif
+
 $(ZEROMQ_LIB):
 	cd $(ZEROMQ_HOME); ./configure --without-documentation --without-libsodium; $(MAKE)
-
-# --disable-rrd_graph
-$(LIBRRDTOOL_LIB):
-	cd $(LIBRRDTOOL_HOME); ./configure --disable-libdbi --disable-libwrap --disable-rrdcgi --disable-libtool-lock --disable-nls --disable-rpath --disable-perl --disable-ruby --disable-lua --disable-tcl --disable-python --disable-dependency-tracking --disable-rrd_graph ; cd src; $(MAKE) librrd_th.la
 
 hooks/.enabled:
 	git config core.hooksPath hooks || true
@@ -164,10 +212,13 @@ hooks/.enabled:
 clean:
 	-rm -f src/*.o src/*~ src/flow_checks/*.o  src/flow_checks/*~ src/flow_alerts/*.o  src/flow_alerts/*~ src/host_checks/*.o  src/host_checks/*~ src/host_alerts/*.o  src/host_alerts/*~ include/*~ *~ #config.h
 	-rm -f $(TARGET)
+	-rm -f scripts/locales/*.luac
+	-rm -f fuzz/*.o fuzz/proto/ fuzz/stub/*.o
 	if [ -d pro ]; then cd pro && $(MAKE) clean; fi
+	$(CLICKHOUSE_CLEAN)
 
 cert:
-	openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out cert.pem
+	openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out cert.pem -subj "/CN=ntopng.local" -addext "subjectAltName = DNS:ntopng.local"
 	cat privkey.pem cert.pem > httpdocs/ssl/ntopng-cert.pem
 	/bin/rm -f privkey.pem cert.pem
 
@@ -209,7 +260,8 @@ build-rpm-ntopng-data:
 docs:
 	cd doc && doxygen doxygen.conf
 
-dist:
+windows:
+	# Windows dist
 	rm -rf ntopng-@NTOPNG_VERSION@
 	mkdir ntopng-@NTOPNG_VERSION@
 	cd ntopng-@NTOPNG_VERSION@; git clone https://github.com/ntop/ntopng.git; cd ntopng; git clone https://github.com/ntop/nDPI.git; cd ..; find ntopng -name .git | xargs rm -rf ; mv ntopng ntopng-@NTOPNG_VERSION@; tar cvfz ../ntopng-@NTOPNG_VERSION@.tgz ntopng-@NTOPNG_VERSION@
@@ -242,8 +294,35 @@ Makefile: configure Makefile.in
 #	@echo ""
 #	./autogen.sh
 
+# Checks intentionally silenced (see doc/README.cppcheck or commit log):
+#  useInitializationList/duplInheritedMember/noCopyConstructor/noOperatorEq
+#    - style/opinion, not applicable to this codebase
+#  postfixOperator            - it++ on iterators, no measurable cost here
+#  memsetClassFloat           - memset(...,0,...) is a valid zero for IEEE-754
+#  virtualCallInConstructor/Destructor - deliberate (base behaviour wanted)
+#  uninitMemberVar            - mostly false positives on this codebase's very
+#    large, heavily #ifdef'd constructors (cppcheck loses track of assignments,
+#    e.g. the `new (std::nothrow) T()` idiom) or reflect a deliberate
+#    construct-then-load two-phase init pattern (e.g. Prefs)
+#  nullPointer in the Lua engine files - false positives from the
+#    `getLuaVMContext(a) (a ? ... : NULL)` macro; the lua_State* is never NULL
+#    inside a Lua C function (scoped so real null derefs elsewhere still show)
+#  everything in third-party/ - vendored code (mongoose.c is #included by
+#    HTTPserver.cpp, clickhouse-cpp headers), not maintained here
+CPPCHECK_SUPPRESS = --suppress=useInitializationList --suppress=duplInheritedMember \
+                    --suppress=noCopyConstructor --suppress=noOperatorEq \
+                    --suppress=postfixOperator --suppress=memsetClassFloat \
+                    --suppress=virtualCallInConstructor --suppress=virtualCallInDestructor \
+                    --suppress=uninitMemberVar \
+                    --suppress=nullPointer:src/LuaEngineInterface.cpp \
+                    --suppress=nullPointer:src/LuaEngineNetwork.cpp \
+                    --suppress=nullPointer:src/LuaEngineNtop.cpp \
+                    --suppress=nullPointer:src/SNMP.cpp \
+                    --suppress='*:*third-party/*'
+
 cppcheck:
-	cppcheck --template='{file}:{line}:{severity}:{message}' --quiet --enable=all --force -I include/ @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(NDPI_INC) $(LUA_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) src/*.cpp
+	@mkdir -p .cppcheck-build
+	cppcheck --template='{file}:{line}:{severity}:{message}' --quiet --enable=warning,performance,portability $(CPPCHECK_SUPPRESS) -j $(shell nproc) --cppcheck-build-dir=.cppcheck-build -I include/ $(PRO_CPPCHECK_INCS) @HIREDIS_INC@ $(MONGOOSE_INC) $(JSON_INC) $(NDPI_INC) $(LUA_INC) $(CLICKHOUSE_INC) $(LIBRRDTOOL_INC) $(ZEROMQ_INC) src/*.cpp $(PRO_CPPCHECK_SRCS)
 
 test: test_version
 
@@ -260,11 +339,47 @@ changelog:
 	git log --since={`curl -s https://github.com/ntop/ntopng/releases | grep datetime | head -n1 | egrep -o "[0-9]+\-[0-9]+\-[0-9]+"`} --name-only --pretty=format:" - %s" > Changelog.latest
 	if [ -d pro ]; then cd pro && git log --since={`curl -s https://github.com/ntop/ntopng/releases | grep datetime | head -n1 | egrep -o "[0-9]+\-[0-9]+\-[0-9]+"`} --name-only --pretty=format:" - %s" >> ../Changelog.latest; fi
 
-http_config:
-	npm install
+# Note: use ./create_dist.sh for building and committing the new dist
+# Frontend source (http_src/, assets/, package.json) lives in pro/, which is
+# only available to ntop developers; community-only checkouts ship the
+# prebuilt httpdocs/dist and cannot rebuild the frontend.
+dist:
+	if [ -d pro ]; then cd pro && npm install && npm run build; else echo "pro/ not found: frontend source is not available in community-only checkouts, httpdocs/dist is prebuilt"; fi
 
-http_dev_build:
-	npm run build:dev
+pull-deps:
+	echo "Pulling dependencies.."
+	rm -rf httpdocs/dist tests/e2e
+	git submodule init httpdocs/dist tests/e2e
+	git submodule update httpdocs/dist tests/e2e
+	branch=`git rev-parse --abbrev-ref HEAD`; cd httpdocs/dist && git checkout $$branch && git pull
+	branch=`git rev-parse --abbrev-ref HEAD`; cd tests/e2e && git checkout $$branch && git pull
 
-http_build:
-	npm run build
+pull-pro:
+	if test -d ./pro; then echo "Pulling ntopng/pro..."; cd pro; git pull --rebase; fi
+
+pull-ndpi-pro:
+	if test -d ../ndpi-pro; then echo "Pulling ndpi-pro..."; cd ../ndpi-pro; git pull --rebase; fi
+
+format:
+	find ./src ./include -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \;
+	if test -d ./pro; then find ./pro/src ./pro/include -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \; ; fi
+
+fast-format:
+	find ./src ./include -type f -mtime -2 \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \;
+	if test -d ./pro; then find ./pro/src ./pro/include -type f -mtime -2 \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --style=file -i '{}' \; ; fi
+
+check-format:
+	git diff --name-only --cached | grep -P '^(src|include)/.*\.(cpp|h)$$' | xargs -n1 clang-format -n --Werror --style=file
+
+pull: pull-deps pull-pro pull-ndpi-pro
+	echo "Updating ntopng..."
+	git pull --rebase
+
+update-submodules:
+	echo "Advancing submodule pointers to latest.."
+	git submodule update --remote httpdocs/dist tests/e2e
+	git add httpdocs/dist tests/e2e
+
+@MAKE_EXTRA@
+
+@FUZZ_MAKEFILE_INC@

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -42,29 +42,28 @@ class IEC104Stats {
     /* m = monitoring, c = command */
     u_int32_t m_to_m, c_to_m, m_to_c, c_to_c;
   } transitions;
-  
+
   char infobuf[32];
   std::unordered_map<u_int16_t, u_int32_t> type_i_transitions;
   std::unordered_map<u_int16_t, u_int32_t> typeid_uses;
   u_int16_t last_type_i;
   struct timeval last_i_apdu;
-  struct ndpi_analyze_struct *i_s_apdu;
+  struct ndpi_analyze_struct* i_s_apdu;
   u_int16_t tx_seq_num, rx_seq_num;
   bool invalid_command_transition_detected;
 
   bool isMonitoringTypeId(u_int16_t tid);
   bool isCommandTypeId(u_int16_t tid);
-  
+
  public:
   IEC104Stats();
   ~IEC104Stats();
 
-  void processPacket(Flow *f, bool tx_direction,
-		     const u_char *payload, u_int16_t payload_len,
-		     struct timeval *packet_time);
+  void processPacket(Flow* f, bool tx_direction, const u_char* payload,
+                     u_int16_t payload_len, const struct pcap_pkthdr* h);
 
   void lua(lua_State* vm);
-  char* getFlowInfo(char *buf, u_int buf_len);
+  std::string getFlowInfo();
 };
 
 #endif /* _IEC104_STATS_H_ */

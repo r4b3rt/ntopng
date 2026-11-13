@@ -1,0 +1,119 @@
+{
+	"id": "exporters_interfaces_stats",
+	"data_url": "lua/pro/rest/v2/get/exporters/get_exporters_interfaces_stats.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.exporters_interfaces_stats",
+	"default_sort": {
+		"column_id": "total_bytes",
+		"sort": 2
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "split_button",
+			"button_def_array": [
+				{
+					"id": "interface_overview",
+					"icon": "fas fa-ethernet",
+					"title_i18n": "flow_devices.interface_overview",
+					"event_id": "click_button_interface_overview"
+				},
+				{
+					"id": "flows",
+					"icon": "fas fa-stream",
+					"title_i18n": "active_flows",
+					"event_id": "click_button_flows"
+				},
+				{
+					"id": "hosts",
+					"icon": "fas fa-laptop",
+					"title_i18n": "active_hosts",
+					"event_id": "click_button_hosts"
+				},
+				{
+					"id": "timeseries",
+					"icon": "fas fa-chart-area",
+					"title_i18n": "prefs.timeseries",
+					"event_id": "click_button_timeseries"
+				}
+			]
+		},
+		{
+			"id": "exporter_ip",
+			"title_i18n": "flows_page.device_ip",
+			"data_field": "exporter_ip",
+			"sortable": true,
+			"min-width": "30px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "interface_name",
+			"title_i18n": "interface_name",
+			"data_field": "interface_name",
+			"sortable": true,
+			"min-width": "80px",
+			"class": [
+				"text-left",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "role",
+			"title_i18n": "snmp.interface_role",
+			"data_field": "role",
+			"sortable": true,
+			"min-width": "80px",
+			"class": [
+				"text-left",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "bytes_sent",
+			"title_i18n": "bytes_sent",
+			"data_field": "bytes_sent",
+			"sortable": true,
+			"exclude_from_search": true,
+			"class": [
+				"text-nowrap",
+				"text-right"
+			]
+		},
+		{
+			"id": "bytes_rcvd",
+			"title_i18n": "bytes_rcvd",
+			"data_field": "bytes_rcvd",
+			"sortable": true,
+			"exclude_from_search": true,
+			"class": [
+				"text-nowrap",
+				"text-right"
+			]
+		},
+		{
+			"id": "total_bytes",
+			"title_i18n": "total_bytes",
+			"data_field": "total_bytes",
+			"sortable": true,
+			"exclude_from_search": true,
+			"class": [
+				"text-nowrap",
+				"text-right"
+			]
+		}
+	]
+}

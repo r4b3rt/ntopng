@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,23 +26,43 @@
 
 class PeriodicActivities {
  private:
-  ThreadedActivity *activities[CONST_MAX_NUM_THREADED_ACTIVITIES];
-  u_int16_t num_activities;
-  ThreadPool *th_pool;
+  ThreadedActivity* sec_min_activities[CONST_MAX_NUM_THREADED_ACTIVITIES];
+  ThreadedActivity* hour_day_activities[CONST_MAX_NUM_THREADED_ACTIVITIES];
+  ThreadedActivity* oneshot_activities[CONST_MAX_NUM_THREADED_ACTIVITIES];
+  u_int16_t num_sec_min_activities, num_hour_day_activities, num_oneshot_activities;
+  ThreadPool* th_pool;
   pthread_t pthreadLoop;
-  bool      thread_running;
-  
-  u_int8_t getNumThreadsPerPool(const char* path, std::vector<char*> *iface_scripts_list, std::vector<char*> *system_scripts_list);
-  
+  bool thread_running;
+  std::atomic<u_int16_t> num_running_sec_min_activities,
+      num_running_hour_day_activities;
+
+  u_int8_t getNumThreadsPerPool(const char* path,
+                                std::vector<char*>* iface_scripts_list,
+                                std::vector<char*>* system_scripts_list);
+
  public:
   PeriodicActivities();
   ~PeriodicActivities();
 
   void startPeriodicActivitiesLoop();
-  void lua(NetworkInterface *iface, lua_State *vm);
+  void lua(NetworkInterface* iface, lua_State* vm);
   void run();
 
-  inline bool isRunning() { return(thread_running); }
+  inline bool isRunning() { return (thread_running); }
+
+  inline void incRunningTasks(bool hourly_daily_activity) {
+    if (hourly_daily_activity)
+      num_running_hour_day_activities++;
+    else
+      num_running_sec_min_activities++;
+  }
+
+  inline void decRunningTasks(bool hourly_daily_activity) {
+    if (hourly_daily_activity)
+      num_running_hour_day_activities--;
+    else
+      num_running_sec_min_activities--;
+  }
 };
 
 #endif /* _PERIODIC_ACTIVITIES_H_ */

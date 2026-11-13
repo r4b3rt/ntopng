@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -13,6 +13,8 @@ local json = require("dkjson")
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -22,9 +24,16 @@ local host_alert_flow_flood = classes.class(alert)
 
 host_alert_flow_flood.meta = {
   alert_key = host_alert_keys.host_alert_flow_flood,
-  i18n_title = "alerts_dashboard.flow_flood",
+  i18n_title = "entity_thresholds.flow_flood_title",
   icon = "fas fa-fw fa-life-ring",
   has_attacker = true,
+
+  -- Mitre Att&ck Matrix values
+  mitre_values = {
+    mitre_tactic = mitre.tactic.impact,
+    mitre_technique = mitre.technique.network_ddos,
+    mitre_id = "T1498"
+  },
 }
 
 -- ##############################################

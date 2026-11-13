@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local json = require "dkjson"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -21,6 +23,13 @@ alert_longlived.meta = {
    alert_key = flow_alert_keys.flow_alert_longlived,
    i18n_title = "flow_details.longlived_flow",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.collection,
+      mitre_technique = mitre.technique.data_from_net_shared_driver,
+      mitre_id = "T1039"
+   },
 }
 
 -- ##############################################
@@ -56,9 +65,11 @@ function alert_longlived.format(ifid, alert, alert_type_params)
       end
    end
 
-   local alert_json = json.decode(alert["json"])
-   if alert_json and not isEmptyString(alert_json["info"]) then
-      res = string.format("%s [%s]", res, alert_json["info"])
+   if not isEmptyString(alert["json"]) then
+      local alert_json = json.decode(alert["json"]) or {}
+      if not isEmptyString(alert_json["info"]) then
+         res = string.format("%s [%s]", res, alert_json["info"])
+      end
    end
 
    return res

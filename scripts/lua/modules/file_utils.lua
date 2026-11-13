@@ -1,10 +1,26 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local file_utils = {}
 local os_utils = require("os_utils")
 local json = require "dkjson"
+
+-- ##############################################
+
+function file_utils.write_file(file_path, content)
+   local file = io.open(file_path, "w")
+
+   if not file then
+      return false
+   end
+   
+   file:write(content)
+
+   file:close()
+   return true
+end
+
 
 -- ##############################################
 

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -20,6 +22,14 @@ alert_ndpi_dns_fragmented.meta = {
    alert_key  = flow_alert_keys.flow_alert_ndpi_dns_fragmented,
    i18n_title = "flow_risk.ndpi_dns_fragmented",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.reconnaissance,
+      mitre_technique = mitre.technique.search_open_tech_db,
+      mitre_sub_technique = mitre.sub_technique.dns_passive_dns,
+      mitre_id = "T1596.001"
+   },
 }
 
 -- ##############################################

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,24 +29,30 @@ class Check {
   NtopngEdition check_edition;
   bool packet_interface_only, nedge_exclude, nedge_only;
   bool enabled;
+  u_int64_t tags_bitmap; /* Tags added to the alerts of the check (bit N = tag id N) */
 
  public:
-  Check(NtopngEdition _edition, bool _packet_interface_only, bool _nedge_exclude, bool _nedge_only);
+  Check(NtopngEdition _edition, bool _packet_interface_only,
+        bool _nedge_exclude, bool _nedge_only);
   virtual ~Check();
 
   /* Compatibility */
-  bool isCheckCompatibleWithInterface(NetworkInterface *iface);
+  bool isCheckCompatibleWithInterface(NetworkInterface* iface);
   bool isCheckCompatibleWithEdition() const;
-  inline NtopngEdition getEdition()   const { return check_edition; };
- 
+  inline NtopngEdition getEdition() const { return check_edition; };
+
   /* Enable/Disable hooks */
-  virtual void scriptEnable()            {};
-  virtual void scriptDisable()           {};
+  virtual void scriptEnable() {};
+  virtual void scriptDisable() {};
 
-  inline void enable()          { enabled = true; }
-  inline bool isEnabled() const { return(enabled ? true : false); }
+  inline void enable() { enabled = true; }
+  inline bool isEnabled() const { return (enabled ? true : false); }
 
-  virtual std::string getName()       const = 0;
+  /* Tags: array of tag ids, from the checks configuration */
+  void loadTags(json_object* tag_ids);
+  inline u_int64_t getTags() const { return (tags_bitmap); }
+
+  virtual std::string getName() const = 0;
 };
 
 #endif /* _CHECK_H_ */

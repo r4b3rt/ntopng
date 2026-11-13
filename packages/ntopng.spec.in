@@ -8,11 +8,16 @@ Group: Networking/Utilities
 Source: ntopng-%{version}.tgz
 Packager: Luca Deri <deri@ntop.org>
 # Temporary location where the RPM will be built
-BuildRoot:  %{_tmppath}/%{name}-%{version}-root
-Requires: pfring = @PFRING_VERSION@-@PFRING_GIT_RELEASE@, redis >= 2.4.0, rrdtool >= 1.3.8, numactl, libcurl, ntopng-data, logrotate, zeromq >= 4.0.0, openldap, radcli, openssl, hiredis, mysql-libs, ethtool, redhat-lsb-core, libcap, json-c, expat, libzstd, net-snmp-libs, newt, libatomic, libmaxminddb, tcp_wrappers-libs, @LICENSE_DEP@
+%if 0%{?centos_ver} <= 8
+Requires: pfring = @PFRING_VERSION@, redis >= 2.4.0, rrdtool >= 1.3.8, numactl, libcurl, ntopng-data, logrotate, zeromq >= 4.0.0, openldap, radcli, openssl, hiredis, ethtool, redhat-lsb-core, libcap, json-c, expat, libzstd, net-snmp-libs, newt, libatomic, libmaxminddb, tcp_wrappers-libs, librdkafka, cronie, libsodium, @LICENSE_DEP@
+%else
+Requires: pfring = @PFRING_VERSION@, @CENTOS_REDIS_DEP@ rrdtool >= 1.3.8, numactl, libcurl, ntopng-data, logrotate, zeromq >= 4.0.0, openldap, radcli, openssl, hiredis, ethtool, libcap, json-c, expat, libzstd, net-snmp-libs, newt, libatomic, libmaxminddb, tcp_wrappers-libs, librdkafka, cronie, libsodium, @LICENSE_DEP@
+%endif
+%if 0%{?centos_ver} >= 8
+Recommends: nmap
+%endif
 # Disable shared libs dependency check (needed by FPGA libs)
 AutoReqProv: no
-
 # Make sure .build-id is not part of the package
 %define _build_id_links none
 
@@ -29,7 +34,7 @@ Web-based traffic monitoring
 # %global __os_install_post /usr/lib/rpm/brp-compress %{nil}
 
 %build
-if ! test -f "$HOME/ntopng/pro/utils/snzip"; then echo "snzip missing"; exit; fi
+make -C $HOME/ntopng/pro/utils snzip || exit 1
 #
 
 # Installation may be a matter of running an install make target or you
@@ -40,31 +45,26 @@ if [ -d $RPM_BUILD_ROOT ]; then
 	\rm -rf $RPM_BUILD_ROOT
 fi
 
-mkdir -p $RPM_BUILD_ROOT/usr/bin $RPM_BUILD_ROOT/usr/share/ntopng $RPM_BUILD_ROOT/usr/share/man/man8 
+mkdir -p $RPM_BUILD_ROOT/usr/bin $RPM_BUILD_ROOT/usr/share/ntopng $RPM_BUILD_ROOT/usr/share/man/man8
 mkdir -p $RPM_BUILD_ROOT/var/lib/ntopng
 mkdir -p $RPM_BUILD_ROOT/etc/logrotate.d
 mkdir -p $RPM_BUILD_ROOT/etc/sudoers.d/
 mkdir -p $RPM_BUILD_ROOT/etc/rsyslog.d/
 mkdir -p $RPM_BUILD_ROOT/etc/cron.d/
-%if 0%{?centos_ver} == 6
-mkdir -p $RPM_BUILD_ROOT/etc/init.d 
-%endif
 cp $HOME/ntopng/ntopng $RPM_BUILD_ROOT/usr/bin
-strip $RPM_BUILD_ROOT/usr/bin/ntopng
-cp $HOME/ntopng/ntopng.8 $RPM_BUILD_ROOT/usr/share/man/man8/ 
+strip --strip-all $RPM_BUILD_ROOT/usr/bin/ntopng
+cp $HOME/ntopng/ntopng.8 $RPM_BUILD_ROOT/usr/share/man/man8/
 cp -Lr $HOME/ntopng/httpdocs $HOME/ntopng/scripts $RPM_BUILD_ROOT/usr/share/ntopng  # L to dereference symlinks
 cp $HOME/ntopng/packages/wizard/ntopng-config $RPM_BUILD_ROOT/usr/bin
 mv $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/misc/ntopng-utils-manage-config $RPM_BUILD_ROOT/usr/bin
 mv $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/misc/ntopng-utils-manage-updates $RPM_BUILD_ROOT/usr/bin
-%if 0%{?centos_ver} != 6
-if test -f "${HOME}/nIndex/nindex"; then
-    cp ${HOME}/nIndex/nindex $RPM_BUILD_ROOT/usr/bin;
-fi
-%endif
 cp $HOME/ntopng/packages/usr/bin/ntopctl $RPM_BUILD_ROOT/usr/bin/
+
 # Make sure .mmdb files are not packaged by ntopng as they belong to ntopng-data
 rm -f $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/geoip/*.mmdb
-mv $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
+rm -f $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/geoip/as.csv
+
+#mv $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy $RPM_BUILD_ROOT/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
 if test -d "$HOME/ntopng/pro"; then
    cd $HOME/ntopng/pro; make; cd -
    mkdir $RPM_BUILD_ROOT/usr/share/ntopng/pro
@@ -76,6 +76,11 @@ if test -d "$HOME/ntopng/pro"; then
    find $RPM_BUILD_ROOT/usr/share/ntopng/pro -name "*.lua" -type f -exec /bin/rm  {} ';'
    find $RPM_BUILD_ROOT/usr/share/ntopng/pro -name "*.luar" | xargs rename .luar .lua
 fi
+
+# For some reason the command below makes the packaging fail on RH8
+%if 0%{?centos_ver} > 8
+#find $RPM_BUILD_ROOT/usr/share/ntopng/scripts/lua -name "*.lua" -type f -exec $HOME/ntopng/tools/luac.sh {} ';'
+%endif
 
 if hash systemctl 2>/dev/null; then
    mkdir -p $RPM_BUILD_ROOT/usr/lib/systemd/system/
@@ -95,13 +100,21 @@ cp $HOME/ntopng/packages/etc/ntopng/ntopng.conf.nprobe.sample $RPM_BUILD_ROOT/et
 find $RPM_BUILD_ROOT -name ".git" | xargs /bin/rm -rf
 find $RPM_BUILD_ROOT -name ".svn" | xargs /bin/rm -rf
 find $RPM_BUILD_ROOT -name "*~"   | xargs /bin/rm -f
+
+# Already stripped
+mkdir -p $RPM_BUILD_ROOT/usr/share/ntop/sbom
+~/scripts/signature.sh $RPM_BUILD_ROOT/usr/bin/ntopng $RPM_BUILD_ROOT/usr/share/ntop/ntopng.sig
+
+~/scripts/sbom/generate-sbom.sh $RPM_BUILD_ROOT/usr/bin/ntopng
+mv ./sbom-ntopng.json $RPM_BUILD_ROOT/usr/share/ntop/sbom/ntopng.json
+~/scripts/sbom/ntopng-github-sbom.sh
+mv ./sbom.json $RPM_BUILD_ROOT/usr/share/ntop/sbom/ntopng-gui,json
+
+
 #
 DST=$RPM_BUILD_ROOT/usr/ntopng
 SRC=$RPM_BUILD_DIR/%{name}-%{version}
-#mkdir -p $DST/conf
-# Clean out our build directory
-%clean
-rm -fr $RPM_BUILD_ROOT
+
 
 %files
 /usr/bin/ntopng
@@ -112,24 +125,20 @@ rm -fr $RPM_BUILD_ROOT
 /usr/share/man/man8/ntopng.8.gz
 %config(noreplace) /etc/ntopng/ntopng.conf
 /etc/ntopng/ntopng.conf.nprobe.sample
-%if 0%{?centos_ver} != 6
-/usr/bin/nindex
 /usr/lib/systemd/system/ntopng.service
 /usr/lib/systemd/system/ntopng@.service
-%else
-/etc/init.d/ntopng
-%endif
 /etc/logrotate.d/ntopng
 /etc/sudoers.d/ntopng
 /etc/rsyslog.d/20-ntopng.conf
-/etc/cron.d/ntopng
+%config(noreplace) /etc/cron.d/ntopng
+/usr/share/ntop
 /usr/share/ntopng
 # Don't overwrite ntopng-cert.pem is the file is already present
-%config(noreplace) /usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
+#%config(noreplace) /usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
 #/etc/ntopng/ntopng.conf.sample
 #/etc/ntopng/ntopng.start
 
-%dir %attr(700, ntopng, ntopng) /var/lib/ntopng
+%dir %attr(700, ntopng, ntop) /var/lib/ntopng
 
 # Set the default attributes of all of the files specified to have an
 # owner and group of root and to inherit the permissions of the file
@@ -147,15 +156,15 @@ rm -fr $RPM_BUILD_ROOT
 
 %pre
 
-if ! grep -q ntopng /etc/group; then
-  echo 'Creating ntopng group'
-  /usr/sbin/groupadd -r ntopng
+if ! grep -q 'ntop:' /etc/group; then
+    echo 'Creating ntop group'
+    /usr/sbin/groupadd -r ntop
 fi
-
-if ! /usr/bin/id -u ntopng > /dev/null 2>&1; then 
-  echo 'Creating ntopng user'
-  /usr/sbin/useradd -M -N -g ntopng -r -s /bin/false ntopng
+if ! /usr/bin/id -u ntopng > /dev/null 2>&1; then
+    echo "Creating ntopng user..."
+    /usr/sbin/useradd -M -N -g ntop -r -s /bin/false ntopng
 fi
+/usr/sbin/usermod -g ntop ntopng
 
 if [ $(getent group n2disk) ] && [ $(getent passwd ntopng) ]; then
     # this is necessary to allow ntopng to extract pcaps
@@ -166,44 +175,61 @@ if [ $(getent group n2disk) ] && [ $(getent passwd ntopng) ]; then
     fi
 fi
 
-%if 0%{?centos_ver} == 6
-case "$1" in
-  1)
-    # install
-  ;;
-  2)
-    # upgrade
-    /etc/init.d/ntopng stop
-  ;;
-esac
-%endif
+if [ $(getent group systemd-journal) ] && [ $(getent passwd ntopng) ]; then
+    # this is necessary to allow ntopng to read journalctl logs
+    if ! id -nG ntopng | grep -qw "systemd-journal"; then
+       echo "Adding user ntopng to group systemd-journal..."
+       /usr/sbin/usermod -a -G systemd-journal ntopng
+    fi
+fi
 
 %post
-%if 0%{?centos_ver} == 6
-# systemd takes care of this on centos 7 and newer
-echo 'Setting up redis auto startup'
-/sbin/chkconfig redis on
-%endif
 
-/bin/chown ntopng:ntopng /usr/bin/ntopng-config
+/bin/chown ntopng:ntop /usr/bin/ntopng-config
 /bin/chmod gou+s /usr/bin/ntopng-config
-/bin/chown -R ntopng:ntopng /etc/ntopng
+/bin/chown -R ntopng:ntop /etc/ntopng
 
-if [ ! -f /.dockerenv ]; then
-%if 0%{?centos_ver} != 6
+CMDLINE=$(tr -d '\0' < /proc/1/cmdline)
+if [ -z "${CMDLINE##*system*}" ] || [ -z "${CMDLINE##*init*}" ]; then # init/systemd (not a container)
 /bin/systemctl daemon-reload
 %systemd_post ntopng.service
-%else
-/sbin/chkconfig --add ntopng
-%endif
 fi
 
 TLS_DIR="/usr/share/ntopng/httpdocs/ssl"
 TLS_CERT_PATH="$TLS_DIR/ntopng-cert.pem"
 if [ ! -f "$TLS_CERT_PATH" ]; then
-    openssl req -new -x509 -sha1 -extensions v3_ca -nodes -days 365 -out $TLS_DIR/cert.pem -subj "/CN=ntopng.local"
-    cat $TLS_DIR/privkey.pem $TLS_DIR/cert.pem > $TLS_CERT_PATH
+    mkdir -p $TLS_DIR
+    openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out $TLS_DIR/cert.pem -subj "/CN=ntopng.local" -addext "subjectAltName = DNS:ntopng.local"
+    mv privkey.pem $TLS_CERT_PATH
+    cat $TLS_DIR/cert.pem >> $TLS_CERT_PATH
+    rm $TLS_DIR/cert.pem
 fi
+
+##############
+
+CONFIG_FILE=/etc/ntopng/ntopng.conf
+CH_CLIENT="/usr/bin/clickhouse-client"
+
+CH_CONFIGURED=`grep -e '\-F\=clickhouse' -e '\-F="clickhouse' $CONFIG_FILE | wc -l`
+
+if test $CH_CONFIGURED -eq 0; then
+    if test -x $CH_CLIENT; then
+	OUT=`/usr/bin/clickhouse-client "SHOW DATABASES" > /dev/null 2>&1`
+	STATUS="$?"
+	if test $STATUS -eq 0; then
+	    echo "-F=clickhouse" >> $CONFIG_FILE
+	    echo "ClickHouse detected and configured in $CONFIG_FILE"
+	else
+	    echo "You seem to have ClickHouse installed with a non default"
+	    echo "setup that prevents automatic ntopng configuration."
+	    echo "We invite you to configure manually /etc/ntopng/ntopng.conf"
+	    echo "# ClickHouse" >> $CONFIG_FILE
+	    echo "-F=\"clickhouse;127.0.0.1@9000,9004;ntopng;default;\"" >> $CONFIG_FILE
+	fi
+    fi
+fi
+
+#############
 
 case "$1" in
   1)
@@ -220,33 +246,18 @@ case "$1" in
     echo 'the versionlock plugin with "yum install yum-plugin-versionlock" and lock the ntopng'
     echo 'version with "yum versionlock ntopng" (it can be unlocked with "yum versionlock clear")'
     echo ''
-  ;;
+    ;;
 esac
 
 %preun
-if [ ! -f /.dockerenv ]; then
-%if 0%{?centos_ver} == 6
-case "$1" in
-  0)
-    # un-install
-    /etc/init.d/ntopng stop
-  ;;
-  1)
-    # upgrade
-  ;;
-esac
-%endif
 
-%if 0%{?centos_ver} != 6
+CMDLINE=$(tr -d '\0' < /proc/1/cmdline)
+if [ -z "${CMDLINE##*system*}" ] || [ -z "${CMDLINE##*init*}" ]; then # init/systemd (not a container)
   %systemd_preun ntopng.service
-%else
-  /sbin/chkconfig --del ntopng
-%endif
 fi
 
 %postun
-if [ ! -f /.dockerenv ]; then
-%if 0%{?centos_ver} != 6
+CMDLINE=$(tr -d '\0' < /proc/1/cmdline)
+if [ -z "${CMDLINE##*system*}" ] || [ -z "${CMDLINE##*init*}" ]; then # init/systemd (not a container)
   %systemd_postun_with_restart ntopng.service
-%endif
 fi

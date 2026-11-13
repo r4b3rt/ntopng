@@ -1,13 +1,14 @@
 --
--- (C) 2014-22 - ntop.org
+-- (C) 2014-26 - ntop.org
 --
 -- Absolutely don't put require inside this file.
 -- It is born to do fast checks, to avoid slowing down
 -- periodics checks and callbacks.
 --
 
-scripts_triggers = {}
+local scripts_triggers = {}
 
+local clock_start = os.clock()
 
 -- ###########################################
 
@@ -23,18 +24,6 @@ end
 
 function scripts_triggers.midnightStatsResetEnabled()
    if (ntop.getPref("ntopng.prefs.midnight_stats_reset_enabled") == "1") then
-      return true
-   end
-
-   return false
-end
-
--- ###########################################
-
-function scripts_triggers.isDumpFlowToSQLEnabled(ifstats)
-   local prefs = ntop.getPrefs()
-
-   if prefs["is_dump_flows_to_mysql_enabled"] then
       return true
    end
 
@@ -79,7 +68,7 @@ function scripts_triggers.hasHighResolutionTs()
 
    -- High resolution timeseries means dumping the host timeseries
    -- every 60 seconds instead of 300 seconds.
-   return((active_driver == "influxdb") and
+   return(((active_driver == "influxdb") or (active_driver == "clickhouse")) and
 	 (ntop.getPref("ntopng.prefs.ts_resolution") ~= "300"))
 end
 
@@ -97,7 +86,7 @@ end
 
 function scripts_triggers.arePrefsChanged()
    local prefs_changed_key = "ntopng.cache.prefs_changed"
-   
+
    if(ntop.getCache(prefs_changed_key) == "1") then
       return(true)
    else

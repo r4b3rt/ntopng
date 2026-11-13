@@ -1,9 +1,9 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
-
 local json = require "dkjson"
-local page_utils = require "page_utils"
+require "gui_utils"
+require "locales_utils"
 require "xmlSimple"
 
 local discover = {}
@@ -12,75 +12,100 @@ discover.debug = false
 
 discover.progress_string = "discovery.progess"
 
+-- NOTE: keep in sync with ndpi_os_hint and wazuh_utils.wazuh_os_to_ntopng_os
 discover.osinfo = {
-  [0] = {"Unknown",       ''},
-  [1] = {"Linux",         '<i class=\'fab fa-linux fa-lg\'></i>'},
-  [2] = {"Windows",       '<i class=\'fab fa-windows fa-lg\'></i>'},
-  [3] = {"MacOS",         '<i class=\'fab fa-apple fa-lg\'></i>'},
-  [4] = {"iOS",           '<i class=\'fab fa-apple fa-lg\'></i>'},
-  [5] = {"Android",       '<i class=\'fab fa-android fa-lg\'></i>'},
-  [6] = {"LaserJET",      'LasetJET'},
-  [7] = {"AppleAirport",  'Apple Airport'},
-  -- NOTE: keep in sync with OperatingSystem in ntop_typedefs.h
+    [0] = {"Unknown", ''},
+    [1] = {"Windows", '<i class=\'fab fa-windows fa-lg\'></i>'},
+    [2] = {"macOS/iOS/iPad", '<i class=\'fab fa-apple fa-lg\'></i>'},
+    [3] = {"Android", '<i class=\'fab fa-android fa-lg\'></i>'},   
+    [4] = {"Linux", '<i class=\'fab fa-linux fa-lg\'></i>'},
+    [5] = {"FreeBSD", ''},
 }
 
 -- #################################
 
+local function os_label_sort_fn(a, b)
+    return asc_insensitive(a[1], b[1])
+end
+
+-- #################################
+
+function discover.sortedOsTypeLabels()
+    return pairsByValues(discover.osinfo, os_label_sort_fn)
+end
+
+-- #################################
+
 function discover.getOsName(id)
-   local info = discover.osinfo[tonumber(id)]
+    if not id then return "" end
 
-   if(info) then
-    return(info[1])
-   end
+    local info = discover.osinfo[tonumber(id)]
 
-   return("")
+    if (info) then
+        return (info[1])
+    end
+
+    return ("")
 end
 
 -- #################################
 
 function discover.getOsIcon(id)
-  local info = discover.osinfo[tonumber(id)]
+    local info = discover.osinfo[tonumber(id)]
 
-   if(info) then
-    return(info[2] .. " ")
+    if (info) then
+        return (info[2] .. " ")
+    end
+
+    return ("")
+end
+
+-- #################################
+
+function discover.getOsId(name)
+   for i=0,table.len(discover.osinfo)-1 do
+      if(discover.osinfo[i][1] == name) then
+	 return i
+      end
    end
 
-   return("")
+   return 0
 end
 
 -- #################################
 
 function discover.getOsAndIcon(id)
-  local name = discover.getOsName(id)
+    local name = discover.getOsName(id)
 
-  if(isEmptyString(name)) then
-    return(id)
-  else
-    return(discover.getOsIcon(id) .. name)
-  end
+    if (isEmptyString(name)) then
+        return (id)
+    else
+        return (discover.getOsIcon(id) .. name)
+    end
 end
 
 -- #################################
 
 discover.apple_osx_versions = {
-   ['4'] = 'Mac OS X 10.0 (Cheetah)',
-   ['5'] = 'Mac OS X 10.1 (Puma)',
-   ['6'] = 'Mac OS X 10.2 (Jaguar)',
-   ['7'] = 'Mac OS X 10.3 (Panther)',
-   ['8'] = 'Mac OS X 10.4 (Tiger)',
-   ['9'] = 'Mac OS X 10.5 (Leopard)',
-   ['10'] = 'Mac OS X 10.6 (Snow Leopard)',
-   ['11'] = 'Mac OS X 10.7 (Lion)',
-   ['12'] = 'OS X 10.8 (Mountain Lion)',
-   ['13'] = 'OS X 10.9 (Mavericks)',
-   ['14'] = 'OS X 10.10 (Yosemite)',
-   ['15'] = 'OS X 10.11 (El Capitan)',
-   ['16'] = 'OS X 10.12 (Sierra)',
-   ['17'] = 'OS X 10.13 (High Sierra)',
-   ['18'] = 'macOS 10.14 (Mojave)',
-   ['19'] = 'macOS 10.15 (Catalina)'
+    ['4'] = 'Mac OS X 10.0 (Cheetah)',
+    ['5'] = 'Mac OS X 10.1 (Puma)',
+    ['6'] = 'Mac OS X 10.2 (Jaguar)',
+    ['7'] = 'Mac OS X 10.3 (Panther)',
+    ['8'] = 'Mac OS X 10.4 (Tiger)',
+    ['9'] = 'Mac OS X 10.5 (Leopard)',
+    ['10'] = 'Mac OS X 10.6 (Snow Leopard)',
+    ['11'] = 'Mac OS X 10.7 (Lion)',
+    ['12'] = 'OS X 10.8 (Mountain Lion)',
+    ['13'] = 'OS X 10.9 (Mavericks)',
+    ['14'] = 'OS X 10.10 (Yosemite)',
+    ['15'] = 'OS X 10.11 (El Capitan)',
+    ['16'] = 'OS X 10.12 (Sierra)',
+    ['17'] = 'OS X 10.13 (High Sierra)',
+    ['18'] = 'macOS 10.14 (Mojave)',
+    ['19'] = 'macOS 10.15 (Catalina)'
 }
 
+-- https://appledb.dev/device-selection/Macs.html
 discover.apple_products = {
    ['Macmini5,3'] = 'Mac mini "Core i7" 2.0 (Mid-2011/Server)',
    ['Macmini5,2'] = 'Mac mini "Core i7" 2.7 (Mid-2011)',
@@ -95,6 +120,7 @@ discover.apple_products = {
    ['Macmini1,1'] = 'Mac mini "Core Duo" 1.83',
    ['iMac12,2'] = 'iMac "Core i7" 3.4 27-Inch (Mid-2011)',
    ['iMac6,1'] = 'iMac "Core 2 Duo" 2.33 24-Inch',
+   ['MacPro7,1'] = 'Mac Pro "Eight Core" 3.5 (2019)',
    ['MacBookPro5,1'] = 'MacBook Pro "Core 2 Duo" 2.93 15" (Unibody)',
    ['MacBookPro11,5'] = 'MacBook Pro "Core i7" 2.8 15" Mid-2015 (DG)',
    ['MacBookPro11,4'] = 'MacBook Pro "Core i7" 2.8 15" Mid-2015 (IG)',
@@ -183,47 +209,103 @@ discover.apple_products = {
    ['MacBookAir4,2'] = 'MacBook Air "Core i5" 1.6 13" (Edu Only)',
    ['MacBookAir4,1'] = 'MacBook Air "Core i7" 1.8 11" (Mid-2011)',
    ['MacPro3,1'] = 'Mac Pro "Eight Core" 3.2 (2008)',
+   ['Mac16,3'] = 'iMac (24-inch, 2024, Four ports)',
+   ['Mac16,2'] = 'iMac (24-inch, 2024, Two ports)',
+   ['Mac15,5'] = 'iMac (24-inch, 2023, Four ports)',
+   ['Mac15,4'] = 'iMac (24-inch, 2023, Two ports)',
+   ['iMac21,1'] = 'iMac (24-inch, M1, 2021)',
+   ['iMac21,2'] = 'iMac (24-inch, M1, 2021)',
+   ['iMac20,2'] = 'iMac (Retina 5K, 27-inch, 2020)',
+   ['iMac20,1'] = 'iMac (Retina 5K, 27-inch, 2020)',
+   ['iMac19,1'] = 'iMac (Retina 5K, 27-inch, 2019)',
+   ['iMac19,2'] = 'iMac (Retina 4K, 21.5-inch, 2019)',
+   ['iMacPro1,1'] = 'iMac Pro (2017)',
+   ['Mac15,14'] = 'Mac Studio (2025)',
+   ['Mac16,9'] = 'Mac Studio (2025)',
+   ['Mac16,13'] = 'MacBook Air (15-inch, M4, 2025)',
+   ['Mac16,12'] = 'MacBook Air (13-inch, M4, 2025)',
+   ['Mac16,10'] = 'Mac mini (2024)',
+   ['Mac16,11'] = 'Mac mini (2024)',
+   ['Mac16,5'] = 'MacBook Pro (16-inch, Nov 2024)',
+   ['Mac16,7'] = 'MacBook Pro (16-inch, Nov 2024)',
+   ['Mac16,1'] = 'MacBook Pro (14-inch, Nov 2024)',
+   ['Mac16,6'] = 'MacBook Pro (14-inch, Nov 2024)',
+   ['Mac16,8'] = 'MacBook Pro (14-inch, Nov 2024)',
+   ['Mac15,13'] = 'MacBook Air (15-inch, M3, 2024)',
+   ['Mac15,12'] = 'MacBook Air (13-inch, M3, 2024)',
+   ['Mac15,7'] = 'MacBook Pro (16-inch, Nov 2023)',
+   ['Mac15,9'] = 'MacBook Pro (16-inch, Nov 2023)',
+   ['Mac15,11'] = 'MacBook Pro (16-inch, Nov 2023)',
+   ['Mac15,3'] = 'MacBook Pro (14-inch, Nov 2023)',
+   ['Mac15,6'] = 'MacBook Pro (14-inch, Nov 2023)',
+   ['Mac15,8'] = 'MacBook Pro (14-inch, Nov 2023)',
+   ['Mac14,8'] = 'Mac Pro (2023)',
+   ['Mac14,13'] = 'Mac Studio (2023)',
+   ['Mac14,14'] = 'Mac Studio (2023)',
+   ['Mac14,15'] = 'MacBook Air (15-inch, M2, 2023)',
+   ['Mac14,12'] = 'Mac mini (2023)',
+   ['Mac14,3'] = 'Mac mini (2023)',
+   ['Mac14,9'] = 'MacBook Pro (14-inch, 2023)',
+   ['Mac14,5'] = 'MacBook Pro (14-inch, 2023)',
+   ['Mac14,2'] = 'MacBook Air (M2, 2022)',
+   ['Mac14,7'] = 'MacBook Pro (13-inch, M2, 2022)',
+   ['Mac13,1'] = 'Mac Studio (2022)',
+   ['Mac13,2'] = 'Mac Studio (2022)',
+   ['MacBookPro18,1'] = 'MacBook Pro (16-inch, 2021)',
+   ['MacBookPro18,2'] = 'MacBook Pro (16-inch, 2021)',
+   ['MacBookPro18,3'] = 'MacBook Pro (14-inch, 2021)',
+   ['MacBookPro18,4'] = 'MacBook Pro (14-inch, 2021)',
+   ['Macmini9,1'] = 'Mac mini (M1, Late 2020)',
+   ['MacBookAir10,1'] = 'MacBook Air (M1, 2020)',
+   ['MacBookPro17,1'] = 'MacBook Pro (13-inch, M1, 2020)',
+   ['Mac14,12'] = 'Mac mini (M2 Pro, 2023)',
+   ['Mac14,3'] = 'Mac mini (M2, 2023)',
+   ['Mac16,10'] = 'Mac mini (M4, 2024)',
+   ['Mac16,11'] = 'Mac mini (M4 Pro, 2024)',
+   ['AirPort10,115'] = 'Airport Express',
+   ['TimeCapsule8,119'] = 'Time Capsule'
+    
 }
 
 discover.asset_icons = {
-   ['unknown']     = '',
-   ['printer']     = '<i class="fas fa-print fa-lg devtype-icon" aria-hidden="true"></i>', -- 1
-   ['video']       = '<i class="fas fa-video fa-lg devtype-icon" aria-hidden="true"></i>', -- 2
-   ['workstation'] = '<i class="fas fa-desktop fa-lg devtype-icon" aria-hidden="true"></i>', -- ... and so on
-   ['laptop']      = '<i class="fas fa-laptop fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['tablet']      = '<i class="fas fa-tablet fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['phone']       = '<i class="fas fa-mobile fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['tv']          = '<i class="fas fa-tv fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['networking']  = '<i class="fas fa-arrows-alt fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['wifi']        = '<i class="fas fa-wifi fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['nas']         = '<i class="fas fa-database fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['multimedia']  = '<i class="fas fa-music fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['iot']         = '<i class="fas fa-thermometer fa-lg devtype-icon" aria-hidden="true"></i>',
-   -- IMPORTANT: please keep in sync asset_icons with id2label
+    ['unknown'] = '',
+    ['printer'] = '<i class="fas fa-print fa-lg devtype-icon" aria-hidden="true"></i>', -- 1
+    ['video'] = '<i class="fas fa-video fa-lg devtype-icon" aria-hidden="true"></i>', -- 2
+    ['workstation'] = '<i class="fas fa-desktop fa-lg devtype-icon" aria-hidden="true"></i>', -- ... and so on
+    ['laptop'] = '<i class="fas fa-laptop fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['tablet'] = '<i class="fas fa-tablet fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['phone'] = '<i class="fas fa-mobile fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['tv'] = '<i class="fas fa-tv fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['networking'] = '<i class="fas fa-arrows-alt fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['wifi'] = '<i class="fas fa-wifi fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['nas'] = '<i class="fas fa-database fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['multimedia'] = '<i class="fas fa-music fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['iot'] = '<i class="fas fa-thermometer fa-lg devtype-icon" aria-hidden="true"></i>'
+    -- IMPORTANT: please keep in sync asset_icons with id2label
 }
 
 discover.extra_asset_icons = {
-   ['lightbulb']      = '<i class="fas fa-lightbulb fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['phone']          = '<i class="fas fa-phone fa-lg devtype-icon" aria-hidden="true"></i>',
-   ['health']         = '<i class="fas fa-medkit fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['lightbulb'] = '<i class="fas fa-lightbulb fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['phone'] = '<i class="fas fa-phone fa-lg devtype-icon" aria-hidden="true"></i>',
+    ['health'] = '<i class="fas fa-medkit fa-lg devtype-icon" aria-hidden="true"></i>'
 }
 
 local id2label = {
- -- ID      string_id    label					special_purpose_device
-   [0]  = { 'unknown', i18n("device_types.unknown") },
-   [1]  = { 'printer', i18n("device_types.printer"), 		true },
-   [2]  = { 'video', i18n("device_types.video"),		true },
-   [3]  = { 'workstation', i18n("device_types.workstation") },
-   [4]  = { 'laptop', i18n("device_types.laptop") },
-   [5]  = { 'tablet', i18n("device_types.tablet") },
-   [6]  = { 'phone', i18n("device_types.phone") },
-   [7]  = { 'tv', i18n("device_types.tv"),			true },
-   [8]  = { 'networking', i18n("device_types.networking"),	true },
-   [9]  = { 'wifi', i18n("device_types.wifi"),			true },
-   [10] = { 'nas', i18n("device_types.nas"),			true },
-   [11] = { 'multimedia', i18n("device_types.multimedia"),	true },
-   [12] = { 'iot', i18n("device_types.iot"),			true },
-   -- IMPORTANT: please keep in sync asset_icons with id2label
+    -- ID      string_id    label					special_purpose_device
+    [0] = {'unknown', i18n("device_types.unknown")},
+    [1] = {'printer', i18n("device_types.printer"), true},
+    [2] = {'video', i18n("device_types.video"), true},
+    [3] = {'workstation', i18n("device_types.workstation")},
+    [4] = {'laptop', i18n("device_types.laptop")},
+    [5] = {'tablet', i18n("device_types.tablet")},
+    [6] = {'phone', i18n("device_types.phone")},
+    [7] = {'tv', i18n("device_types.tv"), true},
+    [8] = {'networking', i18n("device_types.networking"), true},
+    [9] = {'wifi', i18n("device_types.wifi"), true},
+    [10] = {'nas', i18n("device_types.nas"), true},
+    [11] = {'multimedia', i18n("device_types.multimedia"), true},
+    [12] = {'iot', i18n("device_types.iot"), true}
+    -- IMPORTANT: please keep in sync asset_icons with id2label
 }
 
 discover.ghost_icon = '<i class="fas fa-ghost fa-lg" aria-hidden="true"></i>'
@@ -236,124 +318,126 @@ discover.MAX_DISCOVERED_DEVICES = 8192
 local discover_progress_key = "ntop.discovery_progress"
 
 function setDiscoveryProgress(progress)
-   -- io.write(progress.."\n")
-   ntop.setCache(discover_progress_key, progress, 60)
+    -- io.write(progress.."\n")
+    ntop.setCache(discover_progress_key, progress, 60)
 end
 
 function discover.getDiscoveryProgress()
-   return(ntop.getCache(discover_progress_key) or "")
+    return (ntop.getCache(discover_progress_key) or "")
 end
 
 -- ################################################################################
 
 local function device_label_sort_fn(a, b)
-   return asc_insensitive(a[2], b[2])
+    return asc_insensitive(a[2], b[2])
 end
 
 -- ################################################################################
 
 function discover.sortedDeviceTypeLabels()
-   return pairsByValues(id2label, device_label_sort_fn)
+    return pairsByValues(id2label, device_label_sort_fn)
 end
 
 -- ################################################################################
 
 local function getCachedDiscoveryKey(interface_name)
-   return "ntopng.cache.ifid_"..getInterfaceId(interface_name)..".device_discovery_status"
+    return "ntopng.cache.ifid_" .. getInterfaceId(interface_name) .. ".device_discovery_status"
 end
 
 -- ################################################################################
 
 local function getCachedDiscoveredDevicesKey(interface_name)
-   return "ntopng.cache.ifid_"..getInterfaceId(interface_name)..".discovered_devices"
+    return "ntopng.cache.ifid_" .. getInterfaceId(interface_name) .. ".discovered_devices"
 end
 
 -- ################################################################################
 
 function discover.getInterfaceNetworkDiscoveryEnabledKey(ifid)
-   return "ntopng.prefs.ifid_"..ifid..".interface_network_discovery"
+    return "ntopng.prefs.ifid_" .. ifid .. ".interface_network_discovery"
 end
 
 -- ################################################################################
 
 function discover.interfaceNetworkDiscoveryEnabled(ifid)
-   -- must be discoverable and must have not been disabled by the interface preferences
-   return interface.isDiscoverableInterface()
-          and not (ntop.getPref(discover.getInterfaceNetworkDiscoveryEnabledKey(ifid)) == "false")
+    -- must be discoverable and must have not been disabled by the interface preferences
+    return interface.isDiscoverableInterface() and
+               not (ntop.getPref(discover.getInterfaceNetworkDiscoveryEnabledKey(ifid)) == "false")
 end
 
 -- ################################################################################
 
 local function getRequestNetworkDiscoveryKey(ifid)
-   return "ntopng.cache.ifid_"..ifid..".network_discovery_requested"
+    return "ntopng.cache.ifid_" .. ifid .. ".network_discovery_requested"
 end
 
 -- ################################################################################
 
 function discover.requestNetworkDiscovery(ifid)
-   ntop.setCache(getRequestNetworkDiscoveryKey(ifid), "true")
+    ntop.setCache(getRequestNetworkDiscoveryKey(ifid), "true")
 end
 
 -- ################################################################################
 
 function discover.clearNetworkDiscovery(ifid)
-   ntop.delCache(getRequestNetworkDiscoveryKey(ifid))
+    ntop.delCache(getRequestNetworkDiscoveryKey(ifid))
 end
 
 -- ################################################################################
 
 function discover.networkDiscoveryRequested(ifid)
-   return ntop.getCache(getRequestNetworkDiscoveryKey(ifid)) == "true"
+    return ntop.getCache(getRequestNetworkDiscoveryKey(ifid)) == "true"
 end
 
 -- ################################################################################
 
 function isPrinterMDNS(mdns)
-   if(mdns == nil) then return false end
+    if (mdns == nil) then
+        return false
+    end
 
-   if(discover.debug) then
-      tprint(mdns)
-      io.write(debug.traceback())
-   end
+    if (discover.debug) then
+        tprint(mdns)
+        io.write(debug.traceback())
+    end
 
-   if((mdns["_printer._tcp.local"] ~= nil)
-      or (mdns["_scanner._tcp.local"] ~= nil)
-      or (mdns["_pdl-datastream._tcp.local"] ~= nil)
-   ) then
-      return true
-   end
+    if ((mdns["_printer._tcp.local"] ~= nil) or (mdns["_scanner._tcp.local"] ~= nil) or
+        (mdns["_pdl-datastream._tcp.local"] ~= nil)) then
+        return true
+    end
 
-   return false
+    return false
 end
 
 -- ################################################################################
 
 function isNASMDNS(mdns)
-   if(mdns == nil) then return false end
+    if (mdns == nil) then
+        return false
+    end
 
-   if((mdns["_edcp._udp.local"] ~= nil) or (mdns["_afpovertcp._tcp.local"] ~= nil) or (mdns["_smb._tcp.local"] ~= nil)) then
-      if(mdns["_companion-link._tcp.local"] == nil) then
-	 return true
-      end
-   end
+    if ((mdns["_edcp._udp.local"] ~= nil) or (mdns["_afpovertcp._tcp.local"] ~= nil) or (mdns["_smb._tcp.local"] ~= nil)) then
+        if (mdns["_companion-link._tcp.local"] == nil) then
+            return true
+        end
+    end
 
-   return false
+    return false
 end
 
 -- ################################################################################
 
 function isGHomeMDNS(mdns)
-    if(mdns == nil) then return false end
-
-    if(discover.debug) then
-      tprint(mdns)
-      io.write(debug.traceback())
+    if (mdns == nil) then
+        return false
     end
 
-    if((mdns["_googlecast._tcp.local"] ~= nil)
-      or (mdns["_googlezone._tcp.local"] ~= nil)
-    ) then
-      return true
+    if (discover.debug) then
+        tprint(mdns)
+        io.write(debug.traceback())
+    end
+
+    if ((mdns["_googlecast._tcp.local"] ~= nil) or (mdns["_googlezone._tcp.local"] ~= nil)) then
+        return true
     end
 
     return false
@@ -362,1129 +446,1439 @@ end
 -- ################################################################################
 
 function discover.printDeviceTypeSelectorOptions(device_type, skip_unknown)
-   device_type = tonumber(device_type)
+    device_type = tonumber(device_type)
 
-   for typeid, info in discover.sortedDeviceTypeLabels() do
-      local devtype = info[1]
-      local label = info[2]
+    for typeid, info in discover.sortedDeviceTypeLabels() do
+        local devtype = info[1]
+        local label = info[2]
 
-      if not skip_unknown or devtype ~= "unknown" then
-         print("<option value=\"".. typeid .."\"")
-         if(typeid == device_type) then print(" selected") end
-         print(">".. label .."</option>")
-      end
-   end
+        if not skip_unknown or devtype ~= "unknown" then
+            print("<option value=\"" .. typeid .. "\"")
+            if (typeid == device_type) then
+                print(" selected")
+            end
+            print(">" .. label .. "</option>")
+        end
+    end
 end
 
 -- ################################################################################
 
 function discover.printDeviceTypeSelector(device_type, field_name)
-   print [[<div class="form-group mb-3"><select name="]] print(field_name) print[[" class="form-select">\
+    print [[<div class="mb-3"><select name="]]
+    print(field_name)
+    print [[" class="form-select">\
    <option value="0"></option>]]
 
-   discover.printDeviceTypeSelectorOptions(device_type, true)
+    discover.printDeviceTypeSelectorOptions(device_type, true)
 
-   print [[</select></div>]]
+    print [[</select></div>]]
 end
 
 -- ################################################################################
 
 function discover.devtype2icon(devtype)
-   local label = id2label[tonumber(devtype) or 0]
+    local label = id2label[tonumber(devtype) or 0]
 
-   if(label == nil) then label = 'unknown' else label = label[1] end
+    if (label == nil) then
+        label = 'unknown'
+    else
+        label = label[1]
+    end
 
-   return(discover.asset_icons[label])
+    return (discover.asset_icons[label])
 end
 
 -- ################################################################################
 
 function discover.isValidDevtype(devtype)
-   for k,v in pairs(id2label) do
-      if(v[1] == devtype) then return(true) end
-   end
+    for k, v in pairs(id2label) do
+        if (v[1] == devtype) then
+            return (true)
+        end
+    end
 
-   return(false)
+    return (false)
 end
 
 -- ################################################################################
 
 function discover.devtype2id(devtype)
-   for k,v in pairs(id2label) do
-      if(v[1] == devtype) then return k end
-   end
+    for k, v in pairs(id2label) do
+        if (v[1] == devtype) then
+            return k
+        end
+    end
 
-   return(0) -- unknown
+    return (0) -- unknown
 end
 
 -- ################################################################################
 
 function discover.id2devtype(id)
-   for k,v in pairs(id2label) do
-      if(k == id) then return v[1] end
-   end
+    for k, v in pairs(id2label) do
+        if (k == id) then
+            return v[1]
+        end
+    end
 
-   return("") -- unknown
+    return ("") -- unknown
 end
 
 -- ################################################################################
 
+local dtype_str_cache = nil
+
 function discover.devtype2string(devtype)
    devtype = tonumber(devtype)
-   for k,v in pairs(id2label) do
-      if(k == devtype) then return v[2] end
+   
+   if(dtype_str_cache == nil) then
+      dtype_str_cache = {}
+      
+      for k, v in pairs(id2label) do
+	 dtype_str_cache[k] = v[2]
+      end
    end
 
-   return("") -- unknown
+   return(dtype_str_cache[devtype] or "") -- unknown
+end
+
+-- ################################################################################
+
+local dtype_cache = nil
+
+function discover.devtype2stringId(devtype)
+   local ret
+   
+   devtype = tonumber(devtype)
+
+   if(dtype_cache == nil) then
+      dtype_cache = {}
+      
+      for k, v in pairs(id2label) do
+	 dtype_cache[k] = v[1]
+      end
+   end
+
+   return(dtype_cache[devtype] or "") -- unknown
 end
 
 -- ################################################################################
 
 function discover.isSpecialPurposeDevice(id)
-   local v = id2label[id]
+    local v = id2label[id]
 
-   if(v) then
-      return(v[3] or false)
-   end
+    if (v) then
+        return (v[3] or false)
+    end
 
-   return(false)
+    return (false)
 end
 
 -- ################################################################################
 
 function discover.getGeneralPurposeDevicesList()
-   local rv = {}
+    local rv = {}
 
-   for k, v in pairsByField(id2label, 2, asc) do
-      if not v[3] then
-	 rv[#rv + 1] = v[2]
-      end
-   end
+    for k, v in pairsByField(id2label, 2, asc) do
+        if not v[3] then
+            rv[#rv + 1] = v[2]
+        end
+    end
 
-   return rv
+    return rv
 end
 
 -- ################################################################################
 
 function discover.getSpecialPurposeDevicesList()
-      local rv = {}
+    local rv = {}
 
-   for k, v in pairsByField(id2label, 2, asc) do
-      if v[3] then
-	 rv[#rv + 1] = v[2]
-      end
-   end
+    for k, v in pairsByField(id2label, 2, asc) do
+        if v[3] then
+            rv[#rv + 1] = v[2]
+        end
+    end
 
-   return rv
+    return rv
 end
 
 -- ################################################################################
 
 local function getbaseURL(url)
-   local name = url:match( "([^/]+)$" )
+    local name = url:match("([^/]+)$")
 
-   if((name == "") or (name == nil)) then
-      return(url)
-   else
-      return(string.sub(url, 1, string.len(url)-string.len(name)-1))
-   end
+    if ((name == "") or (name == nil)) then
+        return (url)
+    else
+        return (string.sub(url, 1, string.len(url) - string.len(name) - 1))
+    end
 end
 
 -- ################################################################################
 
 local function probeSSH(ip)
-   local ssh_rsp = ntop.tcpProbe(ip, 22, 1)
+    local ssh_rsp = ntop.tcpProbe(ip, 22, 1)
 
-   if(ssh_rsp ~= nil) then
-      local _ssh_rsp = string.gsub(ssh_rsp, "\n", "")
-      local elems
-      local osvers = nil
-      local use_last = false
+    if (ssh_rsp ~= nil) then
+        local _ssh_rsp = string.gsub(ssh_rsp, "\n", "")
+        local elems
+        local osvers = nil
+        local use_last = false
 
-      -- tprint(_ssh_rsp)
+        -- tprint(_ssh_rsp)
 
-      elems = string.split(_ssh_rsp, ' ')
-      if(elems == nil) then
-      	 osvers = _ssh_rsp
-         use_last = true
-      else
-         osvers = elems[2]
+        elems = string.split(_ssh_rsp, ' ')
+        if (elems == nil) then
+            osvers = _ssh_rsp
+            use_last = true
+        else
+            osvers = elems[2]
 
-         if(osvers == nil) then
-	    osvers = elems[1]
-         end
-      end
+            if (osvers == nil) then
+                osvers = elems[1]
+            end
+        end
 
-      -- tprint(osvers)
+        -- tprint(osvers)
 
-      if(osvers ~= nil) then
-	 local _osvers = string.split(osvers, "-")
-	 if(_osvers ~= nil) then
-	    local n
+        if (osvers ~= nil) then
+            local _osvers = string.split(osvers, "-")
+            if (_osvers ~= nil) then
+                local n
 
-	    if(use_last) then
-	       n = #_osvers
-	    else
-	       n = 1
-	    end
+                if (use_last) then
+                    n = #_osvers
+                else
+                    n = 1
+                end
 
-	    osvers = _osvers[n]
+                osvers = _osvers[n]
 
-	    -- tprint(_osvers)
-	    return(trimSpace(osvers))
-	 end
-      end
-   end
+                -- tprint(_osvers)
+                return (trimSpace(osvers))
+            end
+        end
+    end
 
-   return(trimSpace(ssh_rsp))
+    return (trimSpace(ssh_rsp))
 end
 
 local function appendSSHOS(mac, ip)
-   local r = probeSSH(ip)
+    local r = probeSSH(ip)
 
-   if((r ~= nil) and (r ~= "")) then
-      if(string.contains(r, "Debian")
-	    or string.contains(r, "Raspbian")
-	    or string.contains(r, "dropbear")
-	 or string.contains(r, "Ubuntu")) then
-	 interface.setHostOperatingSystem(ip, 1) -- 1 = Linux
-      elseif(string.contains(r, "MS")) then
-	 interface.setHostOperatingSystem(ip, 2) -- 2 = windows
-      end
+    if ((r ~= nil) and (r ~= "")) then
+        if (string.contains(r, "Debian") or string.contains(r, "Raspbian") or string.contains(r, "dropbear") or
+            string.contains(r, "Ubuntu")) then
+            interface.setHostOperatingSystem(ip, 4) -- 4 = Linux
+        elseif (string.contains(r, "MS")) then
+            interface.setHostOperatingSystem(ip, 1) -- 1 = windows
+        end
 
-      return(" ("..r..")")
-   else
-      return("")
-   end
+        return (" (" .. r .. ")")
+    else
+        return ("")
+    end
 end
 
 -- ################################################################################
 
-local function findDevice(ip, mac, manufacturer, _mdns, ssdp_str, ssdp_entries, names,
-			  snmpName, snmpDescr, osx, symName)
-   local mdns = { }
-   local ssdp = { }
-   local str
-   local friendlyName = ""
+local function findDevice(ip, mac, manufacturer, _mdns, ssdp_str, ssdp_entries, names, snmpName, snmpDescr, osx, symName)
+    local mdns = {}
+    local ssdp = {}
+    local str
+    local friendlyName = ""
 
-   if(snmpName ~= nil) then
-      ntop.setHashCache("ntopng.prefs.snmp_devices", ip,  ntop.getPref("ntopng.prefs.default_snmp_community"))
-   end
+    if (snmpName ~= nil) then
+        ntop.setHashCache("ntopng.prefs.snmp_devices", ip, ntop.getPref("ntopng.prefs.default_snmp_community"))
+    end
 
-   if((ssdp_entries ~= nil) and (ssdp_entries.friendlyName ~= nil)) then
-      friendlyName = ssdp_entries["friendlyName"]
-   end
+    if ((ssdp_entries ~= nil) and (ssdp_entries.friendlyName ~= nil)) then
+        friendlyName = ssdp_entries["friendlyName"]
+    end
 
-   if((names == nil) or (names[ip] == nil)) then
-      hostname = ""
-   else
-      hostname = string.lower(names[ip])
-   end
+    if ((names == nil) or (names[ip] == nil)) then
+        hostname = ""
+    else
+        hostname = string.lower(names[ip])
+    end
 
-   if(manufacturer == nil) then manufacturer = "" else manufacturer = string.lower(manufacturer) end
-   if(symName == nil) then symName = "" else symName = string.lower(symName) end
+    if (manufacturer == nil) then
+        manufacturer = ""
+    else
+        manufacturer = string.lower(manufacturer)
+    end
+    if (symName == nil) then
+        symName = ""
+    else
+        symName = string.lower(symName)
+    end
 
-   if(_mdns ~= nil) then
-      if(discover.debug) then io.write(mac .. " /" .. manufacturer .. " / ".. _mdns.."\n") end
-      local mdns_items = string.split(_mdns, ";")
+    if (_mdns ~= nil) then
+        if (discover.debug) then
+            io.write(mac .. " /" .. manufacturer .. " / " .. _mdns .. "\n")
+        end
+        local mdns_items = string.split(_mdns, ";")
 
-      if(mdns_items == nil) then
-	 mdns[_mdns] = 1
-      else
-	 for _,v in pairs(mdns_items) do
-	    mdns[v] = 1
-	 end
-      end
-   end
+        if (mdns_items == nil) then
+            mdns[_mdns] = 1
+        else
+            for _, v in pairs(mdns_items) do
+                mdns[v] = 1
+            end
+        end
+    end
 
-   if(ssdp_str ~= nil) then
-      if(discover.debug) then  io.write(mac .. " /" .. manufacturer .. " / ".. ssdp_str.."\n") end
+    if (ssdp_str ~= nil) then
+        if (discover.debug) then
+            io.write(mac .. " /" .. manufacturer .. " / " .. ssdp_str .. "\n")
+        end
 
-      local ssdp_items = string.split(ssdp_str, ";")
+        local ssdp_items = string.split(ssdp_str, ";")
 
-      if(ssdp_items == nil) then
-	 ssdp[ssdp_str] = 1
-      else
-	 for _,v in pairs(ssdp_items) do
-	    ssdp[v] = 1
-	 end
-      end
-   end
+        if (ssdp_items == nil) then
+            ssdp[ssdp_str] = 1
+        else
+            for _, v in pairs(ssdp_items) do
+                ssdp[v] = 1
+            end
+        end
+    end
 
-   if(osx ~= nil) then
-      -- model=iMac11,3;osxvers=16
-      local elems = string.split(osx, ';')
+    if (osx ~= nil) then
+        -- model=iMac11,3;osxvers=16
+        local elems = string.split(osx, ';')
 
-      if((elems == nil) and string.contains(osx, "model=")) then
-	 elems = {}
-	 table.insert(elems, osx)
-      end
+        if ((elems == nil) and string.contains(osx, "model=")) then
+            elems = {}
+            elems[#elems + 1] = osx
+        end
 
-      if(elems ~= nil) then
-	 local model   = string.split(elems[1], '=')
-	 local osxvers = nil
+        if (elems ~= nil) then
+            local model = string.split(elems[1], '=')
+            local osxvers = nil
 
-	 if(discover.apple_products[model[2]] ~= nil) then
-	    model = discover.apple_products[model[2]]
-	    if(model == nil) then model = "" end
-	 else
-	    model = model[2]
-	 end
+            if (discover.apple_products[model[2]] ~= nil) then
+                model = discover.apple_products[model[2]]
+                if (model == nil) then
+                    model = ""
+                end
+            else
+                model = model[2]
+            end
 
-	 if(elems[2] ~= nil) then
-	    local osxvers = string.split(elems[2], '=')
-	    if(discover.apple_osx_versions[osxvers[2]] ~= nil) then
-	       osxvers = discover.apple_osx_versions[osxvers[2]]
-	       if(osxvers == nil) then osxvers = "" end
-	    else
-	       osxvers = osxvers[2]
-	    end
-	 end
-	 osx = "<br>"..model
+            if (elems[2] ~= nil) then
+                local osxvers = string.split(elems[2], '=')
+                if (discover.apple_osx_versions[osxvers[2]] ~= nil) then
+                    osxvers = discover.apple_osx_versions[osxvers[2]]
+                    if (osxvers == nil) then
+                        osxvers = ""
+                    end
+                else
+                    osxvers = osxvers[2]
+                end
+            end
+            osx = "<br>" .. model
 
-	 if(osxvers ~= nil) then osx = osx .."<br>"..osxvers end
-      end
-   end
+            if (osxvers ~= nil) then
+                osx = osx .. "<br>" .. osxvers
+            end
+        end
+    end
 
-   if(mdns["_ssh._tcp.local"] ~= nil) then
-      local icon = 'workstation'
-      local ret
+    if (mdns["_ssh._tcp.local"] ~= nil) then
+        local icon = 'workstation'
+        local ret
 
-      if(osx ~= nil) then
-	 if(string.contains(osx, "MacBook")) then
-	    icon = 'laptop'
-	 end
-      end
+        if (osx ~= nil) then
+            if (string.contains(osx, "MacBook")) then
+                icon = 'laptop'
+            end
+        end
 
-      ret = '</i>'..discover.asset_icons[icon]..' ' .. discover.apple_icon
+        ret = '</i>' .. discover.asset_icons[icon] .. ' ' .. discover.apple_icon
 
-      if(osx ~= nil) then ret = ret .. osx end
-      interface.setHostOperatingSystem(ip, 3) -- 3 = OSX
-      if(discover.debug) then io.write(debug.traceback()) end
-      return icon, ret, nil
-   elseif(mdns["_nvstream_dbd._tcp.local"] ~= nil) then
-      interface.setHostOperatingSystem(ip, 2) -- 2 = windows
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..' (Windows)', nil
-   elseif(isGHomeMDNS(mdns)) then
-      -- Google Home
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'multimedia', discover.asset_icons['multimedia'], nil
-   elseif(mdns["_workstation._tcp.local"] ~= nil) then
-      interface.setHostOperatingSystem(ip, 1) -- 1 = Linux
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..' (Linux)', nil
-   else
-      interface.setHostOperatingSystem(ip, 0) -- Unknown
-   end
+        if (osx ~= nil) then
+            ret = ret .. osx
+        end
+        interface.setHostOperatingSystem(ip, 2) -- 2 = macOS/iOS/iPad
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return icon, ret, nil
+    elseif (mdns["_nvstream_dbd._tcp.local"] ~= nil) then
+        interface.setHostOperatingSystem(ip, 1) -- 1 = windows
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. ' (Windows)', nil
+    elseif (isGHomeMDNS(mdns)) then
+        -- Google Home
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'multimedia', discover.asset_icons['multimedia'], nil
+    elseif (mdns["_workstation._tcp.local"] ~= nil) then
+        interface.setHostOperatingSystem(ip, 4) -- 4 = Linux
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. ' (Linux)', nil
+    else
+        interface.setHostOperatingSystem(ip, 0) -- Unknown
+    end
 
-   if(string.contains(friendlyName, "TV")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'tv', discover.asset_icons['tv'], nil
-   end
+    if (string.contains(friendlyName, "TV")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'tv', discover.asset_icons['tv'], nil
+    end
 
-   if((ssdp["urn:upnp-org:serviceId:AVTransport"] ~= nil)
-	 or (ssdp["urn:upnp-org:serviceId:RenderingControl"] ~= nil)
-	 or (ssdp["urn:upnp-org:serviceId:MusicServices"] ~= nil)
-      or (mdns["_airplay._tcp.local"] ~= nil)
-   ) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'multimedia', discover.asset_icons['multimedia'], nil
-   end
+    if ((ssdp["urn:upnp-org:serviceId:AVTransport"] ~= nil) or (ssdp["urn:upnp-org:serviceId:RenderingControl"] ~= nil) or
+        (ssdp["urn:upnp-org:serviceId:MusicServices"] ~= nil) or (mdns["_airplay._tcp.local"] ~= nil)) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'multimedia', discover.asset_icons['multimedia'], nil
+    end
 
-   if(ssdp["_airport._tcp.local"] ~= nil) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'wifi', discover.asset_icons['wifi'], nil
-   end
+    if (ssdp["_airport._tcp.local"] ~= nil) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'wifi', discover.asset_icons['wifi'], nil
+    end
 
-   if(ssdp_entries and ssdp_entries["modelDescription"]) then
-      local descr = string.lower(ssdp_entries["modelDescription"])
+    if (ssdp_entries and ssdp_entries["modelDescription"]) then
+        local descr = string.lower(ssdp_entries["modelDescription"])
 
-      if(string.contains(descr, "camera")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'video', discover.asset_icons['video'], nil
-      elseif(string.contains(descr, "router")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'networking', discover.asset_icons['networking'], nil
-      end
-   end
+        if (string.contains(descr, "camera")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'video', discover.asset_icons['video'], nil
+        elseif (string.contains(descr, "router")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'networking', discover.asset_icons['networking'], nil
+        end
+    end
 
-   if(discover.debug) then io.write("[manufacturer] "..manufacturer.."\n") end
-   if((discover.debug) and (snmpName ~= nil)) then io.write("[snmpName] "..snmpName.."\n") end
+    if (discover.debug) then
+        io.write("[manufacturer] " .. manufacturer .. "\n")
+    end
+    if ((discover.debug) and (snmpName ~= nil)) then
+        io.write("[snmpName] " .. snmpName .. "\n")
+    end
 
-   if(string.contains(manufacturer, "oki electric") and (snmpName ~= nil)) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'printer', discover.asset_icons['printer'].. ' ('..snmpName..')', snmpName
-   elseif(string.contains(manufacturer, "lexmark")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'printer', discover.asset_icons['printer'], nil
-   elseif(string.contains(manufacturer, "hikvision")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'video', discover.asset_icons['video'], nil
-   elseif(string.contains(manufacturer, "synology")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'nas', discover.asset_icons['nas'], nil
-   elseif(string.contains(manufacturer, "sonos")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'multimedia', discover.asset_icons['multimedia'], nil
-   elseif(string.contains(manufacturer, "super micro")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, "quanta computer Inc")) then -- Often Dell DRACK
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, "fujitsu technology solutions")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, "asustek computer")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['laptop'], nil
-   elseif(string.contains(manufacturer, "raspberry")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, "juniper networks")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "brocade communications")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "cisco")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "routerboard")
-	     or string.contains(manufacturer, "netgear") --
-	     or string.contains(manufacturer, "tp-link")
-   ) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "3com")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "gigaset")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'phone', discover.extra_asset_icons['phone'], nil
-   elseif(string.contains(manufacturer, "palo alto networks")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, "liteon technology")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, "realtek")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-   elseif(string.contains(manufacturer, 'tp%-link')) then -- % is the escape char in Lua
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'wifi', discover.asset_icons['wifi'], nil
-   elseif(string.contains(manufacturer, 'broadband')) then -- % is the escape char in Lua
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   elseif(string.contains(manufacturer, 'nest labs')
-	  or string.contains(manufacturer, 'netatmo')) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'iot', discover.asset_icons['iot'], nil
-   elseif(string.contains(manufacturer, "samsung electronics")
-	     or string.contains(manufacturer, "samsung electro")
-	     or string.contains(manufacturer, "htc corporation")
-	     or string.contains(manufacturer, "huawei")
-	     or (string.contains(manufacturer, "xiaomi communications") or string.starts(mac,"44:D1:96"))
-             or string.contains(manufacturer, "oneplus")
-	     or string.contains(manufacturer, "mobile communications") -- LG Electronics (Mobile Communications)
-   ) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      interface.setHostOperatingSystem(ip, 5) -- 5 = Android
-      return 'phone', discover.asset_icons['phone'].. ' ' ..discover.android_icon, nil
-   elseif((string.contains(manufacturer, "hewlett packard")
-	      or string.contains(manufacturer, "hon hai"))
-      and (snmpName ~= nil)) then
-      local _snmpName  = string.lower(snmpName)
-      local _snmpDescr
+    if (string.contains(manufacturer, "oki electric") and (snmpName ~= nil)) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'printer', discover.asset_icons['printer'] .. ' (' .. snmpName .. ')', snmpName
+    elseif (string.contains(manufacturer, "lexmark")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'printer', discover.asset_icons['printer'], nil
+    elseif (string.contains(manufacturer, "hikvision")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'video', discover.asset_icons['video'], nil
+    elseif (string.contains(manufacturer, "synology")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'nas', discover.asset_icons['nas'], nil
+    elseif (string.contains(manufacturer, "sonos")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'multimedia', discover.asset_icons['multimedia'], nil
+    elseif (string.contains(manufacturer, "super micro")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, "quanta computer Inc")) then -- Often Dell DRACK
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, "fujitsu technology solutions")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, "asustek computer")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['laptop'], nil
+    elseif (string.contains(manufacturer, "raspberry")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, "juniper networks")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "brocade communications")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "cisco")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "routerboard") or string.contains(manufacturer, "netgear") --
+    or string.contains(manufacturer, "tp-link")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "3com")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "gigaset")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'phone', discover.extra_asset_icons['phone'], nil
+    elseif (string.contains(manufacturer, "palo alto networks")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, "liteon technology")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, "realtek")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+    elseif (string.contains(manufacturer, 'tp%-link')) then -- % is the escape char in Lua
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'wifi', discover.asset_icons['wifi'], nil
+    elseif (string.contains(manufacturer, 'broadband')) then -- % is the escape char in Lua
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    elseif (string.contains(manufacturer, 'nest labs') or string.contains(manufacturer, 'netatmo')) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'iot', discover.asset_icons['iot'], nil
+    elseif (string.contains(manufacturer, "samsung electronics") or string.contains(manufacturer, "samsung electro") or
+        string.contains(manufacturer, "htc corporation") or string.contains(manufacturer, "huawei") or
+        (string.contains(manufacturer, "xiaomi communications") or string.starts(mac, "44:D1:96")) or
+        string.contains(manufacturer, "oneplus") or string.contains(manufacturer, "mobile communications") -- LG Electronics (Mobile Communications)
+    ) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        interface.setHostOperatingSystem(ip, 3) -- 3 = Android
+        return 'phone', discover.asset_icons['phone'] .. ' ' .. discover.android_icon, nil
+    elseif ((string.contains(manufacturer, "hewlett packard") or string.contains(manufacturer, "hon hai")) and
+        (snmpName ~= nil)) then
+        local _snmpName = string.lower(snmpName)
+        local _snmpDescr
 
-      --io.write("IP "..ip.." has descr (".. _snmpName ..")\n")
-      if(snmpDescr == nil) then
-	 -- io.write("IP "..ip.." has empty descr (".. _snmpName ..")\n")
-	 _snmpDescr = _snmpName
-      else
-	 _snmpDescr = string.lower(snmpDescr)
-      end
+        -- io.write("IP "..ip.." has descr (".. _snmpName ..")\n")
+        if (snmpDescr == nil) then
+            -- io.write("IP "..ip.." has empty descr (".. _snmpName ..")\n")
+            _snmpDescr = _snmpName
+        else
+            _snmpDescr = string.lower(snmpDescr)
+        end
 
-      if(string.contains(_snmpDescr, "jet") -- JetDirect, LaserJet, InkJet, DeskJet
-	 or string.contains(_snmpDescr, "fax")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'printer', discover.asset_icons['printer']..' ('..snmpName..')', snmpName
-      elseif(string.contains(_snmpDescr, "curve")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'networking', discover.asset_icons['networking']..' ('..snmpName..')', snmpName
-      else
-	 -- return 'unknown', snmpName, nil
-      end
-   elseif(string.contains(manufacturer, "vmware")
-	     or string.contains(manufacturer, "qemu")
-	     or string.contains(manufacturer, "xen")
-	     or string.contains(manufacturer, "parallel")
-   ) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation'].." (VM)", nil
-   elseif(string.contains(manufacturer, "xerox")
-	     or string.contains(manufacturer, "ricoh")
-   ) then
-      local l = ""
+        if (string.contains(_snmpDescr, "jet") -- JetDirect, LaserJet, InkJet, DeskJet
+        or string.contains(_snmpDescr, "fax")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'printer', discover.asset_icons['printer'] .. ' (' .. snmpName .. ')', snmpName
+        elseif (string.contains(_snmpDescr, "curve")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'networking', discover.asset_icons['networking'] .. ' (' .. snmpName .. ')', snmpName
+        else
+            -- return 'unknown', snmpName, nil
+        end
+    elseif (string.contains(manufacturer, "vmware") or string.contains(manufacturer, "qemu") or
+        string.contains(manufacturer, "xen") or string.contains(manufacturer, "parallel")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. " (VM)", nil
+    elseif (string.contains(manufacturer, "xerox") or string.contains(manufacturer, "ricoh")) then
+        local l = ""
 
-      if(snmpName ~= nil) then l = ' ('..snmpName..')' end
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'printer', discover.asset_icons['printer']..l, snmpName
-   elseif(string.contains(manufacturer, "apple")) then
-      if(string.contains(hostname, "iphone") or string.contains(symName, "iphone")) then
-	 interface.setHostOperatingSystem(ip, 4) -- 4 = iOS
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'phone', discover.asset_icons['phone']..' ('  .. discover.apple_icon .. ' iPhone)', nil
-      elseif(string.contains(hostname, "ipad") or string.contains(symName, "ipad")) then
-	 interface.setHostOperatingSystem(ip, 4) -- 4 = iOS
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'tablet', discover.asset_icons['tablet']..' ('  .. discover.apple_icon .. 'iPad)', nil
-      elseif(string.contains(hostname, "ipod") or string.contains(symName, "ipod")) then
-	 interface.setHostOperatingSystem(ip, 4) -- 4 = iOS
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'phone', discover.asset_icons['phone']..' ('  .. discover.apple_icon .. 'iPod)', nil
-      else
-	 local ret = '</i> '..discover.asset_icons['workstation']..' ' .. discover.apple_icon
-	 local what = 'workstation'
+        if (snmpName ~= nil) then
+            l = ' (' .. snmpName .. ')'
+        end
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'printer', discover.asset_icons['printer'] .. l, snmpName
+    elseif (string.contains(manufacturer, "apple")) then
+        if (string.contains(hostname, "iphone") or string.contains(symName, "iphone")) then
+            interface.setHostOperatingSystem(ip, 2) -- 2 = macOS / iPadOS / iOS
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'phone', discover.asset_icons['phone'] .. ' (' .. discover.apple_icon .. ' iPhone)', nil
+        elseif (string.contains(hostname, "ipad") or string.contains(symName, "ipad")) then
+            interface.setHostOperatingSystem(ip, 2) -- 2 = macOS / iPadOS / iOS
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'tablet', discover.asset_icons['tablet'] .. ' (' .. discover.apple_icon .. 'iPad)', nil
+        elseif (string.contains(hostname, "ipod") or string.contains(symName, "ipod")) then
+            interface.setHostOperatingSystem(ip, 2) -- 2 = macOS / iPadOS / iOS
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'phone', discover.asset_icons['phone'] .. ' (' .. discover.apple_icon .. 'iPod)', nil
+        else
+            local ret = '</i> ' .. discover.asset_icons['workstation'] .. ' ' .. discover.apple_icon
+            local what = 'workstation'
 
-	 if(((snmpName ~= nil) and string.contains(snmpName, "capsul"))
-	       or string.contains(symName, "capsule") or string.contains(hostname, "capsule")
-	    or isNASMDNS(mdns)) then
-	    ret = '</i> '..discover.asset_icons['nas'], nil
-	    what = 'nas'
-	 elseif(string.contains(symName, "book") or string.contains(hostname, "book")) then
-	    ret = '</i> '..discover.asset_icons['laptop']..' ' .. discover.apple_icon, nil
-	    what = 'laptop'
-	 elseif(string.contains(symName, "airport")) then
-	    ret = '</i> '..discover.asset_icons['wifi']..' ' .. discover.apple_icon, nil
-	    what = 'laptop'
-	 end
+            if (((snmpName ~= nil) and string.contains(snmpName, "capsul")) or string.contains(symName, "capsule") or
+                string.contains(hostname, "capsule") or isNASMDNS(mdns)) then
+                ret = '</i> ' .. discover.asset_icons['nas'], nil
+                what = 'nas'
+            elseif (string.contains(symName, "book") or string.contains(hostname, "book")) then
+                ret = '</i> ' .. discover.asset_icons['laptop'] .. ' ' .. discover.apple_icon, nil
+                what = 'laptop'
+            elseif (string.contains(symName, "airport")) then
+                ret = '</i> ' .. discover.asset_icons['wifi'] .. ' ' .. discover.apple_icon, nil
+                what = 'laptop'
+            end
 
-	 if(snmpName ~= nil) then ret = ret .. " ["..snmpName.."]" end
-	 interface.setHostOperatingSystem(ip, 3) -- 3 = OSX
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return what, ret, snmpName
-      end
-   end
+            if (snmpName ~= nil) then
+                ret = ret .. " [" .. snmpName .. "]"
+            end
+            interface.setHostOperatingSystem(ip, 2) -- 2 = macOS/iOS/iPad
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return what, ret, snmpName
+        end
+    end
 
-   -- Amazon devices
-   if(string.contains(mac, "F0:4F:7C") and string.contains(hostname, "kindle-")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'tablet', discover.asset_icons['tablet']..' (Kindle)', "Kindle"
-   elseif(string.contains(mac, "40:B4:CD") -- and string.contains(hostname, "amazon-")
-   ) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'multimedia', discover.asset_icons['multimedia'], "Alexa" -- Alexa
-   end
+    -- Amazon devices
+    if (string.contains(mac, "F0:4F:7C") and string.contains(hostname, "kindle-")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'tablet', discover.asset_icons['tablet'] .. ' (Kindle)', "Kindle"
+    elseif (string.contains(mac, "40:B4:CD") -- and string.contains(hostname, "amazon-")
+    ) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'multimedia', discover.asset_icons['multimedia'], "Alexa" -- Alexa
+    end
 
-   -- io.write("==>"..mac .. " /" .. manufacturer .. " / ".. friendlyName.. "/"..discover.extra_asset_icons['lightbulb'] .."\n")
+    -- io.write("==>"..mac .. " /" .. manufacturer .. " / ".. friendlyName.. "/"..discover.extra_asset_icons['lightbulb'] .."\n")
 
-   -- Philips Hue
-   if(string.contains(mac, "00:17:88") and string.contains(friendlyName, "hue")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'iot', discover.extra_asset_icons['lightbulb'], nil
-   end
+    -- Philips Hue
+    if (string.contains(mac, "00:17:88") and string.contains(friendlyName, "hue")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'iot', discover.extra_asset_icons['lightbulb'], nil
+    end
 
-   -- Withings (Nokia Health)
-   if(string.contains(mac, "00:24:E4")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'iot', discover.extra_asset_icons['health'], nil
-   end
+    -- Withings (Nokia Health)
+    if (string.contains(mac, "00:24:E4")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'iot', discover.extra_asset_icons['health'], nil
+    end
 
-   -- Logitech
-   if(string.contains(manufacturer, "logitech")) then
-      if(string.contains(friendlyName, "Harmony")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'iot', discover.asset_icons['iot'], nil
-      else
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'multimedia', discover.asset_icons['multimedia'], nil
-      end
-   end
+    -- Logitech
+    if (string.contains(manufacturer, "logitech")) then
+        if (string.contains(friendlyName, "Harmony")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'iot', discover.asset_icons['iot'], nil
+        else
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'multimedia', discover.asset_icons['multimedia'], nil
+        end
+    end
 
-   if(names["gateway.local"] == ip) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking'], nil
-   end
+    if (names["gateway.local"] == ip) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'], nil
+    end
 
-   if(string.starts(hostname, "desktop-") or string.starts(symName, "desktop-")) then
-      interface.setHostOperatingSystem(ip, 2) -- 2 = windows
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..' (Windows)', nil
-   elseif(string.contains(hostname, "thinkpad") or string.contains(symName, "thinkpad")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'laptop', discover.asset_icons['laptop'], nil
-   elseif(string.contains(hostname, "android") or string.contains(symName, "android")) then
-      interface.setHostOperatingSystem(ip, 5) -- 5 = Android
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'phone', discover.asset_icons['phone']..' ' ..discover.android_icon, nil
-   elseif(string.contains(hostname, "%-NAS") or string.contains(symName, "%-NAS")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'nas', discover.asset_icons['nas'], nil
-   end
+    if (string.starts(hostname, "desktop-") or string.starts(symName, "desktop-")) then
+        interface.setHostOperatingSystem(ip, 1) -- 1 = windows
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. ' (Windows)', nil
+    elseif (string.contains(hostname, "thinkpad") or string.contains(symName, "thinkpad")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'laptop', discover.asset_icons['laptop'], nil
+    elseif (string.contains(hostname, "android") or string.contains(symName, "android")) then
+        interface.setHostOperatingSystem(ip, 3) -- 3 = Android
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'phone', discover.asset_icons['phone'] .. ' ' .. discover.android_icon, nil
+    elseif (string.contains(hostname, "%-NAS") or string.contains(symName, "%-NAS")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'nas', discover.asset_icons['nas'], nil
+    end
 
-   if(snmpName ~= nil) then
-      if(string.contains(snmpName, "router")
-	    or string.contains(snmpName, "switch")
-      ) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'networking', discover.asset_icons['networking']..' ('..snmpName..')', snmpName
-      elseif(string.contains(snmpName, "air")) then
-	 if(discover.debug) then io.write(debug.traceback()) end
-	 return 'wifi', discover.asset_icons['wifi']..' ('..snmpName..')', snmpName
-      end
-   end
+    if (snmpName ~= nil) then
+        if (string.contains(snmpName, "router") or string.contains(snmpName, "switch")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'networking', discover.asset_icons['networking'] .. ' (' .. snmpName .. ')', snmpName
+        elseif (string.contains(snmpName, "air")) then
+            if (discover.debug) then
+                io.write(debug.traceback())
+            end
+            return 'wifi', discover.asset_icons['wifi'] .. ' (' .. snmpName .. ')', snmpName
+        end
+    end
 
-   if(snmpName == nil) then
-      snmpName = ""
-   else
-      snmpName = ' ('..snmpName..')'
-   end
+    if (snmpName == nil) then
+        snmpName = ""
+    else
+        snmpName = ' (' .. snmpName .. ')'
+    end
 
-   if(string.contains(manufacturer, "ubiquiti")) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'networking', discover.asset_icons['networking']..snmpName, nil
-   end
+    if (string.contains(manufacturer, "ubiquiti")) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'networking', discover.asset_icons['networking'] .. snmpName, nil
+    end
 
-   if(isPrinterMDNS(mdns)) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'printer', discover.asset_icons['printer']..snmpName, nil
-   end
+    if (isPrinterMDNS(mdns)) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'printer', discover.asset_icons['printer'] .. snmpName, nil
+    end
 
-   if(isNASMDNS(mdns)) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'nas', discover.asset_icons['nas']..snmpName, nil
-   end
+    if (isNASMDNS(mdns)) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'nas', discover.asset_icons['nas'] .. snmpName, nil
+    end
 
-   if(discover.debug) then
-      tprint(ssdp)
-      tprint(mdns)
-   end
+    if (discover.debug) then
+        tprint(ssdp)
+        tprint(mdns)
+    end
 
-   -- Let's try SSH
-   ssh_rsp = probeSSH(ip)
+    -- Let's try SSH
+    ssh_rsp = probeSSH(ip)
 
-   -- Last resort is HTTP
-   http_rsp = ntop.httpGet("http://"..ip, nil, nil, 1)
-   if((http_rsp ~= nil) and (http_rsp.HTTP_HEADER ~= nil)) then
-      local server = http_rsp.HTTP_HEADER["server"]
+    -- Last resort is HTTP
+    http_rsp = ntop.httpGet("http://" .. ip, nil, nil, 1)
+    if ((http_rsp ~= nil) and (http_rsp.HTTP_HEADER ~= nil)) then
+        local server = http_rsp.HTTP_HEADER["server"]
 
-      if(server ~= nil) then
-	 if(discover.debug) then io.write("[SSH] "..server) end
-	 if(string.contains(server, "Ubuntu") or string.contains(server, "Debian") or string.contains(server, "Linux")) then
-	    interface.setHostOperatingSystem(ip, 1) -- 1 = Linux
-	    if(discover.debug) then io.write(debug.traceback()) end
-	    return 'workstation', discover.asset_icons['workstation']..' (Linux)', nil
-	 elseif(string.contains(server, "Apache")) then
-	    if(discover.debug) then io.write(debug.traceback()) end
-	    return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-	 elseif(string.contains(server, "GoAhead")) then
-	    if(discover.debug) then io.write(debug.traceback()) end
-	    return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), nil
-	 elseif(string.contains(server, "Microsoft")) then
-	    if(discover.debug) then io.write(debug.traceback()) end
-	    interface.setHostOperatingSystem(ip, 2) -- 2 = windows
-	    return 'workstation', discover.asset_icons['workstation']..' (Windows)', nil
-	 elseif(string.contains(server, "Virata%-EmWeb") or string.contains(server, "HP%-ChaiSOE") -- Usually LaserJet
-		   or string.contains(server, "EWS%-NIC5") -- Xerox
-		   or string.contains(server, "RomPager") -- Xerox
-		   or string.contains(server, "eHTTP") -- Aruba
-		   or string.contains(server, "Web-Server") -- Ricoh
-	 ) then
-	    if(discover.debug) then io.write(debug.traceback()) end
-	    return 'printer', discover.asset_icons['printer'], nil
-	 end
-      end
+        if (server ~= nil) then
+            if (discover.debug) then
+                io.write("[SSH] " .. server)
+            end
+            if (string.contains(server, "Ubuntu") or string.contains(server, "Debian") or
+                string.contains(server, "Linux")) then
+                interface.setHostOperatingSystem(ip, 4) -- 4 = Linux
+                if (discover.debug) then
+                    io.write(debug.traceback())
+                end
+                return 'workstation', discover.asset_icons['workstation'] .. ' (Linux)', nil
+            elseif (string.contains(server, "Apache")) then
+                if (discover.debug) then
+                    io.write(debug.traceback())
+                end
+                return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+            elseif (string.contains(server, "GoAhead")) then
+                if (discover.debug) then
+                    io.write(debug.traceback())
+                end
+                return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), nil
+            elseif (string.contains(server, "Microsoft")) then
+                if (discover.debug) then
+                    io.write(debug.traceback())
+                end
+                interface.setHostOperatingSystem(ip, 1) -- 1 = windows
+                return 'workstation', discover.asset_icons['workstation'] .. ' (Windows)', nil
+            elseif (string.contains(server, "Virata%-EmWeb") or string.contains(server, "HP%-ChaiSOE") -- Usually LaserJet
+            or string.contains(server, "EWS%-NIC5") -- Xerox
+            or string.contains(server, "RomPager") -- Xerox
+            or string.contains(server, "eHTTP") -- Aruba
+            or string.contains(server, "Web-Server") -- Ricoh
+            ) then
+                if (discover.debug) then
+                    io.write(debug.traceback())
+                end
+                return 'printer', discover.asset_icons['printer'], nil
+            end
+        end
 
-      --io.write(ip.."\n")
-      --tprint(http_rsp.HTTP_HEADER)
-   end
+        -- io.write(ip.."\n")
+        -- tprint(http_rsp.HTTP_HEADER)
+    end
 
-   if(ssh_rsp ~= nil) then
-      if(discover.debug) then io.write(debug.traceback()) end
-      return 'workstation', discover.asset_icons['workstation']..appendSSHOS(mac, ip), ssh_rsp
-   end
+    if (ssh_rsp ~= nil) then
+        if (discover.debug) then
+            io.write(debug.traceback())
+        end
+        return 'workstation', discover.asset_icons['workstation'] .. appendSSHOS(mac, ip), ssh_rsp
+    end
 
-   if(discover.debug) then io.write(debug.traceback()) end
-   return 'unknown', "", nil
+    if (discover.debug) then
+        io.write(debug.traceback())
+    end
+    return 'unknown', "", nil
+end
+
+
+local function remove_xml_comments(xml)
+    -- Remove comments using gsub with pattern matching
+    return xml:gsub("<!%-%-.-%-%->", "")
+end
+	
+-- #############################################################################
+
+-- Returns true when the URL authority is exactly the host that sent the reply
+local function ssdp_location_is_sender(url, host)
+    local authority = url:match("^https?://([^/?#]*)")
+
+    if isEmptyString(authority) or authority:find("@", 1, true) then
+        return false
+    end
+
+    return (authority == host) or (authority:match("^(.-):%d+$") == host)
 end
 
 -- #############################################################################
 
 local function analyzeSSDP(ssdp)
-   local rsp = {}
+    local rsp = {}
 
-   -- Cleanup to avoid SSRF:
-   -- - Don't be tricked into issuing queries to ourselves
-   -- - Only query the same IP of the one that has been discovered
-   for url, host in pairs(ssdp) do
-      if ntop.isLocalInterfaceAddress(host) then
-	 -- No queries to ourselves
-	 ssdp[url] = nil
-      end
+    -- Cleanup to avoid SSRF:
+    -- - Don't be tricked into issuing queries to ourselves
+    -- - Only query the same IP of the one that has been discovered
+    for url, host in pairs(ssdp) do
+        if ntop.isLocalInterfaceAddress(host) then
+            -- No queries to ourselves
+            ssdp[url] = nil
+        end
 
-      if not url:starts("http://"..host) and not url:starts("https://"..host) then
-	 -- Not using HTTP or HTTPs, or the host is telling us to contact
-	 -- another host different from itself. Skip to avoid SSRF
-	 ssdp[url] = nil
-      end
-   end
+        if not ssdp_location_is_sender(url, host) then
+            -- Not using HTTP or HTTPs, or the host is telling us to contact
+            -- another host different from itself. Skip to avoid SSRF
+            ssdp[url] = nil
+        end
+    end
 
-   -- NOTE: use page_utils.safe_html to protect agains malicious SSDP responses trying to inject code
-   for url,host in pairs(ssdp) do
-      url = ntop.httpPurifyParam(url) -- Cleanup against XSS
+    -- NOTE: use safeHtml to protect agains malicious SSDP responses trying to inject code
+    for url, host in pairs(ssdp) do
+        url = ntop.httpPurifyParam(url) -- Cleanup against XSS
 
-      local hresp = ntop.httpGet(url, "", "", 3 --[[ seconds ]])
-      local manufacturer = ""
-      local modelDescription = ""
-      local modelName = ""
-      local icon = ""
-      local base_url = getbaseURL(url)
-      local services = { }
-      local friendlyName = ""
+        local hresp = ntop.httpGet(url, "", "", 3 --[[ seconds ]] )
+        local manufacturer = ""
+        local modelDescription = ""
+        local modelName = ""
+        local icon = ""
+        local base_url = getbaseURL(url)
+        local services = {}
+        local friendlyName = ""
 
-      if(hresp ~= nil) and (hresp["CONTENT"] ~= nil) then
-	 local xml = newParser()
-	 local r = xml:ParseXmlText(hresp["CONTENT"])
+        if (hresp ~= nil) and (hresp["CONTENT"] ~= nil) then
+            local xml = newParser()
+            local r = xml:ParseXmlText(remove_xml_comments(hresp["CONTENT"]))
 
-	 if(r.root ~= nil) then
-	    if(r.root.device ~= nil) then
-	       if(r.root.device.friendlyName ~= nil) then
-		  friendlyName = page_utils.safe_html(r.root.device.friendlyName:value())
-	       end
-	       if(r.root.device.modelName ~= nil) then
-		  modelName = page_utils.safe_html(r.root.device.modelName:value())
-	       end
-	       if(r.root.device.modelDescription ~= nil) then
-		  modelDescription = page_utils.safe_html(r.root.device.modelDescription:value())
-	       end
-	    end
-	 end
+            if (r.root ~= nil) then
+                if (r.root.device ~= nil) then
+                    if (r.root.device.friendlyName ~= nil) then
+                        friendlyName = safeHtml(r.root.device.friendlyName:value())
+                    end
+                    if (r.root.device.modelName ~= nil) then
+                        modelName = safeHtml(r.root.device.modelName:value())
+                    end
+                    if (r.root.device.modelDescription ~= nil) then
+                        modelDescription = safeHtml(r.root.device.modelDescription:value())
+                    end
+                end
+            end
 
-	 if(r.root ~= nil) then
-	    if(r.root.device ~= nil) then
-	       if(r.root.device.manufacturer ~= nil) then
-		  manufacturer = page_utils.safe_html(r.root.device.manufacturer:value())
-	       end
+            if (r.root ~= nil) then
+                if (r.root.device ~= nil) then
+                    if (r.root.device.manufacturer ~= nil) then
+                        manufacturer = safeHtml(r.root.device.manufacturer:value())
+                    end
 
-	       if(r.root.device.serviceList ~= nil) then
-		  local k,v
-		  local serviceList = r.root.device.serviceList:children()
+                    if (r.root.device.serviceList ~= nil) then
+                        local k, v
+                        local serviceList = r.root.device.serviceList:children()
 
-		  for k,v in pairs(serviceList) do
-		     if(v.serviceId ~= nil) then
-			local value = page_utils.safe_html(v.serviceId:value())
-			if(value ~= nil) then
-			   if(discover.debug) then io.write(value.."\n") end
+                        for k, v in pairs(serviceList) do
+                            if (v.serviceId ~= nil) then
+                                local value = safeHtml(v.serviceId:value())
+                                if (value ~= nil) then
+                                    if (discover.debug) then
+                                        io.write(value .. "\n")
+                                    end
 
-			   table.insert(services, value)
-			end
-		     end
-		  end
-	       end
+                                    services[#services + 1] = value
+                                end
+                            end
+                        end
+                    end
 
-	       if(r.root.device.iconList ~= nil) then
-		  local k,v
-		  local iconList = r.root.device.iconList:children()
-		  local lastwidth = 999
+                    if (r.root.device.iconList ~= nil) then
+                        local k, v
+                        local iconList = r.root.device.iconList:children()
+                        local lastwidth = 999
 
-		  for k,v in pairs(iconList) do
-		     if((v.mimetype ~= nil) and (v.width ~= nil) and (v.url ~= nil)) then
-			local mime = v.mimetype:value()
-			local width = tonumber(v.width:value())
+                        for k, v in pairs(iconList) do
+                            if ((v.mimetype ~= nil) and (v.width ~= nil) and (v.url ~= nil)) then
+                                local mime = v.mimetype:value()
+                                local width = tonumber(v.width:value())
 
-			if(width <= lastwidth) then
-			   if((mime == "image/jpeg") or (mime == "image/png") or (mime == "image/gif")) then
+                                if (width <= lastwidth) then
+                                    if ((mime == "image/jpeg") or (mime == "image/png") or (mime == "image/gif")) then
 
-			      if(string.sub(v.url:value(), 1, 1) == "/") then
-				 local slash = string.split(base_url, "/")
+                                        if (string.sub(v.url:value(), 1, 1) == "/") then
+                                            local slash = string.split(base_url, "/")
 
-				 if(slash ~= nil) then
-				    base_url = ""
+                                            if (slash ~= nil) then
+                                                base_url = ""
 
-				    for i,v in pairs(slash) do
-				       -- io.write(i.." =>"..v.." ["..base_url.."]\n")
-				       if(i < 4) then
-					  if(i > 1) then base_url = base_url .. "/" end
-					  base_url = base_url .. v
-				       end
-				    end
-				 end
-			      end
+                                                for i, v in pairs(slash) do
+                                                    -- io.write(i.." =>"..v.." ["..base_url.."]\n")
+                                                    if (i < 4) then
+                                                        if (i > 1) then
+                                                            base_url = base_url .. "/"
+                                                        end
+                                                        base_url = base_url .. v
+                                                    end
+                                                end
+                                            end
+                                        end
 
-			      if((string.sub(base_url, -1) ~= "/")
-				    and (string.sub(v.url:value(), 1, 1) ~= "/"))
-			      then
-				 base_url = base_url .. "/"
-			      end
+                                        if ((string.sub(base_url, -1) ~= "/") and
+                                            (string.sub(v.url:value(), 1, 1) ~= "/")) then
+                                            base_url = base_url .. "/"
+                                        end
 
-			      icon = "<img src="..ntop.httpPurifyParam(base_url..v.url:value())..">"
-			      -- io.write(icon.."\n")
-			      lastwidth = width -- Pick the smallest icon
-			   end
-			end
-		     end
-		  end
-	       end
-	    end
-	 end
+                                        icon = "<img src=" .. ntop.httpPurifyParam(base_url .. v.url:value()) .. ">"
+                                        -- io.write(icon.."\n")
+                                        lastwidth = width -- Pick the smallest icon
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
 
-	 if(discover.debug) then  io.write(hresp["CONTENT"].."\n") end
-      end
+            if (discover.debug) then
+                io.write(hresp["CONTENT"] .. "\n")
+            end
+        end
 
-      if(rsp[host] ~= nil) then
-	 rsp[host].url = rsp[host].url .. "<br><A HREF="..url..">"..friendlyName.."</A>"
+        if (rsp[host] ~= nil) then
+            rsp[host].url = rsp[host].url .. "<br><A HREF=" .. url .. ">" .. friendlyName .. "</A>"
 
-	 for _,v in ipairs(services) do
-	    table.insert(rsp[host].services, v)
-	 end
-      else
-	 rsp[host] = { ["icon"] = icon, ["manufacturer"] = manufacturer, ["url"] = "<A HREF="..url..">"..friendlyName.."</A>",
-	    ["services"] = services, ["modelName"] = modelName,
-	    ["modelDescription"] = modelDescription, ["friendlyName"] = friendlyName }
-      end
+            for _, v in ipairs(services) do
+                rsp[host].services[#rsp[host].services + 1] = v
+            end
+        else
+            rsp[host] = {
+                ["icon"] = icon,
+                ["manufacturer"] = manufacturer,
+                ["url"] = "<A HREF=" .. url .. ">" .. friendlyName .. "</A>",
+                ["services"] = services,
+                ["modelName"] = modelName,
+                ["modelDescription"] = modelDescription,
+                ["friendlyName"] = friendlyName
+            }
+        end
 
-      if(discover.debug) then io.write(rsp[host].icon .. " / " ..rsp[host].manufacturer .. " / " ..rsp[host].url .. " / " .. "\n") end
-   end
+        if (discover.debug) then
+            io.write(rsp[host].icon .. " / " .. rsp[host].manufacturer .. " / " .. rsp[host].url .. " / " .. "\n")
+        end
+    end
 
-   return rsp
+    return rsp
 end
 
 -- ################################################################################
 
 local function discoverStatus(code, message)
-   return {code = code or '', message = message or ''}
+    return {
+        code = code or '',
+        message = message or ''
+    }
 
 end
 
 -- #############################################################################
 
 local function discoverARP()
-   if(discover.debug) then io.write("Starting ARP discovery...\n") end
-   local status = discoverStatus("OK")
-   local res = {}
-   local ghost_macs  = {}
-   local ghost_found = false
-   local arp_mdns = interface.arpScanHosts() -- List of hosts that reply to ARP
-   local now = os.time()
-   
-   if(discover.debug) then io.write("Completed ARP discovery...\n") end
+    if (discover.debug) then
+        io.write("Starting ARP discovery...\n")
+    end
+    local status = discoverStatus("OK")
+    local res = {}
+    local ghost_macs = {}
+    local ghost_found = false
+    local arp_mdns = interface.arpScanHosts() -- List of hosts that reply to ARP
+    local now = os.time()
 
-   if(arp_mdns == nil) then
-      status = discoverStatus("ERROR", i18n("discover.err_unable_to_arp_discovery"))
-   else
-      -- Add the known macs to the list
-      local known_macs = interface.getMacsInfo(nil, 999, 0, false, true, nil, nil, nil, nil, nil) or {}
+    if (discover.debug) then
+        io.write("Completed ARP discovery...\n")
+    end
 
-      for _,hmac in pairs(known_macs.macs) do
-	 if((hmac["bytes.sent"] > 0)
-	       and ((now - hmac["seen.last"])  < 60)
-	    and (hmac["location"] == "lan")) then -- Skip silent/wan hosts
+    if (arp_mdns == nil) then
+        status = discoverStatus("ERROR", i18n("discover.err_unable_to_arp_discovery"))
+    else
+        -- Add the known macs to the list
+        local known_macs = interface.getMacsInfo(nil, 999, 0, false, true, nil, nil, nil, nil, nil) or {}
 
-	    if(arp_mdns[hmac.mac] == nil) then
-	       -- This is a known host that has *NOT* been observed via ARP scan
-	       local ips = interface.findHostByMac(hmac.mac) or {}
-	       
-	       if(discover.debug) then io.write("Missing MAC "..hmac.mac.."\n") end
+        for _, hmac in pairs(known_macs.macs) do
+            if ((hmac["bytes.sent"] > 0) and ((now - hmac["seen.last"]) < 60) and (hmac["location"] == "lan")) then -- Skip silent/wan hosts
 
-	       for k,v in pairs(ips) do
-		  arp_mdns[hmac.mac] = k
-		  ghost_macs[hmac.mac] = k
-		  ghost_found = true
-	       end
-	    end
-	 end
-      end
-   end
+                if (arp_mdns[hmac.mac] == nil) then
+                    -- This is a known host that has *NOT* been observed via ARP scan
+                    local ips = interface.findHostByMac(hmac.mac) or {}
 
-   return { status = status, ghost_macs = ghost_macs, ghost_found = ghost_found, arp_mdns = arp_mdns }
+                    if (discover.debug) then
+                        io.write("Missing MAC " .. hmac.mac .. "\n")
+                    end
+
+                    for k, v in pairs(ips) do
+                        arp_mdns[hmac.mac] = k
+                        ghost_macs[hmac.mac] = k
+                        ghost_found = true
+                    end
+                end
+            end
+        end
+    end
+
+    return {
+        status = status,
+        ghost_macs = ghost_macs,
+        ghost_found = ghost_found,
+        arp_mdns = arp_mdns
+    }
 end
 
 -- #############################################################################
 
 local function discovery2config(interface_name)
-   local cached = ntop.getCache(getCachedDiscoveryKey(interface_name))
-   local disc = json.decode(cached)
+    local cached = ntop.getCache(getCachedDiscoveryKey(interface_name))
+    local disc = json.decode(cached)
 
-   if isEmptyString(cached) or not disc then
-      return
-   end
+    if isEmptyString(cached) or not disc then
+        return nil
+    end
 
-   disc["devices"] = ntop.lrangeCache(getCachedDiscoveredDevicesKey(interface_name), 0, -1) or {}
-   for i=1, #disc["devices"] do
-      disc["devices"][i] = json.decode(disc["devices"][i])
-   end
+    disc["devices"] = ntop.lrangeCache(getCachedDiscoveredDevicesKey(interface_name), 0, -1) or {}
+    for i = 1, #disc["devices"] do
+        local discovered_device = json.decode(disc["devices"][i])
+        local mac_info = interface.getMacInfo(discovered_device.mac)
 
-   if(disc and false) then
-      for _,dev in pairs(disc.devices) do
-	 if(dev.device_type.."" ~= "unknown") then
-	    --print(dev.mac .. " = " .. dev.device_type .. "\n")
-	 end
-      end
-   end
+        if mac_info ~= nil then
+            if not isEmptyString(mac_info.devtype) and mac_info.devtype ~= 0 then
+                discovered_device["device_label"] = discover.devtype2icon(mac_info.devtype)
+                discovered_device["device_type"] = mac_info.devtype
+            end
+        end
+        disc["devices"][i] = discovered_device
+    end
 
-   return disc
+    if (disc and false) then
+        for _, dev in pairs(disc.devices) do
+            if (dev.device_type .. "" ~= "unknown") then
+                -- print(dev.mac .. " = " .. dev.device_type .. "\n")
+            end
+        end
+    end
+
+    return disc
 end
 
 -- #############################################################################
 
 function discover.discover2table(interface_name, recache)
-   local snmp_community = ntop.getPref("ntopng.prefs.default_snmp_community")
+    local snmp_community = ntop.getPref("ntopng.prefs.default_snmp_community")
 
-   if isEmptyString(snmp_community) then
-      snmp_community = "public"
+    if isEmptyString(snmp_community) then
+        snmp_community = "public"
+    end
+
+    interface.select(tostring(interface_name))
+
+    local cached = discovery2config(interface_name)
+
+    if not recache then
+        if cached then
+            return cached
+              -- or { status = discoverStatus("ERROR", i18n("discover.error_unable_to_decode_json")) }
+        else
+            return {
+                status = discoverStatus("NOCACHE", i18n("discover.error_no_discovery_cached"))
+            }
+        end
+    end
+
+    setDiscoveryProgress("[0 %]")
+
+    -- ARP
+    local arp_d = discoverARP()
+    if arp_d["status"]["code"] ~= "OK" then
+        return {
+            status = arp_d["status"]
+        }
+    end
+
+    setDiscoveryProgress("[10 %]")
+
+    local arp_mdns = arp_d["arp_mdns"] or {}
+    local ghost_macs = arp_d["ghost_macs"]
+    local ghost_found = arp_d["ghost_found"]
+
+    -- SSDP, MDNS and SNMP
+    if (discover.debug) then
+        io.write("Starting SSDP discovery...\n")
+    end
+    local ssdp = interface.discoverHosts(3)
+    local osx_devices = {}
+    for mac, ip in pairsByValues(arp_mdns, asc) do
+        if ((ip == "0.0.0.0") or (ip == "255.255.255.255")) then
+            -- This does not look like a good IP/MAC combination
+        elseif (string.find(mac, ":") ~= nil) then
+            local manufacturer = get_manufacturer_mac(mac)
+
+            -- This is an ARP entry
+            if (discover.debug) then
+                io.write("Attempting to resolve " .. ip .. "\n")
+            end
+            local sym = ntop.getResolvedName(ip) -- placeholder resolution just to fill-up the cache
+
+            interface.mdnsQueueNameToResolve(ip)
+
+            if interface.snmpGetBatch then
+                interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.1.5.0", 0)
+
+                if (string.contains(manufacturer, "HP") or string.contains(manufacturer, "Hewlett Packard") or
+                    string.contains(manufacturer, "Hon Hai")) then
+                    -- Query printer model
+                    interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.25.3.2.1.3.1", 0)
+                end
+            end
+        else
+            local ip_addr = mac
+            local mdns_services = ip
+
+            if (discover.debug) then
+                io.write("[MDNS Services] '" .. ip_addr .. "' = '" .. mdns_services .. "'\n")
+            end
+
+            if (string.contains(mdns_services, '_sftp')) then
+                osx_devices[ip_addr] = 1
+            end
+
+            ntop.resolveName(ip) -- Force address resolution
+        end
+    end
+
+    setDiscoveryProgress("[30 %]")
+
+    if (discover.debug) then
+        io.write("Analyzing SSDP...\n")
+    end
+    ssdp = analyzeSSDP(ssdp)
+
+    local show_services = false
+
+    setDiscoveryProgress("[40 %]")
+
+    if (discover.debug) then
+        io.write("Collecting MDNS responses\n")
+    end
+    local mdns = interface.mdnsReadQueuedResponses()
+
+    if (discover.debug) then
+        for ip, rsp in pairsByValues(mdns, asc) do
+            io.write("[MDNS Resolver] " .. ip .. " = " .. rsp .. "\n")
+        end
+    end
+
+    for ip, _ in pairs(osx_devices) do
+        if (discover.debug) then
+            io.write("[MDNS OSX] Querying " .. ip .. "\n")
+        end
+        interface.mdnsQueueAnyQuery(ip, "_sftp-ssh._tcp.local")
+    end
+
+    setDiscoveryProgress("[50 %]")
+
+    if (discover.debug) then
+        io.write("Collecting SNMP responses\n")
+    end
+    local snmp = {}
+
+    if interface.snmpReadResponses then
+        snmp = interface.snmpReadResponses() or {}
+    end
+
+    -- Query sysDescr for the hosts that have replied
+    for ip, rsp in pairsByValues(snmp, asc) do
+        -- io.write("Requesting sysDescr for "..ip.."\n")
+        interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.1.1.0", 0)
+    end
+    setDiscoveryProgress("[60 %]")
+
+    if (discover.debug) then
+        io.write("Collecting MDNS OSX responses\n")
+    end
+    osx_devices = interface.mdnsReadQueuedResponses()
+    if (discover.debug) then
+        io.write("Collected MDNS OSX responses\n")
+    end
+
+    if (discover.debug) then
+        for a, b in pairs(osx_devices) do
+            io.write("[MDNS OSX] " .. a .. " / " .. b .. "\n")
+        end
+    end
+    setDiscoveryProgress("[70 %]")
+
+    local snmpSysDescr = {}
+
+    if interface.snmpReadResponses then
+        snmpSysDescr = interface.snmpReadResponses()
+    end
+
+    if (discover.debug) then
+        for ip, rsp in pairsByValues(snmpSysDescr, asc) do
+            io.write("[SNMP Descr] " .. ip .. " OK\n")
+        end
+    end
+
+    if (discover.debug) then
+        for ip, rsp in pairsByValues(snmp, asc) do
+            io.write("[SNMP] " .. ip .. " = [" .. rsp .. "][")
+            if (snmpSysDescr[i] ~= nil) then
+                io.write(snmpSysDescr[i])
+            end
+            io.write("]\n")
+        end
+    end
+
+    setDiscoveryProgress("[80 %]")
+
+    -- Time to pack the results in a table...
+    local status = discoverStatus("OK")
+    local res = {}
+    local too_many_devices_discovered = false
+
+    for mac, ip in pairsByValues(arp_mdns, asc) do
+        if ((string.find(mac, ":") == nil) or (ip == "0.0.0.0") or (ip == "255.255.255.255")) then
+            goto continue
+        end
+
+        local entry = {
+            ip = ip,
+            mac = mac,
+            ghost = false,
+            information = {}
+        }
+
+        local host = interface.getHostInfo(ip, 0) -- no VLAN
+        local sym, device_type, device_label, device_info
+        local manufacturer
+        local services = ""
+        local symIP = mdns[ip]
+
+        if (host ~= nil) then
+            sym = host["name"]
+        else
+            sym = ntop.getResolvedName(ip)
+        end
+
+        if not isEmptyString(sym) and sym ~= ip then
+            entry["sym"] = sym
+        end
+
+        if not isEmptyString(symIP) and symIP ~= ip then
+            entry["symIP"] = symIP
+        end
+
+        if not isEmptyString(arp_mdns[ip]) then
+            entry["information"] = table.merge(entry["information"], string.split(arp_mdns[ip], ";"))
+        end
+
+        if ssdp[ip] then
+            if ssdp[ip].icon then
+                entry["icon"] = ssdp[ip].icon
+            end
+            if ssdp[ip].modelName then
+                entry["modelName"] = ssdp[ip].modelName
+            end
+            if ssdp[ip].url then
+                entry["url"] = ssdp[ip].url
+            end
+            if ssdp[ip].manufacturer then
+                entry["manufacturer"] = ssdp[ip].manufacturer
+            end
+            if ssdp[ip].services then
+                entry["information"] = table.merge(entry["information"], ssdp[ip].services)
+                for i, name in ipairs(ssdp[ip].services) do
+                    services = services .. ";" .. name
+                end
+            end
+        end
+
+        if (ghost_macs[mac] ~= nil) then
+            entry["ghost"] = true
+        end
+
+        device_type, device_label, device_info = findDevice(ip, mac, entry["manufacturer"] or get_manufacturer_mac(mac),
+            arp_mdns[ip], services, ssdp[ip], mdns, snmp[ip], snmpSysDescr[ip], osx_devices[ip], sym)
+
+        local mac_info = interface.getMacInfo(mac)
+
+        if isEmptyString(device_label) then
+            entry["device_label_noicon"] = device_label
+
+            if mac_info ~= nil then
+                device_label = discover.devtype2icon(mac_info.devtype)
+            end
+        end
+
+        if mac_info ~= nil then
+            entry["os_type"] = mac_info.operatingSystem
+        end
+
+        ntop.setMacDeviceType(mac, discover.devtype2id(device_type), false) -- false means don't overwrite if already set to ~= unknown
+
+        entry["device_type"] = device_type
+        entry["device_label"] = device_label
+
+        if (device_info ~= nil) then
+            entry["device_info"] = device_info
+        end
+
+        if (discover.debug) then
+            io.write("======================\n")
+            tprint(entry)
+            io.write("======================\n")
+        end
+
+        res[#res + 1] = entry
+        if #res >= discover.MAX_DISCOVERED_DEVICES then
+            too_many_devices_discovered = true
+            break
+        end
+
+        ::continue::
+    end
+
+    setDiscoveryProgress("")
+
+    -- Cleanup old data
+    ntop.delCache(getCachedDiscoveryKey(interface_name))
+    ntop.delCache(getCachedDiscoveredDevicesKey(interface_name))
+
+    -- Save the discovery status
+    local response = {
+        status = status,
+        ghost_found = ghost_found,
+        discovery_timestamp = os.time(),
+        too_many_devices_discovered = too_many_devices_discovered
+    }
+
+    ntop.setCache(getCachedDiscoveryKey(interface_name), json.encode(response))
+
+    -- Save the actually discovered devices
+    local records_cache = getCachedDiscoveredDevicesKey(interface_name)
+
+    -- res is already trimmed at MAX_DISCOVERED_DEVICES, no need to check it
+    for i = 1, #res do
+        ntop.lpushCache(records_cache, json.encode(res[i]))
+    end
+
+    return response
+end
+
+-- ################################################################################
+
+function discover.discovery_function(ifname, ifstats)
+   if not interface.isDiscoverableInterface() then
+      return
    end
 
-   interface.select(interface_name)
+   ntop.setPref("ntopng.prefs.is_periodic_network_discovery_running.ifid_" .. interface.getId(), "1")
+   ntop.setCache("ntopng.cache.network_discovery_executed.ifid_" .. interface.getId(), "1", 300)
+	      
+   traceError(TRACE_INFO,TRACE_CONSOLE, "[Discover] Started periodic discovery on interface "..ifname)
 
-   local cached = discovery2config(interface_name)
+   local res = discover.discover2table(ifname, true --[[ recache --]])
 
-   if recache ~= true then
-      if not isEmptyString(cached) then
-	 return cached or {status = discoverStatus("ERROR", i18n("discover.error_unable_to_decode_json"))}
-      else
-	 return {status = discoverStatus("NOCACHE", i18n("discover.error_no_discovery_cached"))}
-      end
+   traceError(TRACE_INFO,TRACE_CONSOLE, "[Discover] Completed periodic discovery on interface "..ifname)
+   discover.clearNetworkDiscovery(ifstats.id)
+     
+   ntop.setPref("ntopng.prefs.is_periodic_network_discovery_running.ifid_" .. interface.getId(), "0")
+end
+
+-- ################################################################################
+
+function discover.get_model(value)
+   if not value then return "" end
+
+   local m = discover.apple_products[value]
+
+   if(m ~= nil) then
+      return(m)
+   else
+      return(value)
    end
-
-   setDiscoveryProgress("[0 %]")
-   -- ARP
-   local arp_d = discoverARP()
-   if arp_d["status"]["code"] ~= "OK" then
-      return {status = arp_d["status"]}
-   end
-
-   setDiscoveryProgress("[10 %]")
-
-   local arp_mdns = arp_d["arp_mdns"] or {}
-   local ghost_macs = arp_d["ghost_macs"]
-   local ghost_found = arp_d["ghost_found"]
-
-   -- SSDP, MDNS and SNMP
-   if(discover.debug) then io.write("Starting SSDP discovery...\n") end
-   local ssdp = interface.discoverHosts(3)
-   local osx_devices = {}
-
-   for mac,ip in pairsByValues(arp_mdns, asc) do
-      if((ip == "0.0.0.0") or (ip == "255.255.255.255")) then
-	 -- This does not look like a good IP/MAC combination
-      elseif(string.find(mac, ":") ~= nil) then
-	 local manufacturer = get_manufacturer_mac(mac)
-
-	 -- This is an ARP entry
-	 if(discover.debug) then io.write("Attempting to resolve "..ip.."\n") end
-	 local sym = ntop.getResolvedName(ip) -- dummy resolution just to fill-up the cache
-
-	 interface.mdnsQueueNameToResolve(ip)
-
-	 if interface.snmpGetBatch then
-	    interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.1.5.0", 0)
-
-	    if(string.contains(manufacturer, "HP")
-	       or string.contains(manufacturer, "Hewlett Packard")
-	       or string.contains(manufacturer, "Hon Hai")
-	    ) then
-	       -- Query printer model
-	       interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.25.3.2.1.3.1", 0)
-	    end
-	 end
-      else
-	 local ip_addr = mac
-	 local mdns_services = ip
-
-	 if(discover.debug) then io.write("[MDNS Services] '"..ip_addr .. "' = '" ..mdns_services.."'\n") end
-
-	 if(string.contains(mdns_services, '_sftp')) then
-	    osx_devices[ip_addr] = 1
-	 end
-
-	 ntop.resolveName(ip) -- Force address resolution
-      end
-   end
-
-   setDiscoveryProgress("[30 %]")
-
-   if(discover.debug) then io.write("Analyzing SSDP...\n") end
-   ssdp = analyzeSSDP(ssdp)
-
-   local show_services = false
-
-   setDiscoveryProgress("[40 %]")
-
-   if(discover.debug) then io.write("Collecting MDNS responses\n") end
-   local mdns = interface.mdnsReadQueuedResponses()
-
-   if(discover.debug) then
-      for ip,rsp in pairsByValues(mdns, asc) do
-	 io.write("[MDNS Resolver] "..ip.." = "..rsp.."\n")
-      end
-   end
-
-   for ip,_ in pairs(osx_devices) do
-      if(discover.debug) then io.write("[MDNS OSX] Querying "..ip.. "\n") end
-      interface.mdnsQueueAnyQuery(ip, "_sftp-ssh._tcp.local")
-   end
-
-   setDiscoveryProgress("[50 %]")
-
-   if(discover.debug) then io.write("Collecting SNMP responses\n") end
-   local snmp = {}
-
-   if interface.snmpReadResponses then
-      snmp = interface.snmpReadResponses() or {}
-   end
-
-   -- Query sysDescr for the hosts that have replied
-   for ip,rsp in pairsByValues(snmp , asc) do
-      -- io.write("Requesting sysDescr for "..ip.."\n")
-      interface.snmpGetBatch(ip, snmp_community, "1.3.6.1.2.1.1.1.0", 0)
-   end
-   setDiscoveryProgress("[60 %]")
-
-   if(discover.debug) then io.write("Collecting MDNS OSX responses\n") end
-   osx_devices = interface.mdnsReadQueuedResponses()
-   if(discover.debug) then io.write("Collected MDNS OSX responses\n") end
-
-   if(discover.debug) then
-      for a,b in pairs(osx_devices) do
-	 io.write("[MDNS OSX] "..a.." / ".. b.. "\n")
-      end
-   end
-   setDiscoveryProgress("[70 %]")
-
-   local snmpSysDescr = {}
-
-   if interface.snmpReadResponses then
-      snmpSysDescr = interface.snmpReadResponses()
-   end
-
-   if(discover.debug) then
-      for ip,rsp in pairsByValues(snmpSysDescr, asc) do
-	 io.write("[SNMP Descr] "..ip.." OK\n")
-      end
-   end
-
-   if(discover.debug) then
-      for ip,rsp in pairsByValues(snmp, asc) do
-	 io.write("[SNMP] "..ip.." = ["..rsp.."][")
-         if(snmpSysDescr[i] ~= nil) then io.write(snmpSysDescr[i]) end
-         io.write("]\n")
-      end
-   end
-
-   setDiscoveryProgress("[80 %]")
-
-   -- Time to pack the results in a table...
-   local status = discoverStatus("OK")
-   local res = {}
-   local too_many_devices_discovered = false
-
-   for mac, ip in pairsByValues(arp_mdns, asc) do
-      if((string.find(mac, ":") == nil)
-	    or (ip == "0.0.0.0")
-	 or (ip == "255.255.255.255")) then
-	 goto continue
-      end
-
-      local entry = {ip = ip, mac = mac, ghost = false, information = {}}
-
-      local host = interface.getHostInfo(ip, 0) -- no VLAN
-      local sym, device_type, device_label
-      local manufacturer
-      local services = ""
-      local symIP = mdns[ip]
-
-      if(host ~= nil) then sym = host["name"] else sym = ntop.getResolvedName(ip) end
-
-      if not isEmptyString(sym) and sym ~= ip then
-	 entry["sym"] = sym
-      end
-
-      if not isEmptyString(symIP) and symIP ~= ip then
-	 entry["symIP"] = symIP
-      end
-
-      if not isEmptyString(arp_mdns[ip]) then
-	 entry["information"] = table.merge(entry["information"], string.split(arp_mdns[ip], ";"))
-      end
-
-      if ssdp[ip] then
-	 if ssdp[ip].icon then entry["icon"] = ssdp[ip].icon end
-	 if ssdp[ip].modelName then entry["modelName"] = ssdp[ip].modelName end
-	 if ssdp[ip].url then entry["url"] = ssdp[ip].url end
-	 if ssdp[ip].manufacturer then entry["manufacturer"] = ssdp[ip].manufacturer end
-	 if ssdp[ip].services then
-	    entry["information"] = table.merge(entry["information"], ssdp[ip].services)
-	    for i, name in ipairs(ssdp[ip].services) do services = services .. ";" .. name end
-	 end
-      end
-
-      if(ghost_macs[mac] ~= nil) then entry["ghost"] = true end
-
-      device_type, device_label, device_info = findDevice(ip, mac, entry["manufacturer"] or get_manufacturer_mac(mac),
-                                                          arp_mdns[ip], services, ssdp[ip],
-                                                          mdns, snmp[ip], snmpSysDescr[ip],
-                                                          osx_devices[ip], sym)
-
-      local mac_info = interface.getMacInfo(mac)
-
-      if isEmptyString(device_label) then
-         entry["device_label_noicon"] = device_label
-
-	 if mac_info ~= nil then
-	    device_label = discover.devtype2icon(mac_info.devtype)
-	 end
-      end
-
-      if mac_info ~= nil then
-	 entry["os_type"] = mac_info.operatingSystem
-      end
-
-      ntop.setMacDeviceType(mac, discover.devtype2id(device_type), false) -- false means don't overwrite if already set to ~= unknown
-
-      entry["device_type"] = device_type
-      entry["device_label"] = device_label
-
-      if(device_info ~= nil) then
-	 entry["device_info"] = device_info
-      end
-
-      if(discover.debug) then
-	 io.write("======================\n")
-	 tprint(entry)
-	 io.write("======================\n")
-      end
-
-      res[#res + 1] = entry
-      if #res >= discover.MAX_DISCOVERED_DEVICES then
-	 too_many_devices_discovered = true
-	 break
-      end
-
-      ::continue::
-   end
-
-   setDiscoveryProgress("")
-
-   -- Cleanup old data
-   ntop.delCache(getCachedDiscoveryKey(interface_name))
-   ntop.delCache(getCachedDiscoveredDevicesKey(interface_name))
-
-   -- Save the discovery status
-   local response = {status = status, ghost_found = ghost_found, discovery_timestamp = os.time(), too_many_devices_discovered = too_many_devices_discovered}
-   ntop.setCache(getCachedDiscoveryKey(interface_name), json.encode(response))
-
-   -- Save the actually discovered devices
-   local records_cache = getCachedDiscoveredDevicesKey(interface_name)
-
-   -- res is already trimmed at MAX_DISCOVERED_DEVICES, no need to check it
-   for i=1, #res do
-      ntop.lpushCache(records_cache, json.encode(res[i]))
-   end
-
-   return response
 end
 
 -- ################################################################################

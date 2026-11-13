@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -11,7 +11,7 @@ require "lua_utils"
 require "prefs_utils"
 prefsSkipRedis(true)
 
-local is_nedge = ntop.isnEdge()
+local is_nedge = ntop.isnEdge and ntop.isnEdge()
 local is_appliance = ntop.isAppliance()
 
 if not (is_nedge or is_appliance) or not isAdministrator() then
@@ -47,17 +47,22 @@ if table.len(_POST) > 0 then
       changed = true
     end
 
+  
     if changed then
       sys_config:save()
     end
   end
 end
-
+    
 local function print_page_body()
+
   printPageSection(i18n("prefs.network_interfaces"))
+
   local lan_recovery = sys_config:getLanRecoveryIpConfig()
   local descr = i18n("nedge.lan_recovery_ip_descr", {product=info["product"]}) .. "<br><b>" .. i18n("nedge.lan_recovery_warning") .. "</b>"
-  system_setup_ui_utils.printPrivateAddressSelector(i18n("nedge.lan_recovery_ip"), descr, "lan_recovery_ip", "lan_recovery_netmask", lan_recovery.ip, true)
+  system_setup_ui_utils.printPrivateAddressSelector(i18n("nedge.lan_recovery_ip"), descr, "lan_recovery_ip", "lan_recovery_netmask", lan_recovery.ip, nil, true)
+
+  
 
   print('<tr><th colspan=2 style="text-align:right;">')
   if is_nedge then

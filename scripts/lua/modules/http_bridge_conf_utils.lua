@@ -1,5 +1,5 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
 
 -- ######################################################################################
@@ -9,12 +9,12 @@
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
-if(ntop.isPro()) then
+if(ntop.isPro and ntop.isPro()) then
    package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
    package.path = dirs.installdir .. "/pro/scripts/callbacks/?.lua;" .. package.path
 end
 
-if ntop.isnEdge() then
+if ntop.isnEdge and ntop.isnEdge() then
    package.path = dirs.installdir .. "/pro/scripts/lua/nedge/modules/?.lua;" .. package.path
 end
 
@@ -24,7 +24,7 @@ local host_pools_nedge = require "host_pools_nedge"
 local users_utils = require("users_utils")
 local shaper_utils
 
-if(ntop.isPro()) then
+if(ntop.isPro and ntop.isPro()) then
    shaper_utils = require "shaper_utils"
 end
 
@@ -55,16 +55,16 @@ function http_bridge_conf_utils.configureBridge()
 	 -- 	     ["ConnectivityCheck"] = "pass"
 	 --       }
 	 --    },
-	 --    ["maina"] = {
-	 --       ["full_name"] = "Maina Fast",
+	 --    ["guest"] = {
+	 --       ["full_name"] = "Guest Users",
 	 --       ["password"] = "ntop0101",
 	 --       ["default_policy"] = "pass",
 	 --       ["policies"] = {
 	 -- 	     [10] = "slow_pass", ["Facebook"] = "slower_pass",  ["YouTube"] = "drop"
 	 --       }
 	 --    },
-	 --    ["simon"] = {
-	 --       ["full_name"] = "Simon Speed",
+	 --    ["iot"] = {
+	 --       ["full_name"] = "IoT Devices",
 	 --       ["password"] = "ntop0202",
 	 --       ["default_policy"] = "drop",
 	 --       ["policies"] = {
@@ -121,7 +121,13 @@ function http_bridge_conf_utils.configureBridge()
             end
 
 	    local pool_id = host_pools_nedge.usernameToPoolId(username) or host_pools_nedge.DEFAULT_POOL_ID
+
 	    host_pools_nedge.traceHostPoolEvent(TRACE_NORMAL, ifname..": creating user: "..username.. " pool id: "..pool_id)
+
+	    if not isEmptyString(user_config["routing_policy"]) then
+               local routing_policy_id = host_pools_nedge.routingPolicyNameToId(user_config["routing_policy"])
+               host_pools_nedge.setRoutingPolicyId(pool_id, routing_policy_id)
+	    end
 
 	    if not isEmptyString(user_config["default_policy"]) then
 	       local default_policy = string.lower(user_config["default_policy"])
@@ -158,7 +164,7 @@ function http_bridge_conf_utils.configureBridge()
 			shaper_utils.deleteProtocol(ifid, pool_id, proto_id_or_category)
 		     else
 			shaper_utils.setProtocolShapers(ifid, pool_id, proto_id_or_category,
-							policy.id, policy.id,
+							policy.id,
 							0 --[[traffic_quota--]], 0--[[time_quota--]])
 			host_pools_nedge.traceHostPoolEvent(TRACE_NORMAL, ifname..": setting '"..proto_name.."' policy '"..policy.name.."' for user: "..username.. " pool id: "..pool_id)
 		     end

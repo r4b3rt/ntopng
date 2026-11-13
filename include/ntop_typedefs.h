@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,25 +26,26 @@
 #ifndef TCP_ESTABLISHED
 /* /usr/include/netinet/tcp.h */
 enum {
-      TCP_ESTABLISHED = 1,
-      TCP_SYN_SENT,
-      TCP_SYN_RECV,
-      TCP_FIN_WAIT1,
-      TCP_FIN_WAIT2,
-      TCP_TIME_WAIT,
-      TCP_CLOSE,
-      TCP_CLOSE_WAIT,
-      TCP_LAST_ACK,
-      TCP_LISTEN,
-      TCP_CLOSING   /* now a valid state */
+  TCP_ESTABLISHED = 1,
+  TCP_SYN_SENT,
+  TCP_SYN_RECV,
+  TCP_FIN_WAIT1,
+  TCP_FIN_WAIT2,
+  TCP_TIME_WAIT,
+  TCP_CLOSE,
+  TCP_CLOSE_WAIT,
+  TCP_LAST_ACK,
+  TCP_LISTEN,
+  TCP_CLOSING /* now a valid state */
 };
 #endif
 #endif
 
 typedef struct {
-  const char *string;
+  const char* string;
   int64_t int_num;
   double double_num;
+  bool boolean;
 } ParsedValue;
 
 typedef enum {
@@ -53,24 +54,32 @@ typedef enum {
   mask_remote_hosts = 2
 } HostMask;
 
-/* Struct used to pass parameters when walking hosts and flows periodically to update their stats */
+/* Keep it in sync with nProbe */
+typedef enum {
+  packet_to_flow = 0,          /* packet capture or nTap  */
+  collected_netflow_ipfix = 1, /* collected NetFlow/IPFIX */
+  collected_sflow = 2          /* collected sFlow/nfLite  */
+} FlowSource;
+
+/* Struct used to pass parameters when walking hosts and flows periodically to
+ * update their stats */
 class AlertCheckLuaEngine;
 class ThreadedActivityStats;
 typedef struct {
-  lua_State *vm;
-  NetworkInterface *iface;
-  AlertCheckLuaEngine *acle;
-  struct timeval *tv;
+  lua_State* vm;
+  NetworkInterface* iface;
+  AlertCheckLuaEngine* acle;
+  struct timeval* tv;
   time_t deadline;
   bool no_time_left;
   bool skip_checks;
-  ThreadedActivityStats *thstats;
+  ThreadedActivityStats* thstats;
   u_int32_t cur_entries;
   u_int32_t tot_entries;
 } periodic_ht_state_update_user_data_t;
 
 typedef struct {
-  struct timeval *tv;
+  struct timeval* tv;
 } periodic_stats_update_user_data_t;
 
 /* Keep in sync with alert_consts.alerts_granularities and Utils */
@@ -90,9 +99,11 @@ typedef enum {
   check_category_internals = 2,
   check_category_network = 3,
   check_category_system = 4,
-  check_category_ids_ips = 5, /* Intrusion prevention. Used for checks that add hosts to the jailed pool */
+  check_category_ids_ips = 5, /* Intrusion prevention. Used for checks that add
+                                 hosts to the jailed pool */
   MAX_NUM_SCRIPT_CATEGORIES
-} CheckCategory; /* Keep in sync with checks.check_categories in scripts/lua/modules/checks.lua  */
+} CheckCategory; /* Keep in sync with checks.check_categories in
+                    scripts/lua/modules/checks.lua  */
 
 typedef enum {
   alert_category_other = 0,
@@ -102,7 +113,8 @@ typedef enum {
   alert_category_system = 4,
   alert_category_ids_ips = 5,
   MAX_NUM_ALERT_CATEGORIES
-} AlertCategory; /* TODO: keep in sync with CheckCategory until we remove CheckCategory */
+} AlertCategory; /* TODO: keep in sync with CheckCategory until we remove
+                    CheckCategory */
 
 /*
   This is a subset of CheckCategory as flow scripts fall only in this subset
@@ -116,6 +128,12 @@ typedef enum {
 #define MAX_NUM_PERIODIC_SCRIPTS 6
 
 typedef enum {
+  lua_engine_mode_http = 1,
+  lua_engine_mode_callback,
+  lua_engine_mode_cloud
+} LuaEngineMode;
+
+typedef enum {
   trend_unknown = 0,
   trend_up = 1,
   trend_down = 2,
@@ -125,11 +143,16 @@ typedef enum {
 typedef enum {
   location_none = 0,
   location_local_only,
+  location_local_only_no_tx,
+  location_local_only_no_tcp_tx,
   location_remote_only,
+  location_remote_only_no_tx,
+  location_remote_only_no_tcp_tx,
   location_broadcast_domain_only,
   location_private_only, /* Only 192.168.0.0/16 and other private */
   location_public_only,  /* Only non-private */
   location_all,
+  location_broadcat_multicast_only
 } LocationPolicy;
 
 typedef enum {
@@ -141,8 +164,14 @@ typedef enum {
 } TcpFlowStateFilter;
 
 typedef enum {
+  all_flow = 0,
+  direct_flow,
+  transit_flow,
+} TransitAS;
+
+typedef enum {
   traffic_type_all = 0,
-  traffic_type_one_way = 1,
+  traffic_type_unidirectional = 1,
   traffic_type_bidirectional = 2,
 } TrafficType;
 
@@ -158,17 +187,17 @@ typedef enum {
 
 /* Status are handled in Lua (alert_consts.lua) */
 typedef u_int32_t AlertType;
-#define alert_none ((u_int8_t)-1)
+#define alert_none ((u_int8_t) - 1)
 
 typedef enum {
-  alert_level_none      = 0,
-  alert_level_debug     = 1,
-  alert_level_info      = 2,
-  alert_level_notice    = 3,
-  alert_level_warning   = 4,
-  alert_level_error     = 5,
-  alert_level_critical  = 6,
-  alert_level_alert     = 7,
+  alert_level_none = 0,
+  alert_level_debug = 1,
+  alert_level_info = 2,
+  alert_level_notice = 3,
+  alert_level_warning = 4,
+  alert_level_error = 5,
+  alert_level_critical = 6,
+  alert_level_alert = 7,
   alert_level_emergency = 8,
   ALERT_LEVEL_MAX_LEVEL = 9
 } AlertLevel;
@@ -180,8 +209,10 @@ typedef enum {
   alert_level_group_none = 0,
   alert_level_group_notice_or_lower = 1,
   alert_level_group_warning = 2,
-  alert_level_group_error_or_higher = 3,
-  ALERT_LEVEL_GROUP_MAX_LEVEL = 4,
+  alert_level_group_error = 3,
+  alert_level_group_critical = 4,
+  alert_level_group_emergency = 5,
+  ALERT_LEVEL_GROUP_MAX_LEVEL = 9,
 } AlertLevelGroup;
 
 /*
@@ -201,49 +232,27 @@ typedef enum {
   Keep in sync with alert_entities.lua entity_id
  */
 typedef enum {
-  alert_entity_none                = -1,
-  alert_entity_interface           =  0,
-  alert_entity_host                =  1,
-  alert_entity_network             =  2,
-  alert_entity_snmp_device         =  3,
-  alert_entity_flow                =  4,
-  alert_entity_mac                 =  5,
-  alert_entity_host_pool           =  6,
-  alert_entity_user                =  7,
-  alert_entity_am_host             =  8,
-  alert_entity_system              =  9,
-  alert_entity_test                = 10,
-  alert_entity_asn                 = 11,
-  alert_entity_l7                  = 12,
+  alert_entity_none = -1,
+  alert_entity_interface = 0,
+  alert_entity_host = 1,
+  alert_entity_network = 2,
+  alert_entity_snmp_device = 3,
+  alert_entity_flow = 4,
+  alert_entity_mac = 5,
+  // alert_entity_host_pool = 6,
+  alert_entity_user = 7,
+  alert_entity_am_host = 8,
+  alert_entity_system = 9,
+  alert_entity_as = 10,
+  // alert_entity_l7 = 12,
+  // alert_entity_mitre_table_info = 13,
 
   /* Add new entities above ^ and do not exceed alert_entity_other */
-  alert_entity_other               = 15,
-  ALERT_ENTITY_MAX_NUM_ENTITIES    = 16
+  alert_entity_other = 15,
+  ALERT_ENTITY_MAX_NUM_ENTITIES = 16
 } AlertEntity;
 
-typedef enum {
-  IPV4 = 4,
-  IPV6 = 6
-} IPVersion;
-
-/* Used to queue/dequeue elements in recipient queues via AlertFifoQueue.h */
-typedef struct {
-  AlertLevel alert_severity;
-  AlertCategory alert_category;
-  union {
-    /* alert_entity_host */
-    struct {
-      u_int16_t host_pool;
-    } host;
-    /* alert_entity_flow */
-    struct {
-      u_int16_t cli_host_pool;
-      u_int16_t srv_host_pool;
-    } flow;
-  } pools;
-  u_int32_t score;
-  char *alert;
-} AlertFifoItem;
+typedef enum { IPV4 = 4, IPV6 = 6 } IPVersion;
 
 struct zmq_msg_hdr_v0 {
   char url[32];
@@ -265,6 +274,24 @@ struct zmq_msg_hdr_v2 {
   u_int32_t msg_id, source_id;
 };
 
+struct zmq_msg_hdr_v4 { /* formerly zmq_msg_hdr_v3 (but still version 4) */
+  char url[16];
+  u_int8_t version /* 4 */, flags;
+  u_int32_t uncompressed_size, compressed_size;
+  u_int32_t msg_id, source_id;
+};
+
+typedef struct {
+  char* endpoint;
+  void* socket;
+} zmq_subscriber;
+
+typedef struct {
+  u_int32_t last_seen;
+  u_int32_t last_msg_id;
+  bool last_msg_id_set;
+} zmq_probe;
+
 typedef u_int8_t dump_mac_t[DUMP_MAC_SIZE];
 typedef char macstr_t[MACSTR_SIZE];
 
@@ -272,7 +299,15 @@ typedef struct {
   u_int8_t counter[NUM_MINUTES_PER_DAY];
 } activity_bitmap;
 
-enum SQLfield { SF_NONE, SF_SELECT, SF_FROM, SF_WHERE, SF_AND, SF_LIMIT, SF_TOK };
+enum SQLfield {
+  SF_NONE,
+  SF_SELECT,
+  SF_FROM,
+  SF_WHERE,
+  SF_AND,
+  SF_LIMIT,
+  SF_TOK
+};
 
 #ifndef __OpenBSD__
 #define bpf_timeval timeval
@@ -297,9 +332,10 @@ typedef enum {
 typedef struct {
   u_int32_t pid, father_pid;
   char *process_name, *father_process_name;
-  char *cmd_line;
+  char* cmd_line;
+  char *pkg_name, *father_pkg_name;
   char *uid_name, *father_uid_name;
-  u_int32_t uid /* User Id */, gid; /* Group Id */
+  u_int32_t uid /* User Id */, gid;               /* Group Id */
   u_int32_t father_uid /* User Id */, father_gid; /* Group Id */
   u_int32_t actual_memory, peak_memory;
 } ProcessInfo;
@@ -311,12 +347,12 @@ typedef enum {
 } ContainerInfoDataType;
 
 typedef struct {
-  char *id;
-  char *name;
+  char* id;
+  char* name;
   union {
     struct {
-      char *pod;
-      char *ns;
+      char* pod;
+      char* ns;
     } k8s;
     struct {
       /* Reseved for future use */
@@ -342,26 +378,12 @@ typedef struct {
   u_int32_t remapped_app_id;
 } custom_app_t;
 
-/* IMPORTANT: whenever the Parsed_FlowSerial is changed, nProbe must be updated too */
+PACK_ON struct l2tp_header {
+  u_int16_t flags, tunnel_id, session_id;
+} PACK_OFF;
 
-
-typedef struct zmq_remote_stats {
-  char remote_ifname[32], remote_ifaddress[64];
-  char remote_probe_address[64], remote_probe_public_address[64];
-  char remote_probe_version[64], remote_probe_os[64];
-  char remote_probe_license[64], remote_probe_edition[64];
-  char remote_probe_maintenance[64];
-  u_int8_t  source_id, num_exporters;
-  u_int64_t remote_bytes, remote_pkts, num_flow_exports;
-  u_int32_t remote_ifspeed, remote_time, local_time, avg_bps, avg_pps;
-  u_int32_t remote_lifetime_timeout, remote_idle_timeout, remote_collected_lifetime_timeout;
-  u_int32_t export_queue_full, too_many_flows, elk_flow_drops,
-    sflow_pkt_sample_drops, flow_collection_drops, flow_collection_udp_socket_drops;
-  struct {
-    u_int64_t nf_ipfix_flows;
-    u_int64_t sflow_samples;
-  } flow_collection;
-} ZMQ_RemoteStats;
+/* IMPORTANT: whenever the Parsed_FlowSerial is changed, nProbe must be updated
+ * too */
 
 typedef struct zmq_template {
   u_int32_t pen, field;
@@ -370,23 +392,21 @@ typedef struct zmq_template {
 
 typedef struct zmq_field_map {
   u_int32_t pen, field;
-  const char *map;
+  const char* map;
 } ZMQ_FieldMap;
 
 typedef struct zmq_field_value_map {
   u_int32_t pen, field, value;
-  const char *map;
+  const char* map;
 } ZMQ_FieldValueMap;
 
 struct vm_ptree {
   lua_State* vm;
-  AddressTree *ptree;
+  AddressTree* ptree;
 };
 
 struct active_flow_stats {
-  u_int32_t num_flows,
-    ndpi_bytes[NDPI_MAX_SUPPORTED_PROTOCOLS+NDPI_MAX_NUM_CUSTOM_PROTOCOLS],
-    breeds_bytes[NUM_BREEDS];
+  u_int32_t num_flows, *ndpi_bytes, breeds_bytes[NDPI_NUM_BREEDS];
 };
 
 struct grev1_header {
@@ -395,7 +415,7 @@ struct grev1_header {
 };
 
 struct string_list {
-  char *str;
+  char* str;
   struct string_list *prev, *next;
 };
 
@@ -404,136 +424,196 @@ typedef enum {
   flow_check_periodic_update,
   flow_check_flow_end,
   flow_check_flow_begin,
-  flow_check_flow_none /* Flow check not bound to protoDetected, periodicUpdate, flowEnd, flowBegin */
+  flow_check_flow_none /* Flow check not bound to protoDetected, periodicUpdate,
+                          flowEnd, flowBegin */
 } FlowChecks;
 
-/* NOTE: Throw modules/alert_keys.lua as it has been merged with modules/alert_keys.lua */
-/* NOTE: keep in sync with modules/alert_keys.lua */
+/* NOTE: Throw modules/alert_keys.lua as it has been merged with
+ * modules/alert_keys.lua */
+/* NOTE: keep in sync with modules/alert_keys/flow_alert_keys.lua */
 typedef enum {
-  flow_alert_normal                               = 0,
-  flow_alert_blacklisted                          = 1,
-  flow_alert_blacklisted_country                  = 2,
-  flow_alert_flow_blocked                         = 3,
-  flow_alert_data_exfiltration                    = 4,
-  flow_alert_device_protocol_not_allowed          = 5,
-  flow_alert_dns_data_exfiltration                = 6,
-  flow_alert_dns_invalid_query                    = 7,
-  flow_alert_elephant_flow                        = 8,
-  flow_alert_elephant_remote_to_local             = 9, /* No longer used, can be recycled */
-  flow_alert_external                             = 10,
-  flow_alert_longlived                            = 11,
-  flow_alert_low_goodput                          = 12,
-  flow_alert_malicious_signature                  = 13,
-  flow_alert_internals                            = 14,
-  flow_alert_potentially_dangerous                = 15,
-  flow_alert_remote_to_remote                     = 16,
-  flow_alert_suspicious_tcp_probing               = 17, /* No longer used, can be recycled */
-  flow_alert_suspicious_tcp_syn_probing           = 18, /* No longer used, can be recycled */
-  flow_alert_tcp_connection_issues                = 19, /* No longer used, can be recycled */
-  flow_alert_tcp_connection_refused               = 20,
-  flow_alert_tcp_severe_connection_issues         = 21, /* No longer used, merged with flow_alert_tcp_connection_issues */
-  flow_alert_tls_certificate_expired              = 22,
-  flow_alert_tls_certificate_mismatch             = 23,
-  flow_alert_tls_old_protocol_version             = 24,
-  flow_alert_tls_unsafe_ciphers                   = 25,
-  flow_alert_udp_unidirectional                   = 26,
-  flow_alert_web_mining_detected                  = 27,
-  flow_alert_tls_certificate_selfsigned           = 28,
-  flow_alert_binary_application_transfer          = 29, 
-  flow_alert_known_proto_on_non_std_port          = 30, /* TODO rename to alert_ndpi_known_protocol_on_non_standard_port */
-  flow_alert_flow_risk                            = 31, /* No longer used, each risk is reported individually */
-  flow_alert_unexpected_dhcp_server               = 32,
-  flow_alert_unexpected_dns_server                = 33,
-  flow_alert_unexpected_smtp_server               = 34,
-  flow_alert_unexpected_ntp_server                = 35,
-  flow_alert_zero_tcp_window                      = 36,
-  flow_alert_iec_invalid_transition               = 37,
-  flow_alert_remote_to_local_insecure_proto       = 38,
-  flow_alert_ndpi_url_possible_xss                = 39,
-  flow_alert_ndpi_url_possible_sql_injection      = 40,
-  flow_alert_ndpi_url_possible_rce_injection      = 41,
-  flow_alert_ndpi_http_suspicious_user_agent      = 42,
-  flow_alert_ndpi_http_numeric_ip_host            = 43,
-  flow_alert_ndpi_http_suspicious_url             = 44,
-  flow_alert_ndpi_http_suspicious_header          = 45,
-  flow_alert_ndpi_tls_not_carrying_https          = 46,
-  flow_alert_ndpi_suspicious_dga_domain           = 47,
-  flow_alert_ndpi_malformed_packet                = 48,
-  flow_alert_ndpi_ssh_obsolete_server             = 49,
-  flow_alert_ndpi_smb_insecure_version            = 50,
-  flow_alert_ndpi_tls_suspicious_esni_usage       = 51,
-  flow_alert_ndpi_unsafe_protocol                 = 52,
-  flow_alert_ndpi_dns_suspicious_traffic          = 53,
-  flow_alert_ndpi_tls_missing_sni                 = 54,
-  flow_alert_iec_unexpected_type_id               = 55, /* To be implemented */
-  flow_alert_tcp_no_data_exchanged                = 56,
-  flow_alert_remote_access                        = 57,
-  flow_alert_lateral_movement                     = 58,
-  flow_alert_periodicity_changed                  = 59,
-  flow_alert_ndpi_tls_cert_validity_too_long      = 60,
-  flow_alert_ndpi_ssh_obsolete_client             = 61,
-  flow_alert_ndpi_clear_text_credentials          = 62,
-  flow_alert_ndpi_http_suspicious_content         = 63,
-  flow_alert_ndpi_dns_large_packet                = 64,
-  flow_alert_ndpi_dns_fragmented                  = 65,
-  flow_alert_ndpi_invalid_characters              = 66,
-  flow_alert_broadcast_non_udp_traffic            = 67,
-  flow_alert_ndpi_possible_exploit                = 68,
+  flow_alert_normal = 0,
+  flow_alert_blacklisted = 1,
+  flow_alert_blacklisted_country = 2,
+  flow_alert_flow_blocked = 3,
+  flow_alert_data_exfiltration = 4,
+  flow_alert_device_protocol_not_allowed = 5,
+  flow_alert_dns_data_exfiltration = 6,
+  flow_alert_dns_invalid_query = 7,
+  flow_alert_elephant_flow = 8,
+  flow_alert_blacklisted_client_contact = 9,
+  flow_alert_external = 10,
+  flow_alert_longlived = 11,
+  flow_alert_low_goodput = 12,
+  flow_alert_blacklisted_server_contact = 13,
+  flow_alert_internals = 14,
+  flow_alert_notused_3 = 15, // No longer used
+  flow_alert_remote_to_remote = 16,
+  flow_alert_notused_4 = 17, // No longer used
+  flow_alert_notused_5 = 18, // No longer used
+  flow_alert_tcp_packets_issues = 19,
+  flow_alert_notused_6 = 20,
+  flow_alert_notused_7 = 21,
+  flow_alert_ndpi_tls_certificate_expired = 22,
+  flow_alert_ndpi_tls_certificate_mismatch = 23,
+  flow_alert_ndpi_tls_old_protocol_version = 24,
+  flow_alert_ndpi_tls_unsafe_ciphers = 25,
+  flow_alert_ndpi_unidirectional_traffic = 26,
+  flow_alert_web_mining_detected = 27,
+  flow_alert_ndpi_tls_certificate_selfsigned = 28,
+  flow_alert_ndpi_binary_application_transfer = 29,
+  flow_alert_ndpi_known_proto_on_non_std_port = 30,
+  flow_alert_notused_8 = 31,
+  flow_alert_unexpected_dhcp_server = 32,
+  flow_alert_unexpected_dns_server = 33,
+  flow_alert_unexpected_smtp_server = 34,
+  flow_alert_unexpected_ntp_server = 35,
+  flow_alert_zero_tcp_window = 36,
+  flow_alert_iec_invalid_transition = 37,
+  flow_alert_remote_to_local_insecure_proto = 38,
+  flow_alert_ndpi_url_possible_xss = 39,
+  flow_alert_ndpi_url_possible_sql_injection = 40,
+  flow_alert_ndpi_url_possible_rce_injection = 41,
+  flow_alert_ndpi_http_suspicious_user_agent = 42,
+  flow_alert_ndpi_numeric_ip_host = 43,
+  flow_alert_ndpi_http_suspicious_url = 44,
+  flow_alert_ndpi_http_suspicious_header = 45,
+  flow_alert_ndpi_tls_not_carrying_https = 46,
+  flow_alert_ndpi_suspicious_dga_domain = 47,
+  flow_alert_ndpi_malformed_packet = 48,
+  flow_alert_ndpi_ssh_obsolete_server = 49,
+  flow_alert_ndpi_smb_insecure_version = 50,
+  flow_alert_ndpi_not_used_anymore = 51, // No longer used
+  flow_alert_ndpi_unsafe_protocol = 52,
+  flow_alert_ndpi_dns_suspicious_traffic = 53,
+  flow_alert_ndpi_tls_missing_sni = 54,
+  flow_alert_iec_unexpected_type_id = 55,
+  flow_alert_tcp_no_data_exchanged = 56,
+  flow_alert_remote_access = 57,
+  flow_alert_lateral_movement = 58,
+  flow_alert_periodicity_changed = 59,
+  flow_alert_ndpi_tls_cert_validity_too_long = 60,
+  flow_alert_ndpi_ssh_obsolete_client = 61,
+  flow_alert_ndpi_clear_text_credentials = 62,
+  flow_alert_ndpi_http_suspicious_content = 63,
+  flow_alert_ndpi_dns_large_packet = 64,
+  flow_alert_ndpi_dns_fragmented = 65,
+  flow_alert_ndpi_invalid_characters = 66,
+  flow_alert_broadcast_non_udp_traffic = 67,
+  flow_alert_ndpi_possible_exploit = 68,
   flow_alert_ndpi_tls_certificate_about_to_expire = 69,
-  flow_alert_ndpi_punicody_idn                    = 70,
-  flow_alert_ndpi_error_code_detected             = 71,
-  flow_alert_ndpi_http_crawler_bot                = 72,
-  flow_alert_ndpi_suspicious_entropy              = 73,
-  flow_alert_iec_invalid_command_transition       = 74,
-  flow_alert_connection_failed                    = 75,
-  
+  flow_alert_ndpi_punicody_idn = 70,
+  flow_alert_ndpi_error_code_detected = 71,
+  flow_alert_ndpi_http_crawler_bot = 72,
+  flow_alert_ndpi_suspicious_entropy = 73,
+  flow_alert_iec_invalid_command_transition = 74,
+  flow_alert_connection_failed = 75,
+  flow_alert_ndpi_anonymous_subscriber = 76,
+  flow_alert_unidirectional_traffic = 77, // No longer used
+  flow_alert_ndpi_desktop_or_file_sharing_session = 78,
+  flow_alert_ndpi_malicious_fingerprint = 79,
+  flow_alert_ndpi_malicious_sha1_certificate = 80,
+  flow_alert_ndpi_tls_uncommon_alpn = 81,
+  flow_alert_ndpi_tls_suspicious_extension = 82,
+  flow_alert_ndpi_tls_fatal_alert = 83,
+  flow_alert_ndpi_http_obsolete_server = 84,
+  flow_alert_ndpi_risky_asn = 85,
+  flow_alert_ndpi_risky_domain = 86,
+  flow_alert_custom_lua_script = 87,
+  flow_alert_ndpi_periodic_flow = 88,
+  flow_alert_ndpi_minor_issues = 89,
+  flow_alert_ndpi_tcp_issues = 90,
+  flow_alert_vlan_bidirectional_traffic = 91,
+  flow_alert_rare_destination = 92,
+  flow_alert_modbus_unexpected_function_code = 93,
+  flow_alert_modbus_too_many_exceptions = 94,
+  flow_alert_modbus_invalid_transition = 95,
+  flow_alert_ndpi_unresolved_hostname = 96,
+  flow_alert_ndpi_tls_alpn_sni_mismatch = 97,
+  flow_alert_ndpi_malware_host_contacted = 98,
+  flow_alert_ndpi_binary_data_transfer = 99,
+  flow_alert_tcp_flow_reset = 100,
+  flow_alert_ndpi_probing_attempt = 101,
+  flow_alert_access_control_list = 102,
+  flow_alert_host_policy = 103,
+  flow_alert_qoe_degraded = 104,
+  flow_alert_ndpi_obfuscated_traffic = 105,
+  flow_alert_nedge_policy_violation = 106,
+  flow_alert_ndpi_mismatching_protocol_with_ip = 107,
+  flow_alert_s7comm_unexpected_function_code = 108,
+  flow_alert_s7comm_too_many_errors = 109,
+  flow_alert_s7comm_invalid_transition = 110,
+  flow_alert_profinet_too_many_errors = 111,
+  flow_alert_ndpi_slow_dos = 112,
+  flow_alert_ndpi_non_pqc = 113,
+  flow_alert_ndpi_ai_inference_traffic = 114,
+  flow_alert_ndpi_non_pqc_flow = 115,
+
   MAX_DEFINED_FLOW_ALERT_TYPE, /* Leave it as last member */
 
-  MAX_FLOW_ALERT_TYPE = 127 /* Constrained by `Bitmap128 alert_map` inside Flow.h */
-  
+  MAX_FLOW_ALERT_TYPE =
+      127 /* Constrained by `Bitmap128 alert_map` inside Flow.h */
 } FlowAlertTypeEnum;
 
 typedef struct {
+  ndpi_risk_enum ndpi_risk_id;
   FlowAlertTypeEnum id;
   AlertCategory category;
 } FlowAlertType;
 
 typedef struct {
   FlowAlertType alert_type;
-  const char *alert_lua_name;
+  const char* alert_lua_name;
 } FlowAlertTypeExtended;
 
-/* 
+/*
    Each C++ host check must have an entry here,
    returned with HostCheckID getID()
 */
 typedef enum {
-  host_alert_normal                      =  0,
-  host_alert_smtp_server_contacts        =  1,
-  host_alert_dns_server_contacts         =  2,
-  host_alert_ntp_server_contacts         =  3,
-  host_alert_flow_flood                  =  4,
-  host_alert_syn_scan                    =  5,
-  host_alert_syn_flood                   =  6,
-  host_alert_domain_names_contacts       =  7, 
-  host_alert_p2p_traffic                 =  8,
-  host_alert_dns_traffic                 =  9,
-  host_alert_flows_anomaly               = 10,
-  host_alert_score_anomaly               = 11,
-  host_alert_remote_connection           = 12,
-  host_alert_host_log                    = 13,
-  host_alert_dangerous_host              = 14,
-  host_alert_ntp_traffic                 = 15,
-  host_alert_countries_contacts          = 16,
-  host_alert_score_threshold             = 17,
-  host_alert_icmp_flood                  = 18,
-  host_alert_pkt_threshold		           = 19,
-  host_alert_scan_detected               = 20,
-  host_alert_fin_scan                    = 21,
+  host_alert_normal = 0,
+  host_alert_smtp_server_contacts = 1,
+  host_alert_dns_server_contacts = 2,
+  host_alert_ntp_server_contacts = 3,
+  host_alert_flow_flood = 4,
+  host_alert_wazuh_info_changed = 5,
+  host_alert_syn_flood = 6,
+  host_alert_domain_names_contacts = 7,
+  host_alert_unexpected_gateway = 8,
+  host_alert_nat_detected = 9,
+  host_alert_flows_anomaly = 10,
+  host_alert_score_anomaly = 11,
+  host_alert_remote_connection = 12,
+  host_alert_host_log = 13,
+  host_alert_dangerous_host = 14,
+  host_alert_scan_realtime = 15,
+  host_alert_countries_contacts = 16,
+  host_alert_vpn_detection = 17,
+  host_alert_icmp_flood = 18,
+  host_alert_notused_3 = 19,
+  host_alert_notused_4 = 20,
+  host_alert_notused_5 = 21,
+  host_alert_dns_flood = 22,
+  host_alert_snmp_flood = 23,
+  host_alert_custom_lua_script = 24,
+  host_alert_ai_policy = 25,
+  host_alert_traffic_volume = 26,
+  host_alert_external_script =
+      27, /* Triggered from Lua (see rest/v2/trigger/host/alert.lua) */
+  host_alert_host_scanner = 28,
+  host_alert_server_ports_contacts = 29,
+  host_alert_suspicious_domain_scan = 30, /* Triggered from Lua */
+  host_alert_scan = 31,                   /* Triggered from Lua */
 
-  MAX_DEFINED_HOST_ALERT_TYPE, /* Leave it as last member */ 
-  MAX_HOST_ALERT_TYPE = 32 /* Constrained by HostAlertBitmap */
+  MAX_DEFINED_HOST_ALERT_TYPE, /* Leave it as last member */
+  MAX_HOST_ALERT_TYPE = 32     /* Constrained by HostAlertBitmap */
 } HostAlertTypeEnum;
+
+/* Note: "other" alerts (other than flow, host) are defined in Lua */
+/* keep the below in sync with other_alert_keys.lua */
+#define MAX_OTHER_ALERT_TYPE 127
+#define OTHER_BASE_KEY 4096
+#define MAX_DEFINED_OTHER_ALERT_TYPE (MAX_OTHER_ALERT_TYPE + 1)
 
 typedef struct {
   HostAlertTypeEnum id;
@@ -541,47 +621,66 @@ typedef struct {
 } HostAlertType;
 
 class HostAlert;
-typedef std::pair<HostAlert *, bool> HostAlertReleasedPair;
-typedef Bitmap<u_int32_t> HostAlertBitmap;
+typedef std::pair<HostAlert*, bool> HostAlertReleasedPair;
+typedef UintBitmap<u_int32_t> HostAlertBitmap;
 
 typedef enum {
   host_check_http_replies_requests_ratio = 0,
   host_check_dns_replies_requests_ratio,
   host_check_syn_flood,
-  host_check_syn_scan,
   host_check_flow_flood,
   host_check_ntp_server_contacts,
   host_check_smtp_server_contacts,
   host_check_countries_contacts,
   host_check_dns_server_contacts,
   host_check_score_host,
-  host_check_p2p_traffic,
-  host_check_dns_traffic,
   host_check_flow_anomaly,
   host_check_score_anomaly,
   host_check_remote_connection,
   host_check_dangerous_host,
-  host_check_ntp_traffic,
   host_check_domain_names_contacts,
   host_check_score_threshold,
   host_check_icmp_flood,
-  host_check_pkt_threshold,
-  host_check_scan_detection,
+  host_check_nat_detected,
+  host_check_vpn_detection,
   host_check_mac_reassociation,
-  host_check_fin_scan,
-  
-  NUM_DEFINED_HOST_CHECKS, /* Leave it as last member */ 
+  host_check_dns_flood,
+  host_check_snmp_flood,
+  host_check_custom_lua_script,
+  host_check_traffic_volume, /* Dummy check (see
+                                ntop_interface_update_ip_reassignment) */
+  host_check_external_script,
+  host_check_host_scanner,
+  host_check_server_ports_contacts,
+  host_check_unexpected_gateway,
+  host_check_scan_realtime,
+
+  NUM_DEFINED_HOST_CHECKS, /* Leave it as last member */
 } HostCheckID;
 
 typedef enum {
-  flow_lua_call_exec_status_ok = 0,                             /* Call executed successfully                                */
-  flow_lua_call_exec_status_not_executed_script_failure,        /* Call NOT executed as the script failed to load (syntax?)   */
-  flow_lua_call_exec_status_not_executed_no_time_left,          /* Call NOT executed as the deadline was approaching         */
-  flow_lua_call_exec_status_not_executed_unknown_call,          /* Call NOT executed as the function to be called is unknown */
-  flow_lua_call_exec_status_not_executed_shutdown_in_progress,  /* Call NOT executed as a shutdown was in progress           */
-  flow_lua_call_exec_status_not_executed_vm_not_allocated,      /* Call NOT executed as the vm wasn't allocated              */
-  flow_lua_call_exec_status_not_executed_not_pending,           /* Call NOT executed as other hooks have already been exec.  */
-  flow_lua_call_exec_status_unsupported_call,                   /* Call NOT executed as not supported                        */
+  flow_lua_call_exec_status_ok = 0, /* Call executed successfully */
+  flow_lua_call_exec_status_not_executed_script_failure, /* Call NOT executed as
+                                                            the script failed to
+                                                            load (syntax?)   */
+  flow_lua_call_exec_status_not_executed_no_time_left,   /* Call NOT executed as
+                                                            the deadline was
+                                                            approaching         */
+  flow_lua_call_exec_status_not_executed_unknown_call,   /* Call NOT executed as
+                                                            the function to be
+                                                            called is unknown */
+  flow_lua_call_exec_status_not_executed_shutdown_in_progress, /* Call NOT
+                                                                  executed as a
+                                                                  shutdown was
+                                                                  in progress */
+  flow_lua_call_exec_status_not_executed_vm_not_allocated, /* Call NOT executed
+                                                              as the vm wasn't
+                                                              allocated */
+  flow_lua_call_exec_status_not_executed_not_pending, /* Call NOT executed as
+                                                         other hooks have
+                                                         already been exec.  */
+  flow_lua_call_exec_status_unsupported_call, /* Call NOT executed as not
+                                                 supported */
 } FlowLuaCallExecStatus;
 
 typedef enum {
@@ -598,6 +697,7 @@ typedef enum {
   column_vlan,
   column_proto_l4,
   column_ndpi,
+  column_protocol,
   column_duration,
   column_thpt,
   column_bytes,
@@ -607,6 +707,8 @@ typedef enum {
   column_device_ip,
   column_in_index,
   column_out_index,
+  column_key,
+  column_qoe,
   /* Hosts */
   column_ip,
   column_alerts,
@@ -618,8 +720,9 @@ typedef enum {
   column_local_network,
   column_country,
   column_mac,
+  column_mac_location_filter,
   column_os,
-  column_num_flows, /* = column_incomingflows + column_outgoingflows */
+  column_num_flows,         /* = column_incomingflows + column_outgoingflows */
   column_num_dropped_flows, /* for bridge interfaces */
   /* column_thpt, */
   column_traffic,
@@ -640,6 +743,9 @@ typedef enum {
   column_score,
   column_score_as_client,
   column_score_as_server,
+  column_cli_asn,
+  column_srv_asn,
+  column_transit_asn,
   /* Macs */
   column_num_hosts,
   column_manufacturer,
@@ -649,23 +755,26 @@ typedef enum {
   column_arp_rcvd,
   column_last_seen,
   column_first_seen,
-  column_obs_point
+  column_obs_point,
+  column_alerted_flows,
+  column_tcp_udp_unresp_as_client,
+  column_tcp_udp_unresp_as_server
 } sortField;
 
 typedef struct {
   u_int32_t samplesGenerated; /* The sequence number of this counter sample */
   u_int32_t deviceIP, ifIndex, ifType, ifSpeed;
-  char *ifName;
+  char* ifName;
   bool ifFullDuplex, ifAdminStatus, ifOperStatus, ifPromiscuousMode;
-  u_int64_t ifInOctets, ifInPackets, ifInErrors,
-    ifOutOctets, ifOutPackets, ifOutErrors;
+  u_int64_t ifInOctets, ifInPackets, ifInErrors, ifOutOctets, ifOutPackets,
+      ifOutErrors;
   ContainerInfo container_info;
   bool container_info_set;
 } sFlowInterfaceStats;
 
 typedef struct {
-  const char *class_name;
-  const luaL_Reg *class_methods;
+  const char* class_name;
+  const luaL_Reg* class_methods;
 } ntop_class_reg;
 
 typedef enum {
@@ -675,18 +784,17 @@ typedef enum {
   walker_ases,
   walker_countries,
   walker_vlans,
-  walker_oses,
   walker_obs
 } WalkerType;
 
 typedef enum {
   flowhashing_none = 0,
-  flowhashing_probe_ip,
+  flowhashing_exporter_ip,
   flowhashing_iface_idx,
   flowhashing_ingress_iface_idx,
   flowhashing_vlan,
   flowhashing_vrfid, /* VRF Id */
-  flowhashing_probe_ip_and_ingress_iface_idx,
+  flowhashing_exporter_ip_and_ingress_iface_idx,
 } FlowHashingEnum;
 
 typedef enum {
@@ -711,8 +819,8 @@ typedef enum {
 } DeviceProtoStatus;
 
 struct keyval {
-  const char *key;
-  char *val;
+  const char* key;
+  char* val;
 };
 
 class StringCache {
@@ -724,15 +832,15 @@ class StringCache {
 PACK_ON
 
 struct arp_header {
-  u_int16_t ar_hrd;/* Format of hardware address.  */
-  u_int16_t ar_pro;/* Format of protocol address.  */
-  u_int8_t  ar_hln;/* Length of hardware address.  */
-  u_int8_t  ar_pln;/* Length of protocol address.  */
-  u_int16_t ar_op;/* ARP opcode (command).  */
-  u_char arp_sha[6];/* sender hardware address */
-  u_int32_t arp_spa;/* sender protocol address */
-  u_char arp_tha[6];/* target hardware address */
-  u_int32_t arp_tpa;/* target protocol address */
+  u_int16_t ar_hrd;  /* Format of hardware address.  */
+  u_int16_t ar_pro;  /* Format of protocol address.  */
+  u_int8_t ar_hln;   /* Length of hardware address.  */
+  u_int8_t ar_pln;   /* Length of protocol address.  */
+  u_int16_t ar_op;   /* ARP opcode (command).  */
+  u_char arp_sha[6]; /* sender hardware address */
+  u_int32_t arp_spa; /* sender protocol address */
+  u_char arp_tha[6]; /* target hardware address */
+  u_int32_t arp_tpa; /* target protocol address */
 } PACK_OFF;
 
 PACK_ON
@@ -744,22 +852,22 @@ struct arp_packet {
 
 PACK_ON
 struct dhcp_packet {
-  u_int8_t	msgType;
-  u_int8_t	htype;
-  u_int8_t	hlen;
-  u_int8_t	hops;
-  u_int32_t	xid;/* 4 */
-  u_int16_t	secs;/* 8 */
-  u_int16_t	flags;
-  u_int32_t	ciaddr;/* 12 */
-  u_int32_t	yiaddr;/* 16 */
-  u_int32_t	siaddr;/* 20 */
-  u_int32_t	giaddr;/* 24 */
-  u_int8_t	chaddr[16]; /* 28 */
-  u_int8_t	sname[64]; /* 44 */
-  u_int8_t	file[128]; /* 108 */
-  u_int32_t	magic; /* 236 */
-  u_int8_t	options[308];
+  u_int8_t msgType;
+  u_int8_t htype;
+  u_int8_t hlen;
+  u_int8_t hops;
+  u_int32_t xid;  /* 4 */
+  u_int16_t secs; /* 8 */
+  u_int16_t flags;
+  u_int32_t ciaddr;    /* 12 */
+  u_int32_t yiaddr;    /* 16 */
+  u_int32_t siaddr;    /* 20 */
+  u_int32_t giaddr;    /* 24 */
+  u_int8_t chaddr[16]; /* 28 */
+  u_int8_t sname[64];  /* 44 */
+  u_int8_t file[128];  /* 108 */
+  u_int32_t magic;     /* 236 */
+  u_int8_t options[308];
 } PACK_OFF;
 
 /* http://en.wikipedia.org/wiki/SCTP_packet_structure */
@@ -767,19 +875,11 @@ PACK_ON
 struct sctphdr {
   /* Common Header */
   u_int16_t sport, dport;
-  u_int32_t verification_tag; /* A 32-bit random value created during initialization to distinguish stale packets from a previous connection. */
-  u_int32_t checksum; /*  CRC32c algorithm */
+  u_int32_t verification_tag; /* A 32-bit random value created during
+                                 initialization to distinguish stale packets
+                                 from a previous connection. */
+  u_int32_t checksum;         /*  CRC32c algorithm */
 } PACK_OFF;
-
-#ifdef NTOPNG_PRO
-
-typedef struct {
-  char *host_or_mac;
-  time_t lifetime;
-  UT_hash_handle hh; /* makes this structure hashable */
-} volatile_members_t;
-
-#endif
 
 /*
   NOTE:
@@ -799,12 +899,12 @@ typedef enum {
   device_nas,
   device_multimedia,
   device_iot,
-  
+
   device_max_type /* Leave it at the end */
 } DeviceType;
 
 typedef struct {
-  NDPI_PROTOCOL_BITMASK clientAllowed, serverAllowed;
+  struct ndpi_bitmask clientAllowed, serverAllowed;
 } DeviceProtocolBitmask;
 
 class SNMP;
@@ -819,83 +919,17 @@ typedef struct {
 } FlowHTTPStats;
 
 typedef struct {
-  u_int8_t num_a, num_ns, num_cname, num_soa,
-    num_ptr, num_mx, num_txt, num_aaaa,
-    num_any, num_other;
+  u_int8_t num_a, num_ns, num_cname, num_soa, num_ptr, num_mx, num_txt,
+      num_aaaa, num_any, num_other;
   u_int8_t num_replies_ok, num_replies_error;
 } FlowDNSStats;
 
-/* Forward class declarations for the Lua context */
-class NetworkStats;
-class Host;
-class Flow;
-class ThreadedActivity;
-class ThreadedActivityStats;
-
-struct ntopngLuaContext {
-  char *allowed_ifname, *user, *group, *csrf;
-  char *sqlite_hosts_filter, *sqlite_flows_filter;
-  bool sqlite_filters_loaded;
-  void *zmq_context, *zmq_subscriber;
-  struct mg_connection *conn;
-  AddressTree *allowedNets;
-  NetworkInterface *iface;
-  AddressTree *addr_tree;
-  SNMP *snmpBatch, *snmpAsyncEngine[MAX_NUM_ASYNC_SNMP_ENGINES];
-  Host *host;
-  NetworkStats *network;
-  Flow *flow;
-  bool localuser;
-  u_int16_t observationPointId;
-  
-  /* Capabilities bitmap */
-  u_int64_t capabilities;
-
-  /* Packet capture */
-  struct {
-    bool captureInProgress;
-    pthread_t captureThreadLoop;
-    pcap_t *pd;
-    pcap_dumper_t *dumper;
-    u_int32_t end_capture;
-  } pkt_capture;
-
-  /* Live capture written to mongoose socket */
-  struct {
-    u_int32_t capture_until, capture_max_pkts, num_captured_packets;
-    void *matching_host;
-    bool bpfFilterSet;
-    struct bpf_program fcode;
-    
-    /* Status */
-    bool pcaphdr_sent;
-    bool stopped;
-
-    /* Partial sends */
-    char send_buffer[1600];
-    u_int data_not_yet_sent_len; /* 
-				    Amount of data that was 
-				    not sent mostly due to 
-				    socket buffering 
-				 */
-  } live_capture;
-
-  /* 
-     Indicate the time when the vm will be reloaded.
-     This can be used so that Lua scripts running in an infinite-loop fashion, e.g., notifications.lua,
-     can know when to break so they can be reloaded with new configurations.
-     Useful when user scripts change or when recipient configurations change.
-   */
-  time_t next_reload;
-  /* Periodic scripts (ThreadedActivity.cpp) */
-  time_t deadline;
-  const ThreadedActivity *threaded_activity;
-  ThreadedActivityStats *threaded_activity_stats;
-
-#if defined(NTOPNG_PRO)
-  BinAnalysis *bin;
-#endif
-};
+typedef enum {
+  lan_interface = 1,
+  wan_interface,
+  other_interface,
+  unknown_interface,
+} InterfaceLocation;
 
 typedef enum {
   located_on_lan_interface = 1,
@@ -916,28 +950,51 @@ typedef enum {
   interface_type_DIVERT,
   interface_type_DUMMY,
   interface_type_ZC_FLOW,
-  interface_type_SYSLOG 
+  interface_type_SYSLOG,
+  interface_type_DB_VIEW
 } InterfaceType;
 
-/* Update Flow::dissectHTTP when extending the type below */
-/* Keep in sync with discover.os2label */
 typedef enum {
-  os_unknown = 0,
-  os_linux,
-  os_windows,
-  os_macos,
-  os_ios,
-  os_android,
-  os_laserjet,
-  os_apple_airport,
-  os_max_os, /* Keep as last element */
-  os_any
-} OSType;
+  export_format_GENERIC = 0,
+  export_format_SYSLOG,
+  export_format_ECS
+} ExportFormat;
+
+typedef enum {
+  os_learning_unknown = 0,
+  os_learning_tcp_fingerprint,
+  os_learning_http_user_agent,
+  os_learning_user_set_via_lua,
+  os_learning_dhcp
+} OSLearningMode;
+
+#ifdef NTOPNG_PRO
+/* Journal of the assets (see doc/developers/README.assets_journal.md): what
+ * a cause of a change of a host, not yet dumped with its asset, refers to.
+ * Keep in sync with asset_journal_what_names (LocalHostPro.cpp): the name of the
+ * field in the asset */
+typedef enum {
+  asset_journal_created = 0, /* The host has been created (also the cause of
+                                ip, mac and vlan of a new asset) */
+  asset_journal_tcp_fingerprint,
+  asset_journal_dhcp_fingerprint,
+  asset_journal_dns_name,
+  asset_journal_kerberos_name, /* Kerberos machine account */
+  /* Add here the other fields of the asset (os_type, dhcp_name, mdns_name,
+   * server ports, ...) */
+  asset_journal_tag_refreshed, /* Tag observed (tag_id) */
+  asset_journal_tag_removed,   /* Tag removed by the host (tag_id) */
+  /* Elements of a list field of the asset, one cause each (key) */
+  asset_journal_username_added,   /* Username added (key: "<name> (<proto>)") */
+  asset_journal_username_removed, /* Username removed (key) */
+  asset_journal_num_what
+} AssetJournalWhat;
+#endif
 
 /* Keep in sync with hosts_map_utils.lua */
 typedef enum {
   ALL_FLOWS = 0,
-  UNREACHABLE_FLOWS  = 1,
+  UNREACHABLE_FLOWS = 1,
   ALERTED_FLOWS = 2,
   DNS_QUERIES = 3,
   SYN_DISTRIBUTION = 4,
@@ -949,6 +1006,7 @@ typedef enum {
   TRAFFIC_RATIO = 10,
   SCORE = 11,
   BLACKLISTED_FLOWS_HOSTS = 12,
+  HOSTS_TCP_FLOWS_UNIDIRECTIONAL = 13,
 } HostWalkMode;
 
 /* Action to be performed after ntopng shutdown*/
@@ -961,9 +1019,9 @@ typedef enum {
 
 typedef struct {
   bool admin;
-  char *allowedIfname;
-  char *allowedNets;
-  char *language;
+  char* allowedIfname;
+  char* allowedNets;
+  char* language;
 } HTTPAuthenticator;
 
 /*
@@ -981,11 +1039,13 @@ typedef enum {
   capability_flowdevices = 7,
   capability_alerts = 8,
   capability_historical_flows = 9,
-  MAX_NUM_USER_CAPABILITIES = 10 /* Do NOT go above 63 */
+  capability_pcap_download = 10,
+  MAX_NUM_USER_CAPABILITIES = 11 /* Do NOT go above 63 */
 } UserCapabilities;
 
 typedef struct {
-  double namelookup, connect, appconnect, pretransfer, redirect, start, total;
+  double namelookup, connect, appconnect, pretransfer, redirect, start, total,
+      bytes_download, bytes_upload;
 } HTTPTranferStats;
 
 typedef struct {
@@ -1030,7 +1090,8 @@ typedef struct ts_icmp_stats {
 } ts_icmp_stats;
 
 class AlertableEntity;
-typedef void (alertable_callback)(AlertEntity alert_entity_type, AlertableEntity *alertable, void *user_data);
+typedef void(alertable_callback)(AlertEntity alert_entity_type,
+                                 AlertableEntity* alertable, void* user_data);
 
 typedef struct bcast_domain_info {
   bool is_interface_network;
@@ -1040,18 +1101,19 @@ typedef struct bcast_domain_info {
 typedef enum ts_driver {
   ts_driver_rrd = 0,
   ts_driver_influxdb,
-  ts_driver_prometheus
+  ts_driver_clickhouse
 } TsDriver;
 
 /* Wrapper for pcap_if_t and pfring_if_t */
 typedef struct _ntop_if_t {
   /* pcap fields */
-  char *name;
-  char *description;
+  char* name;
+  char* description;
   /* PF_RING related fields */
-  char *module;
+  char* module;
   int license;
-  _ntop_if_t *next;
+  int ifindex;
+  _ntop_if_t* next;
 } ntop_if_t;
 
 typedef enum {
@@ -1086,22 +1148,19 @@ typedef enum {
   map_column_rank
 } mapSortingColumn;
 
-typedef enum {
-  asc = 0,
-  desc
-} sortingOrder;
+typedef enum { asc = 0, desc } sortingOrder;
 
 typedef struct _MapsFilters {
   bool periodicity_or_service;
-  NetworkInterface *iface;
-  u_int8_t *mac;
-  IpAddress *ip;  
+  NetworkInterface* iface;
+  u_int8_t* mac;
+  IpAddress* ip;
   bool unicast;
   u_int16_t vlan_id;
   u_int16_t host_pool_id;
   u_int16_t port;
   u_int16_t ndpi_proto;
-  int16_t network_id;
+  int32_t network_id;
   u_int32_t first_seen;
   ServiceAcceptance status;
   char host_to_search[32];
@@ -1110,12 +1169,14 @@ typedef struct _MapsFilters {
   mapSortingColumn sort_column;
   sortingOrder sort_order;
   bool standard_view;
+  u_int8_t cli_location;
+  u_int8_t srv_location;
 } MapsFilters;
 
 typedef struct _MapsFilteringMenu {
-  std::set<u_int16_t> *proto_map; 
-  std::set<u_int16_t> *vlan_map; 
-  std::set<u_int16_t> *pool_map;
+  std::set<u_int16_t>* proto_map;
+  std::set<u_int16_t>* vlan_map;
+  std::set<u_int16_t>* pool_map;
 } MapsFilteringMenu;
 
 typedef struct {
@@ -1123,7 +1184,7 @@ typedef struct {
     ipAddress ip;
     u_int8_t mac[6];
   } addr;
-  u_int8_t by_mac:1, not_used:7;
+  u_int8_t by_mac : 1, not_used : 7;
 } PeriodicityStatsPeerKey;
 
 typedef struct {
@@ -1133,9 +1194,175 @@ typedef struct {
 } PeriodicityStatsKey;
 
 /* This enum is used to dump the confidences types to the db */
+typedef enum { confidence_guessed = 0, confidence_dpi = 1 } ndpiConfidence;
+
+typedef struct {
+  u_int32_t bytes_sent;
+  u_int32_t bytes_rcvd;
+} InOutTraffic;
+
+typedef struct {
+  /* All int32 because following the rfc, they use 32 bits */
+  /* See: https://datatracker.ietf.org/doc/html/rfc2866 */
+  char* mac;
+  char* last_ip;
+  char* username;
+  char* session_id;
+  char* nas_port_name;
+  u_int32_t nas_port_id;
+  u_int32_t bytes_sent;
+  u_int32_t bytes_rcvd;
+  u_int32_t packets_sent;
+  u_int32_t packets_rcvd;
+  u_int32_t terminate_cause;
+  u_int32_t time;
+} RadiusTraffic;
+
 typedef enum {
-  confidence_guessed = 0,
-  confidence_dpi = 1
-} ndpiConfidence;
+  unknown_criteria,
+  application_criteria = 1,
+  client_criteria,
+  server_criteria,
+  client_server_criteria,
+  app_client_server_criteria,
+  info_criteria,
+  client_server_srv_port,
+  client_server_srv_port_app_proto,
+  src_as_dst_as_criteria,
+  src_as_transit_as_dst_as_criteria,
+  host
+} AnalysisCriteria;
+
+typedef enum {
+  MINOR_NO_STATE = 0, /* Initial Flow State (just for constructor) */
+  S0, /* Only SYN in src2dst_tcp_flags; no flags in dst2src_tcp_flags */
+  S1, /* ... */
+  SF,
+  REJ,
+  S2,
+  S3,
+  RSTO,
+  RSTR,
+  RSTOS0,
+  RSTRH,
+  SH,
+  SHR,
+  OTH = 13
+} MinorConnectionStates;
+
+typedef enum {
+  MAJOR_NO_STATE = 0,
+  ATTEMPTED,
+  ESTABLISHED,
+  CLOSED = 3
+} MajorConnectionStates;
+
+typedef enum {
+  unknown_network_id = 0,
+  restricted_host_network_id,
+  core_host_network_id,
+  whitelisted_host_network_id
+} NetworkConfigurationId;
+
+typedef enum {
+  policy_reason_unknown = 0,
+  restricted_client_connected_public_ip_not_whitelisted,
+  restricted_client_connected_to_core_host,
+  core_host_connected_to_non_whitelisted_server
+} HostPolicyAlertReason;
+
+typedef struct {
+  u_int16_t max_rtt, ideal_rtt, max_jitter, ideal_jitter;
+} QoELimits;
+
+/* Keep in sync with flow_consts.drop_reason in flow_consts.lua */
+typedef enum {
+  DROP_REASON_UNKNOWN = 0,
+  DROP_REASON_USER_ACTION,
+  DROP_REASON_PROBE_VERDICT,
+  DROP_REASON_BLACKLISTED_FLOW,
+  DROP_REASON_QUOTA_EXCEEDED,
+  DROP_REASON_DROP_CLI,
+  DROP_REASON_DROP_SRV,
+  DROP_REASON_CLI_SHAPER,
+  DROP_REASON_SRV_SHAPER,
+  DROP_REASON_DEV_NOT_ALLOW_PROTO_CLI,
+  DROP_REASON_DEV_NOT_ALLOW_PROTO_SRV,
+  DROP_REASON_FLOW_SIZE_EXCEEDED
+} DropReason;
+
+typedef enum {
+  qoe_unknown = 0,
+  qoe_poor,
+  qoe_degraded,
+  qoe_fair,
+  qoe_good,
+  qoe_excellent
+} QoEType;
+
+typedef enum {
+  scan_alert_scan_detention = 0,
+  scan_alert_rx_only,
+  scan_alert_syn,
+  scan_alert_fin,
+  scan_alert_rst
+} ScanAlertType;
+
+typedef enum {
+  method_get,
+  method_post,
+  method_put,
+  method_patch,
+} HttpMethod;
+
+/* Optional parameters for Utils::httpGetPostPutPatch() */
+struct HttpGetPostOptions {
+  char*             username;
+  char*             password;
+  char*             bearer;
+  char*             user_header_token;
+  int               connect_timeout;
+  int               max_duration_timeout;
+  bool              return_content;
+  bool              use_cookie_auth;
+  HTTPTranferStats* stats;
+  const char*       form_data;
+  char*             write_fname;
+  bool              follow_redirects;
+  int               ip_version;
+  char*             x_api_key;
+  char*             extra_header;
+  const char**      extra_headers; /* "Name: value" lines, num_extra_headers entries */
+  u_int             num_extra_headers;
+};
+
+typedef enum {
+  all,
+  customer_asn,
+  sub_customer_asn,
+  remote_asn,
+} ASType;
+
+/* snmp_utils.get_snmp_interface_role_options() */
+typedef enum {
+  role_other = 0,
+  role_transit,
+  role_peering,
+  role_internal_interface,
+  role_ix,
+  role_customer_interface,
+  role_internet_connectivity,
+  role_max_value /* Leave as last member */
+} SNMPInterfaceRole;
+
+/* This struct is used between the GUI and back end
+ * to communicate if there are new updates and the GUI
+ * cache needs to be invalidated.
+ */
+typedef struct {
+  std::atomic<bool> exporters;
+  std::atomic<bool> snmp;
+  std::atomic<bool> sites;
+} PendingUpdates;
 
 #endif /* _NTOP_TYPEDEFS_H_ */

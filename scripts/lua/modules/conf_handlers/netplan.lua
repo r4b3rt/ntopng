@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local sys_utils = require("sys_utils")
@@ -9,7 +9,9 @@ local config = {}
 
 -- ################################################################
 
-local NEDGE_NETPLAN_CONF = "20-nedge.yaml"
+local NETPLAN_DIR = "/etc/netplan"
+local NEDGE_NETPLAN_CONF = "60-nedge.yaml"
+local OLD_NEDGE_NETPLAN_CONF = "20-nedge.yaml"
 local CLOUD_DIRECTORY = "/etc/cloud/cloud.cfg.d"
 local CLOUD_DISABLED_FNAME = "99-disable-network-config.cfg"
 
@@ -66,9 +68,15 @@ function config.writeNetworkInterfaceConfig(f, iface, network_conf, dns_config, 
       if_config_iface = iface
       if_config = config._getInterfaceConfig(if_config_section, if_config_iface) 
     else
-      if_config_section = "ethernets"
-      if_config_iface = iface
-      if_config = config._getInterfaceConfig(if_config_section, if_config_iface) 
+      if vlan_id then
+        if_config_section = "vlans"
+        if_config_iface = iface
+        if_config = config._getInterfaceConfig(if_config_section, if_config_iface)
+      else
+        if_config_section = "ethernets"
+        if_config_iface = iface
+        if_config = config._getInterfaceConfig(if_config_section, if_config_iface)
+      end 
     end
 
   elseif vlan_raw_iface then
@@ -102,7 +110,13 @@ function config.writeNetworkInterfaceConfig(f, iface, network_conf, dns_config, 
     if_config.addresses[#if_config.addresses+1] = network_conf.ip .."/".. cidr
 
     if not isEmptyString(network_conf.gateway) then
-      if_config.gateway4 = network_conf.gateway
+      if if_config.gateway4 then -- Remove deprecated conf
+        if_config.gateway4 = nil
+      end
+      if not if_config.routes then
+        if_config.routes = {}
+      end
+      if_config.routes[#if_config.routes+1] = { to = "default", via = network_conf.gateway }
       if not if_config.nameservers then
         if_config.nameservers = {}
       end
@@ -111,12 +125,21 @@ function config.writeNetworkInterfaceConfig(f, iface, network_conf, dns_config, 
     end
   elseif network_conf.mode == "dhcp" then
     if_config.dhcp4 = 'true'
+  elseif network_conf.mode == "vlan_trunk" then
+    -- nothing to configure for a vlan-trunk bridge interface
   end
 
   if vlan_raw_iface then
     if not if_config.extra_conf then
       if_config.extra_conf = {}
     end
+
+    if vlan_id then
+      -- Check if the vlan has the alias or not, in case remove it
+      -- Otherwise an the id section is going to be wrong, e.g. '11:2'
+      vlan_id = split(vlan_id, ":")[1]
+    end
+    
     if_config.extra_conf['accept-ra'] = 'no'
     if_config.extra_conf['id'] = vlan_id
     if_config.extra_conf['link'] = vlan_raw_iface
@@ -135,7 +158,12 @@ end
 -- ################################################################
 
 function config.openNetworkInterfacesConfigFile()
-  local f = sys_utils.openFile("/etc/netplan/" .. NEDGE_NETPLAN_CONF, "w")
+
+  if ntop.exists(NETPLAN_DIR .. "/" .. OLD_NEDGE_NETPLAN_CONF) then
+    os.rename(NETPLAN_DIR .. "/" .. OLD_NEDGE_NETPLAN_CONF, NETPLAN_DIR .. "/" .. NEDGE_NETPLAN_CONF)
+  end
+
+  local f = sys_utils.openFile(NETPLAN_DIR .. "/" .. NEDGE_NETPLAN_CONF, "w")
 
   netplan_config.version = 2
 
@@ -144,7 +172,7 @@ end
 
 -- ################################################################
 
-function config._writeInterfacesConfig(f, interfaces)
+function config._dumpInterfacesConfig(f, interfaces)
   for iface, if_config in pairs(interfaces) do
     f:write("    ".. iface ..":\n")
 
@@ -163,8 +191,12 @@ function config._writeInterfacesConfig(f, interfaces)
       f:write("      dhcp4: true\n")
     end
 
-    if if_config.gateway4 then
-      f:write("      gateway4: " .. if_config.gateway4 .. "\n")
+    if if_config.routes then
+      f:write("      routes:\n")
+      for _, route in ipairs(if_config.routes) do
+        f:write("        - to: " .. route.to .. "\n")
+        f:write("          via: " .. route.via .. "\n")
+      end
     end
 
     if if_config.nameservers then
@@ -189,23 +221,23 @@ end
 
 -- ################################################################
 
-function config._writeNetworkInterfaceConfig(f)
+function config._dumpNetworkInterfaceConfig(f)
   f:write("network:\n")
   f:write("  version: " .. netplan_config.version .. "\n")
 
   if netplan_config.ethernets then
     f:write("  ethernets:\n")
-    config._writeInterfacesConfig(f, netplan_config.ethernets)
+    config._dumpInterfacesConfig(f, netplan_config.ethernets)
   end
 
   if netplan_config.bridges then
     f:write("  bridges:\n")
-    config._writeInterfacesConfig(f, netplan_config.bridges)
+    config._dumpInterfacesConfig(f, netplan_config.bridges)
   end
   
   if netplan_config.vlans then
     f:write("  vlans:\n")
-    config._writeInterfacesConfig(f, netplan_config.vlans)
+    config._dumpInterfacesConfig(f, netplan_config.vlans)
   end
 end
 
@@ -213,9 +245,12 @@ end
 
 function config.closeNetworkInterfacesConfigFile(f)
 
-  config._writeNetworkInterfaceConfig(f)
+  config._dumpNetworkInterfaceConfig(f)
 
   f:close()
+
+  -- Set restrictive permissions (600) on the configuration file
+  sys_utils.execShellCmd("chmod 600 " .. NETPLAN_DIR .. "/" .. NEDGE_NETPLAN_CONF)
 
   sys_utils.execShellCmd("netplan generate")
 end
@@ -250,9 +285,13 @@ end
 function config.isConfiguredInterface(iface)
   local files_to_rename = {}
 
-  for fname in pairs(ntop.readdir("/etc/netplan")) do
+  if ntop.exists(NETPLAN_DIR .. "/" .. OLD_NEDGE_NETPLAN_CONF) then
+    os.rename(NETPLAN_DIR .. "/" .. OLD_NEDGE_NETPLAN_CONF, NETPLAN_DIR .. "/" .. NEDGE_NETPLAN_CONF)
+  end
+
+  for fname in pairs(ntop.readdir(NETPLAN_DIR)) do
     if fname ~= NEDGE_NETPLAN_CONF then
-      local fpath = "/etc/netplan/".. fname
+      local fpath = NETPLAN_DIR .. "/" .. fname
       -- e.g.: "renderer: NetworkManager", "iface: enp1s0"
       local res = sys_utils.execCmd("grep \"^\\s*[^#]*\\(" .. iface .. "\\|renderer\\):\" ".. fpath .." >/dev/null 2>/dev/null")
 

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,26 +25,32 @@
 #include "ntop_includes.h"
 
 class NtopGlobals {
-  bool is_shutdown, shutdown_requested, do_decode_tunnels;
+  bool is_shutdown, shutdown_requested, do_decode_tunnels, is_initialized;
   time_t start_time;
-  Trace *trace;
+  Trace* trace;
   u_int16_t file_id;
 
  public:
   NtopGlobals();
   ~NtopGlobals();
 
-  inline u_int getUptime()                     const { return((u_int)(time(NULL)-start_time+1)); };
-  inline Trace *getTrace()                     const { return(trace);                   }; 
-  inline bool  decode_tunnels()                const { return(do_decode_tunnels);       };
-  inline bool  isShutdown()                    const { return(is_shutdown);             };
-  inline bool  isShutdownRequested()           const { return(shutdown_requested);      };
-  inline void  shutdown()                            { is_shutdown = true;              };
-  inline void  requestShutdown()                     { shutdown_requested = true;       };
-  inline u_int getSnaplen(const char * ifname) const {
-    return(Utils::getIfMTU(ifname) + 14 /* Ethernet */ + 4 /* VLAN */ + 4 /* QinQ */);
+  inline time_t getStartTime() const { return start_time; };
+  inline u_int getUptime() const {
+    return ((u_int)(time(NULL) - start_time + 1));
   };
-  char* get_temp_filename(char *buf, u_int buf_len);
+  inline void setInitialized() { is_initialized = true; }
+  inline bool isInitialized() { return (is_initialized); }
+  inline Trace* getTrace() const { return (trace); };
+  inline bool decode_tunnels() const { return (do_decode_tunnels); };
+  inline bool isShutdown() const { return (is_shutdown); };
+  inline bool isShutdownRequested() const { return (shutdown_requested); };
+  inline void shutdown() { is_shutdown = true; };
+  inline void requestShutdown() { shutdown_requested = true; };
+  inline u_int getSnaplen(const char* ifname) const {
+    return (Utils::getIfMTU(ifname) + 14 /* Ethernet */ + 4 /* VLAN */ +
+            4 /* QinQ */);
+  };
+  char* get_temp_filename(char* buf, u_int buf_len);
 };
 
 #endif /* _NTOP_GLOBALS_H_ */

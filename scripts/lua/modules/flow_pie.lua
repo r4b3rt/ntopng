@@ -1,0 +1,113 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+
+dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+
+require("ntop_utils")
+local flow_data = require("flow_data")
+local format_utils = require("format_utils")
+local flow_data_preset = require("flow_data_preset")
+local flow_pie = {}
+local values_table = {}
+
+-- ##########################################
+
+local function update_section(sections, section_ref, value, formatter)
+   local section_label
+   if section_ref == "others" then
+      section_label = i18n(section_ref)
+   else
+      section_label = formatter(section_ref)
+   end
+	local index = values_table[section_ref].index
+	local previous_value = values_table[section_ref].value
+	local new_value = previous_value + value
+	sections[index].label = section_label .. " (" .. bytesToSize(new_value) .. ")"
+	sections[index].value = new_value
+	values_table[section_ref].value = new_value
+end
+
+-- ##########################################
+
+local function create_section(sections, section_ref, value, formatter)
+	local section_label
+   if section_ref == "others" then
+      section_label = i18n(section_ref)
+   else
+      section_label = formatter(section_ref)
+   end
+	local index = #sections + 1
+	sections[index] = {
+		label = section_label .. " (" .. bytesToSize(value) .. ")",
+		value = value,
+		url = "#",
+	}
+	values_table[section_ref] = {
+		index = index,
+		value = value,
+	}
+end
+
+-- ##########################################
+
+local function format_table(sections, query, table, max_sections)
+	local custumer_asns = {}
+	local others = {
+		label = i18n("others"),
+		value = 0,
+	}
+	if query.only_custumers == true then
+		local as_utils = require("as_utils")
+		custumer_asns = as_utils.getCustomerAndSubCustomerASNs()
+	end
+
+	for _, value in pairs(table or {}) do
+		local section_ref = value[query.section_ref]
+		local value_ref = tonumber(value[query.value_ref])
+		if
+			query.only_custumers == nil
+			or query.only_custumers == false
+			or (query.only_custumers == true and custumer_asns[section_ref] ~= nil)
+		then
+			if values_table[section_ref] ~= nil then
+				update_section(sections, section_ref, value_ref, query.section_format)
+			elseif #sections <= max_sections then
+				create_section(sections, section_ref, value_ref, query.section_format)
+			else
+				others.value = others.value + value_ref
+			end
+		end
+	end
+	if others.value > 0 then
+		if values_table["others"] ~= nil then
+			update_section(sections, "others", others.value, query.section_format)
+		else
+			create_section(sections, "others", others.value, query.section_format)
+		end
+	end
+end
+
+-- ##########################################
+
+-- @brief Given a list of queries to be run, it will generate a pie
+-- @param queries Queries to run
+-- @return
+function flow_pie.generatePie(queries, max_sections, isHistorical)
+	local sections = {}
+
+	if not isHistorical then
+		interface.aggregateASNFlows()
+	end
+
+	for _, query in pairs(queries) do
+		local table_stats = flow_data.getStats({ query })
+		format_table(sections, query, table_stats, max_sections)
+	end
+	return sections
+end
+
+-- ##########################################
+
+return flow_pie

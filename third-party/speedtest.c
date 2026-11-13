@@ -12,8 +12,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifndef WIN32
 #include <unistd.h>
 #include <pthread.h>
+#endif
 #include <math.h>
 #include <curl/curl.h>
 #include "json.h"
@@ -29,7 +31,7 @@
 #include "expat.h"
 
 #define URL_LENGTH_MAX         255
-#define THREAD_NUM_MAX           1
+#define THREAD_NUM_MAX           3
 #define UPLOAD_EXT_LENGTH_MAX    5
 #define SPEEDTEST_TIME_MAX      10
 #define CUNTRY_NAME_MAX         64
@@ -125,6 +127,8 @@ static size_t write_data(void* ptr, size_t size, size_t nmemb, void *stream)
     pthread_mutex_unlock(&p_thread->lock);
 #endif
   }
+
+  /* printf("Upload: %u\n", size * nmemb); */
   return size * nmemb;
 }
 
@@ -180,9 +184,9 @@ static void XMLCALL start_element(void *userData, const char *el, const char **a
     for (i = 0; atts[i]; i += 2) {
       //printf(" %s \n", atts[i]);
       if (strcmp(atts[i], "ip") == 0)
-        strcpy(p_client->ip, atts[i + 1]);
+        snprintf(p_client->ip, sizeof(p_client->ip), "%s", atts[i + 1]);
       if (strcmp(atts[i], "isp") == 0)
-        strcpy(p_client->isp, atts[i + 1]);
+        snprintf(p_client->isp, sizeof(p_client->isp), "%s", atts[i + 1]);
       if (strcmp(atts[i], "lat") == 0)
         p_client->lat = atof(atts[i + 1]);
       if (strcmp(atts[i], "lon") == 0)
@@ -198,9 +202,10 @@ static void XMLCALL start_element(void *userData, const char *el, const char **a
     for (i = 0; atts[i]; i += 2) {
       //printf(" %s \n", atts[i]);
       if (strcmp(atts[i], "url") == 0)
-        strcpy(p_server->url, atts[i + 1]);
+        snprintf(p_server->url, sizeof(p_server->url), "%s", atts[i + 1]);
       if (strcmp(atts[i], "country") == 0)
-        strcpy(p_server->country, atts[i + 1]);
+        snprintf(p_server->country, sizeof(p_server->country), "%s",
+                 atts[i + 1]);
       if (strcmp(atts[i], "lat") == 0)
         p_server->lat = atof(atts[i + 1]);
       if (strcmp(atts[i], "lon") == 0)
@@ -268,8 +273,8 @@ static int do_latency(char *p_url)
 
   curl = curl_easy_init();
 
-  sprintf(latency_url, "%s%s", p_url, LATENCY_TXT_URL);
-  sprintf(useragent, "curl/%.02f.0", v);
+  snprintf(latency_url, sizeof(latency_url), "%s%s", p_url, LATENCY_TXT_URL);
+  snprintf(useragent, sizeof(useragent), "curl/%.02f.0", v);
 
 #ifdef DEBUG_SPEEDTEST
   printf("Calling %s\n", latency_url);  
@@ -322,13 +327,13 @@ static void* do_download(void* data)
   CURL *curl;
   CURLcode res;
   struct thread_para* p_para = (struct thread_para*)data;
-  double size = 0;
+  curl_off_t size = 0;
   double time = 0, time1 = 0, time2;
   char useragent[16];
   double v = (double) (rand() % 1000) / 100;
   
   curl = curl_easy_init();
-  sprintf(useragent, "curl/%.02f.0", v);
+  snprintf(useragent, sizeof(useragent), "curl/%.02f.0", v);
   
 #ifdef DEBUG_SPEEDTEST
   printf("image url = %s\n", p_para->url);
@@ -349,12 +354,16 @@ static void* do_download(void* data)
     printf("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
 #endif
   } else {
+#if LIBCURL_VERSION_NUM >= 0x073700
+    curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD_T, &size);
+#else
     curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD, &size);
+#endif
     curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &time);
     curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME, &time1);
     curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME, &time2);
 #ifdef DEBUG_SPEEDTEST
-    printf("Completed: [Size: %lf][TotalTime: %lf][ConnectTime: %lf][TransferTime: %lf]\n", size, time, time1, time2);
+    printf("Completed: [Size: %lu][TotalTime: %lf][ConnectTime: %lf][TransferTime: %lf]\n", size, time, time1, time2);
 #endif
     p_para->result = size;
     p_para->finish = 1;
@@ -496,12 +505,12 @@ static double test_download(char *p_url, int num_thread, int dsize, char init)
     //int error;
 
     memset(&paras[i], 0, sizeof(struct thread_para));
-    sprintf(paras[i].url, "%s/speedtest/random%dx%d.jpg", p_url, dsize, dsize);
+    snprintf(paras[i].url, sizeof(paras[i].url), "%s/speedtest/random%dx%d.jpg", p_url, dsize, dsize);
     paras[i].result = 0;
 
     //error = 
 #if THREAD_NUM_MAX > 1
-    pthread_mutex_init(paras[i].lock, NULL);
+    pthread_mutex_init(&paras[i].lock, NULL);
 #endif
 
     pthread_create(&paras[i].tid, NULL, do_download, (void*)&paras[i]);
@@ -568,7 +577,7 @@ static size_t read_data(void* ptr, size_t size, size_t nmemb, void *userp)
   para->chunk_size -= length;
 
 #if THREAD_NUM_MAX > 1
-  pthread_mutex_lock(&para);
+  pthread_mutex_lock(&para->lock);
 #endif
   para->now += length;
 #if THREAD_NUM_MAX > 1
@@ -593,7 +602,7 @@ static void* do_upload(void *p) {
     loop = (size / UPLOAD_CHRUNK_SIZE_MAX) + 1;
 
   curl = curl_easy_init();
-  sprintf(useragent, "curl/%.02f.0", v);
+  snprintf(useragent, sizeof(useragent), "curl/%.02f.0", v);
   
   curl_easy_setopt(curl, CURLOPT_URL, para->url);
   curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_data);
@@ -621,7 +630,13 @@ static void* do_upload(void *p) {
       para->finish = 1;
       return(NULL);
     }
+
+#if LIBCURL_VERSION_NUM >= 0x073700
+    curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD_T, &size_upload);
+#else
     curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD, &size_upload);
+#endif
+    
     para->result += size_upload;
     loop--;
   }
@@ -637,8 +652,8 @@ static void* do_upload(void *p) {
 
 /* ***************************************** */
 
-static double test_upload(char *p_url, int num_thread, long size,
-		       char *p_ext, char init)
+static double test_upload(char *p_url, int num_thread, long ul_size,
+			  char *p_ext, char init)
 {
   struct timeval s_time;
   int i;
@@ -646,16 +661,17 @@ static double test_upload(char *p_url, int num_thread, long size,
   double sum = 0, speed = 0;
   double *instant_speed = NULL;
   int    speed_num = 0;
+
   gettimeofday(&s_time, NULL);
 
   init_instant_speed(&instant_speed, &speed_num);
 
   for ( i = 0; i < num_thread; i++) {
     memset(&paras[i], 0, sizeof(struct thread_para));
-    sprintf(paras[i].url, "%s/speedtest/upload.%s", p_url, p_ext);
+    snprintf(paras[i].url, sizeof(paras[i].url), "%s/speedtest/upload.%s", p_url, p_ext);
     paras[i].result = 0;
     paras[i].finish = 0;
-    paras[i].upload_size = size/num_thread;
+    paras[i].upload_size = ul_size/num_thread;
 #ifdef DEBUG_SPEEDTEST
     printf("[thread %u] Upload size: %lu\n", i, paras[i].upload_size);
 #endif
@@ -756,7 +772,7 @@ static int get_upload_extension(char *server, char *p_ext)
   }
   p = strstr(web.data, UPLOAD_EXTENSION_TAG);
   if (p == NULL ||
-      sscanf(p + strlen(UPLOAD_EXTENSION_TAG), "%*[^a-zA-Z]%[a-zA-Z]", p_ext) <= 0) {
+      sscanf(p + strlen(UPLOAD_EXTENSION_TAG), "%*[^a-zA-Z]%4[a-zA-Z]", p_ext) <= 0) {
     // fprintf(stderr, "Upload extension not found\n");
     goto cleanup;
   }
@@ -836,7 +852,7 @@ static int get_closest_server()
   double v = (double) (rand() % 1000) / 100;
   
   memset(&web, 0, sizeof(web));
-  sprintf(useragent, "curl/%.02f.0", v);
+  snprintf(useragent, sizeof(useragent), "curl/%.02f.0", v);
   
   curl = curl_easy_init();
 
@@ -893,6 +909,8 @@ static int get_best_server(int *p_index)
 
   for (i = 0; i < MAX_CLOSEST_SERVER_NUM; i++) {
     double latency;
+    char *p;
+    size_t len;
 
     if (minimum != DBL_MAX && i >= MIN_SERVERS_TO_CHECK)
       break; /* MIN_SERVERS_TO_CHECK evaluated and at least one found */
@@ -900,10 +918,15 @@ static int get_best_server(int *p_index)
     if((strlen(servers[i].url) == 0))
       continue;
 
-    sscanf(servers[i].url, "http://%[^/]speedtest/upload.%*s", server);
-    if(server[0] == '\0')
-      sscanf(servers[i].url, "https://%[^/]speedtest/upload.%*s", server);
-    
+    /* Read base URL (e.g. http://speedtest1.uniconnect.it:8080) by removing /speedtest/.. */
+    p = strstr(servers[i].url, "/speedtest/");
+    server[0] = '\0';
+    if(p == NULL) continue;
+    len = (size_t)(p - servers[i].url);
+    if(len == 0 || len >= URL_LENGTH_MAX) continue;
+    strncpy(server, servers[i].url, len);
+    server[len] = '\0';
+
     if(server[0] == '\0')
       continue;
     
@@ -939,6 +962,7 @@ json_object* speedtest() {
   double  speed, download_speed;
   int     dsize, sindex;
   json_object *rc = json_object_new_object();
+  char *p;
 
   if(rc == NULL) {
 #ifdef INFO_SPEEDTEST
@@ -983,10 +1007,16 @@ json_object* speedtest() {
     return(rc);
   }
   
-  sscanf(servers[sindex].url, "http://%[^/]/speedtest/upload.%4s", server_url, ext);
-
-  if(server_url[0] == '\0')
-    sscanf(servers[sindex].url, "https://%[^/]/speedtest/upload.%4s", server_url, ext);
+  /* Read base URL and upload extension */
+  p = strstr(servers[sindex].url, "/speedtest/upload.");
+  if (p != NULL) {
+    size_t len = (size_t)(p - servers[sindex].url);
+    if(len > 0 && len < URL_LENGTH_MAX) {
+      strncpy(server_url, servers[sindex].url, len);
+      server_url[len] = '\0';
+      sscanf(p, "/speedtest/upload.%4s", ext);
+    }
+  }
   
 #ifdef DEBUG_SPEEDTEST
   printf("Best server: %s (%0.2fKM) [index: %u][%s]\n",
@@ -1034,11 +1064,13 @@ json_object* speedtest() {
   }
 
 #ifdef FULL_REPORT
+  if(speed == 0) speed = download_speed;
   speed = test_upload(server_url, num_thread, speed, ext, 0);
 
 #ifdef DEBUG_SPEEDTEST
   fprintf(stderr, "Testing upload speed\n");
 #endif
+  if(speed == 0) speed = download_speed;
   upload_speed = test_upload(server_url, num_thread, speed*SPEEDTEST_TIME_MAX, ext, 1);
 
 #ifdef DEBUG_SPEEDTEST

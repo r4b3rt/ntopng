@@ -1,5 +1,5 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 
 -- ##############################################
@@ -46,19 +46,17 @@ local alert_entities = {
       entity_id = 9,
       i18n_label = "alert_entities.system",
       alert_store_name = "system",
-   }, test = {
-      entity_id =10,
-      i18n_label = "alert_entities.test",
-      alert_store_name = "system",
-   }, asn = {
-      entity_id = 11,
-      i18n_label = "alert_entities.asn",
-   }, l7 = {
-      entity_id = 12,
-      i18n_label = "alert_entities.l7",
-   }, domain = {
-      entity_id = 12,
-      i18n_label = "alert_entities.domain",
+   }, as = {
+      entity_id = 10,
+      i18n_label = "alert_entities.as",
+      alert_store_name = "as",
+   --}, domain = {
+   --   entity_id = 12,
+   --   i18n_label = "alert_entities.domain",
+   --}, mitre = {
+   --   entity_id = 13,
+   --   i18n_label = "alert_entities.mitre",
+   --   alert_store_name = "mitre",
    }, other = {
       entity_id = 15,
       i18n_label = "alert_entities.other",

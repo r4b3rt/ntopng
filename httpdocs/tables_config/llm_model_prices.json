@@ -1,0 +1,76 @@
+{
+	"id": "llm_model_prices",
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "ai_stats_page.empty_prices",
+	"enable_search": true,
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "split_button",
+			"button_def_array": [
+				{
+					"id": "edit",
+					"icon": "fas fa-edit",
+					"title_i18n": "edit",
+					"event_id": "click_button_edit"
+				},
+				{
+					"id": "delete",
+					"icon": "fas fa-trash",
+					"title_i18n": "delete",
+					"danger": true,
+					"event_id": "click_button_delete"
+				}
+			]
+		},
+		{
+			"id": "provider",
+			"title_i18n": "llm.provider",
+			"data_field": "provider",
+			"sortable": true
+		},
+		{
+			"id": "model",
+			"title_i18n": "llm.model",
+			"data_field": "model",
+			"sortable": true
+		},
+		{
+			"id": "input_price_usd",
+			"title_i18n": "llm.input_price_per_million",
+			"data_field": "input_price_usd",
+			"sortable": true,
+			"class": [
+				"text-end"
+			]
+		},
+		{
+			"id": "output_price_usd",
+			"title_i18n": "llm.output_price_per_million",
+			"data_field": "output_price_usd",
+			"sortable": true,
+			"class": [
+				"text-end"
+			]
+		},
+		{
+			"id": "updated_at",
+			"title_i18n": "llm.updated_at",
+			"data_field": "updated_at",
+			"sortable": false,
+			"class": [
+				"text-end"
+			]
+		}
+	]
+}

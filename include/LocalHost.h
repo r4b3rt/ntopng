@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,110 +24,360 @@
 
 #include "ntop_includes.h"
 
-class DoHDoTStats {
-private:
-  IpAddress ip;
-  VLANid vlan_id;
-  u_int32_t num_uses;
-  
-public:
-  DoHDoTStats(IpAddress i, VLANid id) { ip = i, vlan_id = id, num_uses = 0; }
+#ifdef NTOPNG_PRO
+/* Journal of the assets: cause of a change of a host, not yet dumped with its
+ * asset (see LocalHost::journal_causes) */
+typedef struct asset_journal_cause {
+  u_int8_t what;   /* AssetJournalWhat */
+  u_int8_t tag_id; /* asset_journal_tag_*: the tag (0-63) */
+  char* key;       /* Elements of a list field (e.g.
+                      asset_journal_username_added): the element (e.g. the
+                      username), NULL otherwise */
+  char* cause;     /* e.g. "TCP 10.0.0.5:51234->1.2.3.4:443 eth0 (0) [TLS]" */
+  struct asset_journal_cause* next;
+} AssetJournalCause;
+#endif
 
-  inline void incUses() { num_uses++; }
-
-  void lua(lua_State *vm) {
-    char buf[64];
-    
-    lua_push_str_table_entry(vm, "ip", ip.print(buf, sizeof(buf)));
-    lua_push_uint32_table_entry(vm, "vlan_id", vlan_id);
-    lua_push_uint32_table_entry(vm, "num_uses", num_uses);
-  }
-};
-
-/* ************************************************************ */
-
-class LocalHost : public Host, public SerializableElement {
+class LocalHost : public Host {
  protected:
-  int16_t local_network_id;
-  bool systemHost;
+  int32_t local_network_id;
   time_t initialization_time;
-  LocalHostStats *initial_ts_point;
-  std::unordered_map<u_int32_t, DoHDoTStats*> doh_dot_map;
-  
+  bool inconsistent_host_os;
+  LocalHostStats* initial_ts_point;
+  /* contacted_server_ports it's a buffer used by the "Server Port Detected"
+   * check */
+  SPSCQueue<std::pair<u_int16_t, u_int16_t>> contacted_server_ports;
+  UsedPorts* usedPorts;            /* List of server+client-contacted ports */
+  ndpi_os tcp_fingerprint_host_os; /* Learnt from TCP Fingerprinting */
+  HostFingerprints* fingerprints;  /* Application fingerprints */
+  u_int8_t router_mac[6]; /* MAC address pf the first router used (no Mac* to
+                             avoid purging race conditions) */
+  u_int8_t router_mac_set : 1, drop_all_host_traffic : 1, systemHost : 1,
+      too_many_server_ports_logged : 1, _notused : 4;
+  std::atomic<bool> asset_map_updated;
+#ifdef NTOPNG_PRO
+  /* The flow that has created the host has not been recorded yet (journal).
+   * NOTE: atomic and not in the bitfield above, as it is cleared by the
+   * threads processing the flows (setJournalCreatedBy) while the other bits
+   * are written by other threads */
+  std::atomic<bool> journal_created_pending;
+#endif
   /* LocalHost data: update LocalHost::deleteHostData when adding new fields */
-  char *os_detail;
-  bool drop_all_host_traffic;
+  char *os_detail, *tcp_fingerprint;
+  /* Usernames seen in the traffic of the host, whatever the protocol (e.g.
+   * the Kerberos clients), and the Kerberos machine account, each allocated
+   * at the first one. In memory only (not serialized).
+   * NOTE: protected by Host::m */
+  struct LocalHostUsernames {
+    struct {
+      char name[256];     /* e.g. user@realm */
+      u_int16_t protocol; /* nDPI protocol id (e.g. NDPI_PROTOCOL_KERBEROS) */
+      time_t first_seen, last_seen;
+    } users[MAX_USERNAMES_PER_HOST];
+    u_int8_t num_users;
+  } *usernames;
+  struct LocalHostKerberosMachine {
+    char machine[64];       /* Machine name (e.g. ws1) */
+    char machine_name[256]; /* Machine account principal (e.g. ws1$@corp.local) */
+    time_t last_seen;
+  } *kerberos_machine;
+  std::map<OSLearningMode, ndpi_os>
+      os_learning; /* How OS info has been learnt */
+  /* For generic purposes, a <string, string> pair is done.
+   * NOTE: protected by Host::m */
+  std::map<std::string, std::string> asset_map;
+  struct timeval last_periodic_asset_update;
+  /* Tags observed on the host / removed by the user since the last time the
+   * asset info has been dumped: they are used to refresh the tags of the asset
+   * (that expire when not refreshed) and to remove tags from it.
+   * tags_assigned_bitmap is the subset of the refreshed tags that have been
+   * set manually by the user (rather than observed in the traffic) */
+  std::atomic<u_int64_t> tags_refreshed_bitmap, tags_removed_bitmap,
+      tags_assigned_bitmap;
+#ifdef NTOPNG_PRO
+  /* Journal of the assets (see doc/developers/README.assets_journal.md): the
+   * causes of the changes not yet dumped with the asset, NULL when none. They
+   * are written with the asset info and freed when it is dumped.
+   * NOTE: protected by Host::m, as the other asset data */
+  AssetJournalCause* journal_causes;
+#endif
+
+#ifdef NTOPNG_PRO
+  struct {
+    std::atomic<u_int32_t> num_new_flows_as_client_toward_local_servers,
+      num_new_flows_as_client_toward_remote_servers;
+    u_int32_t next_flow_stats_reset;
+    u_int8_t num_consec_threshold_cross;
+  } flow_stats;
+#endif
   /* END Host data: */
 
   void initialize();
+  void deferredInitialization();
   void freeLocalHostData();
   virtual void deleteHostData();
 
-  char* getMacBasedSerializationKey(char *redis_key, size_t size, char *mac_key);
-  char* getIpBasedSerializationKey(char *redis_key, size_t size);
-  void luaDoHDot(lua_State *vm);
+#ifdef NTOPNG_PRO
+  /* Journal of the assets: add to journal_causes the cause of a change (what,
+   * tag_id: see AssetJournalCause), made of the evidence and of the flow
+   * (Flow::print, not full_report), each one if any. Nothing is added when
+   * the assets journal is not available */
+  void addJournalCause(AssetJournalWhat what, u_int8_t tag_id, Flow* f,
+                       const char* evidence = NULL);
+  /* Same, for an element (key) of a list field (e.g. a Kerberos user): one
+   * cause per element */
+  void addJournalListCause(AssetJournalWhat what, const char* key, Flow* f,
+                           const char* evidence = NULL);
+  /* The implementation of both (key: NULL when not a list element) */
+  void addJournalCauseKey(AssetJournalWhat what, u_int8_t tag_id,
+                          const char* key, Flow* f, const char* evidence);
+  /* Takes (under m) the causes not yet dumped, leaving none */
+  AssetJournalCause* takeJournalCauses();
+  /* NOTE: m locked by the caller (or host being deleted) */
+  void freeJournalCauses();
+#endif
+
+#ifdef NTOPNG_PRO
+  void resetLocalFlowStats();
+#endif
   
+  char* getMacBasedSerializationKey(char* redis_key, size_t size, char* mac_key,
+                                    bool short_format);
+  char* getIPBasedSerializationKey(char* redis_key, size_t size,
+                                   bool short_format);
+  void syncMACMetadata(bool force_update);
+
  public:
-  LocalHost(NetworkInterface *_iface, Mac *_mac, VLANid _vlanId, u_int16_t _observation_point_id, IpAddress *_ip);
-  LocalHost(NetworkInterface *_iface, char *ipAddress, VLANid _vlanId, u_int16_t _observation_point_id);
+  LocalHost(NetworkInterface* _iface, int32_t _iface_idx, Mac* _mac,
+            u_int16_t _u_int16_t, u_int16_t _observation_point_id,
+            IpAddress* _ip);
+  LocalHost(NetworkInterface* _iface, int32_t _iface_idx, char* ipAddress,
+            u_int16_t _u_int16_t, u_int16_t _observation_point_id);
   virtual ~LocalHost();
 
   virtual void set_hash_entry_state_idle();
-  virtual int16_t get_local_network_id() const { return(local_network_id);  };
-  virtual bool isLocalHost()  const            { return(true);              };
-  virtual bool isSystemHost() const            { return(systemHost);        };
-
-  virtual NetworkStats* getNetworkStats(int16_t networkId) {
-    return(iface->getNetworkStats(networkId));
+  virtual int32_t get_local_network_id() const { return (local_network_id); };
+  virtual bool isLocalHost() const { return (true); };
+  virtual bool isLocalUnicastHost() const {
+    return (!(isBroadcastHost() || isMulticastHost()));
   };
-  virtual u_int32_t getActiveHTTPHosts() { return(getHTTPstats() ? getHTTPstats()->get_num_virtual_hosts() : 0); };
-  virtual HostStats* allocateStats()     { return(new LocalHostStats(this)); };
+  virtual bool isSystemHost() const { return (systemHost); };
+  virtual bool serializeByMac() const {
+    /* Honour the "Local Broadcast Domain Hosts Identifier" preference:
+       hosts in the DHCP range are keyed by MAC only when the user asked
+       for it. Keying them by MAC unconditionally made the timeseries key
+       of a host flip from IP to MAC as soon as it was flagged as a DHCP
+       host, splitting its timeseries in two (see #9223). */
+    return (iface->serializeLbdHostsAsMacs());
+  }
 
-  virtual bool dropAllTraffic() const { return(drop_all_host_traffic); };
-  virtual void inlineSetOSDetail(const char *_os_detail);
-  virtual const char* getOSDetail(char * const buf, ssize_t buf_len);
-  virtual void updateHostTrafficPolicy(char *key);
+  virtual void updateNetworkRTT(u_int32_t rtt_msecs) {
+    NetworkStats* network = iface->getNetworkStats(get_local_network_id());
+    if (network) network->updateRoundTripTime(rtt_msecs);
+  }
 
-  virtual void luaHTTP(lua_State *vm)              { stats->luaHTTP(vm);         };
-  virtual void luaDNS(lua_State *vm, bool verbose) { stats->luaDNS(vm, verbose); luaDoHDot(vm); };
-  virtual void luaICMP(lua_State *vm, bool isV4, bool verbose) { stats->luaICMP(vm,isV4,verbose); };
+  virtual NetworkStats* getNetworkStats(int32_t networkId) {
+    return (iface->getNetworkStats(networkId));
+  };
+  virtual u_int32_t getActiveHTTPHosts() {
+    return (getHTTPstats() ? getHTTPstats()->get_num_virtual_hosts() : 0);
+  };
+  virtual HostStats* allocateStats() { return (new LocalHostStats(this)); };
+
+  virtual void incResetFlow() const { stats->incResetFlow(); };
+  virtual bool dropAllTraffic() const { return (drop_all_host_traffic); };
+  virtual void inlineSetOSDetail(const char* _os_detail);
+  virtual const char* getOSDetail(char* const buf, ssize_t buf_len);
+  virtual void updateHostTrafficPolicy(char* key);
+
+  virtual void luaHTTP(lua_State* vm) { stats->luaHTTP(vm); };
+  virtual void luaDNS(lua_State* vm, bool verbose) {
+    stats->luaDNS(vm, verbose);
+  };
+  virtual void luaICMP(lua_State* vm, bool isV4, bool verbose) {
+    stats->luaICMP(vm, isV4, verbose);
+  };
   virtual void lua_get_timeseries(lua_State* vm);
-  virtual void lua_peers_stats(lua_State* vm)    const;
-  virtual void lua_contacts_stats(lua_State *vm) const;
-  virtual void incrVisitedWebSite(char *hostname)  { stats->incrVisitedWebSite(hostname); };
-  virtual HTTPstats* getHTTPstats()                { return(stats->getHTTPstats());       };
-  virtual DnsStats*  getDNSstats()                 { return(stats->getDNSstats());        };
-  virtual ICMPstats* getICMPstats()                { return(stats->getICMPstats());       };
-  virtual void luaTCP(lua_State *vm)               { stats->lua(vm,false,details_normal); };
-  virtual u_int16_t getNumActiveContactsAsClient() { return stats->getNumActiveContactsAsClient(); };
-  virtual u_int16_t getNumActiveContactsAsServer() { return stats->getNumActiveContactsAsServer(); };
+  virtual void lua_peers_stats(lua_State* vm) const;
+  virtual void lua_contacts_stats(lua_State* vm) const;
+  virtual void incrVisitedWebSite(char* hostname) {
+    stats->incrVisitedWebSite(hostname);
+  };
+  virtual HTTPstats* getHTTPstats() { return (stats->getHTTPstats()); };
+  virtual DnsStats* getDNSstats() { return (stats->getDNSstats()); };
+  virtual ICMPstats* getICMPstats() { return (stats->getICMPstats()); };
+  virtual void luaTCP(lua_State* vm) { stats->lua(vm, false, details_normal); };
+  virtual u_int16_t getNumActiveContactsAsClient() {
+    return stats->getNumActiveContactsAsClient();
+  };
+  virtual u_int16_t getNumActiveContactsAsServer() {
+    return stats->getNumActiveContactsAsServer();
+  };
   virtual void reloadPrefs();
-  virtual void addContactedDomainName(char* domain_name)    { stats->addContactedDomainName(domain_name);   }         
-  virtual u_int32_t getDomainNamesCardinality()             { return stats->getDomainNamesCardinality();    }      
-  virtual void resetDomainNamesCardinality()                { stats->resetDomainNamesCardinality();         }  
+  virtual void addContactedDomainName(char* domain_name) {
+    stats->addContactedDomainName(domain_name);
+  }
+  virtual u_int32_t getDomainNamesCardinality() {
+    return stats->getDomainNamesCardinality();
+  }
+  virtual void resetDomainNamesCardinality() {
+    stats->resetDomainNamesCardinality();
+  }
 
-  virtual void deserialize(json_object *obj);
-  virtual void serialize(json_object *obj, DetailsLevel details_level) { return Host::serialize(obj, details_level); };
-  virtual char* getSerializationKey(char *buf, uint bufsize);
+  virtual char* getSerializationKey(char* buf, u_int bufsize,
+                                    bool short_format = false);
+  char* getRedisKey(char* buf, uint buf_len, bool skip_prefix = false);
 
-  virtual void lua(lua_State* vm, AddressTree * ptree, bool host_details,
-		   bool verbose, bool returnHost, bool asListElement);
-  void custom_periodic_stats_update(const struct timeval *tv) { ; }
+  virtual void lua(lua_State* vm, AddressTree* ptree, bool host_details,
+                   bool verbose, bool veryBasicInfo, bool returnHost,
+                   bool asListElement);
+  void custom_periodic_stats_update(const struct timeval* tv,
+                                    bool force_update) {
+    ;
+  }
 
-  virtual void luaHostBehaviour(lua_State* vm)    { if(stats) stats->luaHostBehaviour(vm); }
-  virtual void incDohDoTUses(Host *srv_host);
+  virtual void luaHostBehaviour(lua_State* vm) {
+    if (stats) stats->luaHostBehaviour(vm);
+  }
 
-  virtual void incCountriesContacts(char *country)    { stats->incCountriesContacts(country);             }
-  virtual void resetCountriesContacts()               { stats->resetCountriesContacts();                  }
-  virtual u_int8_t getCountriesContactsCardinality()  { return(stats->getCountriesContactsCardinality()); }
+  virtual inline void incCountriesContacts(char* country) {
+    stats->incCountriesContacts(country);
+  }
+  virtual inline void resetCountriesContacts() {
+    stats->resetCountriesContacts();
+  }
+  virtual inline u_int8_t getCountriesContactsCardinality() {
+    return (stats->getCountriesContactsCardinality());
+  }
 
-  virtual void incNTPContactCardinality(Host *h)  { stats->incNTPContactCardinality(h);  }
-  virtual void incDNSContactCardinality(Host *h)  { stats->incDNSContactCardinality(h);  }
-  virtual void incSMTPContactCardinality(Host *h) { stats->incSMTPContactCardinality(h); }
+  virtual inline bool incNTPContactCardinality(Host* h) {
+    return (stats->incNTPContactCardinality(h));
+  }
+  virtual inline bool incDNSContactCardinality(Host* h) {
+    return (stats->incDNSContactCardinality(h));
+  }
+  virtual inline bool incSMTPContactCardinality(Host* h) {
+    return (stats->incSMTPContactCardinality(h));
+  }
+  virtual inline bool incIMAPContactCardinality(Host* h) {
+    return (stats->incIMAPContactCardinality(h));
+  }
+  virtual inline bool incPOPContactCardinality(Host* h) {
+    return (stats->incPOPContactCardinality(h));
+  }
 
-  virtual u_int32_t getNTPContactCardinality()    { return(stats->getNTPContactCardinality());  }
-  virtual u_int32_t getDNSContactCardinality()    { return(stats->getDNSContactCardinality());  }
-  virtual u_int32_t getSMTPContactCardinality()   { return(stats->getSMTPContactCardinality()); }
+  virtual inline u_int32_t getNTPContactCardinality() {
+    return (stats->getNTPContactCardinality());
+  }
+  virtual inline u_int32_t getDNSContactCardinality() {
+    return (stats->getDNSContactCardinality());
+  }
+  virtual inline u_int32_t getSMTPContactCardinality() {
+    return (stats->getSMTPContactCardinality());
+  }
+  virtual inline u_int32_t getIMAPContactCardinality() {
+    return (stats->getIMAPContactCardinality());
+  }
+  virtual inline u_int32_t getPOPContactCardinality() {
+    return (stats->getPOPContactCardinality());
+  }
+
+  void setRouterMac(Mac* gw);
+
+  void setServerPort(bool isTCP, u_int16_t port, ndpi_protocol* proto,
+                     time_t when);
+  inline void setContactedPort(bool isTCP, u_int16_t port,
+                               ndpi_protocol* proto) {
+    if (usedPorts) usedPorts->setContactedPort(isTCP, port, proto);
+  };
+  virtual inline void luaUsedPorts(lua_State* vm) {
+    if (usedPorts) usedPorts->lua(vm, iface);
+  };
+  virtual inline std::unordered_map<u_int16_t, ndpi_protocol>*
+  getUDPServerPorts() {
+    return (usedPorts ? usedPorts->getUDPServerPorts() : NULL);
+  };
+  virtual inline std::unordered_map<u_int16_t, ndpi_protocol>*
+  getTCPServerPorts() {
+    return (usedPorts ? usedPorts->getTCPServerPorts() : NULL);
+  };
+  virtual inline std::unordered_map<u_int16_t, ndpi_protocol>* getServerPorts(
+      bool isTCP) {
+    return (usedPorts ? usedPorts->getServerPorts(isTCP) : NULL);
+  };
+
+  void periodic_stats_update(const struct timeval* tv, bool force_update);
+  void checkGatewayInfo();
+  inline Fingerprint* getJA4Fingerprint() {
+    return (fingerprints ? &fingerprints->ja4 : NULL);
+  }
+  inline Fingerprint* getHASSHFingerprint() {
+    return (fingerprints ? &fingerprints->hassh : NULL);
+  }
+  void lua_get_fingerprints(lua_State* vm);
+
+  SPSCQueue<std::pair<u_int16_t, u_int16_t>>* getContactedServerPorts() {
+    return (&contacted_server_ports);
+  };
+
+  bool setService(HostService service_enum, Flow* f = NULL);
+
+  void offlineSetMDNSInfo(char* const s);
+  void offlineSetMDNSName(const char* n);
+  void offlineSetDHCPName(const char* n);
+  void offlineSetDhcpFingerprint(const char* fingerprint, Flow* f = NULL);
+  void offlineSetMDNSTXTName(const char* n);
+  void offlineSetNetbiosName(const char* n);
+  void setKerberosClient(const char* principal, const char* machine, Flow* f);
+  void setUsername(const char* name, u_int16_t protocol, Flow* f);
+  char* getKerberosName(char* const buf, ssize_t buf_len,
+                        bool machine_only = false);
+  void lua_get_usernames(lua_State* vm);
+  void offlineSetTLSName(const char* n);
+  void offlineSetHTTPName(const char* n);
+  void setServerName(const char* n);
+  void setResolvedName(const char* resolved_name, Flow* f = NULL);
+
+  virtual bool setOS(ndpi_os _os, OSLearningMode mode, Flow* f = NULL);
+  void setTCPfingerprint(char* tcp_fingerprint, ndpi_os os, Flow* f = NULL);
+#ifdef NTOPNG_PRO
+  void setJournalCreatedBy(Flow* f);
+#endif
+
+  virtual inline void setAssetUpdated() { asset_map_updated = true; }
+  /* NOTE: the cause (journal) of a tag is recorded the first time it is
+   * refreshed after the asset info has been dumped */
+  virtual void setTagsRefreshed(u_int64_t bitmap, Flow* f = NULL,
+                                const char* evidence = NULL);
+  /* NOTE: to be called after setTagsRefreshed */
+  virtual inline void setTagsAssigned(u_int64_t bitmap) {
+    tags_assigned_bitmap |= bitmap;
+  }
+  virtual inline void setTagsRemoved(u_int64_t bitmap) {
+    tags_removed_bitmap |= bitmap, tags_refreshed_bitmap &= ~bitmap,
+        tags_assigned_bitmap &= ~bitmap;
+  }
+  void setMACmeaningful();
+  inline bool isAssetUpdated() {
+    return (asset_map_updated || (mac && mac->isAssetUpdated()));
+  }
+
+#ifdef NTOPNG_PRO
+  void loadAssetInfo();
+  void dumpAssetInfo();
+  bool addDataToAssets(char* field, char* value);
+  bool removeDataFromAssets(char* field);
+  void dumpAssetJson(ndpi_serializer* serializer);
+  /* Journal of the assets: the causes of the changes ("journal" block) */
+  void dumpAssetJournal(ndpi_serializer* serializer);
+  void dumpAssetPortsJson(ndpi_serializer* serializer);
+  void dumpAssetPortsJson(ndpi_serializer* serializer, const char* l4_proto,
+                          std::unordered_map<u_int16_t, ndpi_protocol>* ports);
+  void incActiveFlowStats(bool isRemotePeer);
+  bool isVPNActivityDetected();
+#endif
+
+  void setDeviceType(DeviceType devtype);
 };
 
 #endif /* _LOCAL_HOST_H_ */

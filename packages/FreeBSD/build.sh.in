@@ -21,8 +21,11 @@ www:         https://www.ntop.org
 prefix:      /
 EOF
 
+# Note: ntopng requires the 'redis' pkg on FreeBSD, however the package name on OPNsense is 'redis72' (dependency of 'os-redis')
+# for this reason this dependency should be installed manually for the time being
+# Note: librdkafka has been removed and disabled in the configure on FreeBSD as OPNsense does not carry the 'librdkafka' package
 echo "deps: {" >> ${STAGEDIR}/+MANIFEST
-for i in "json-c" "libmaxminddb" "libzmq4" "rrdtool" "lua53" "libsodium" "sqlite3" "redis" "zstd"
+for i in "json-c" "libmaxminddb" "libzmq4" "rrdtool" "lua53" "libsodium" "sqlite3" "hiredis" "zstd" "nmap" "curl"
 do
     pkg query "  %n: { version: \"%v\", origin: %o }" "$i" >> ${STAGEDIR}/+MANIFEST
 done
@@ -34,7 +37,6 @@ cp -r usr ${STAGEDIR}
 mkdir -p ${STAGEDIR}/usr/local/bin ${STAGEDIR}/usr/local/share/ntopng
 cp ../../ntopng ${STAGEDIR}/usr/local/bin/
 strip ${STAGEDIR}/usr/local/bin/ntopng
-cp ../wizard/ntopng-config ${STAGEDIR}/usr/local/bin/
 mkdir -p ${STAGEDIR}/usr/local/etc/ntopng
 
 # Sample configuration file
@@ -49,15 +51,30 @@ cp ${NTOPNG_HOME}/ntopng.8 ${STAGEDIR}/usr/local/share/man/man8
 cp -r ${NTOPNG_HOME}/httpdocs ${STAGEDIR}/usr/local/share/ntopng
 rm -f ${STAGEDIR}/usr/local/share/ntopng/httpdocs/misc/ntopng-utils-manage*
 cp -Lr ${NTOPNG_HOME}/scripts ${STAGEDIR}/usr/local/share/ntopng  # L to dereference symlinks
-mv ${STAGEDIR}/usr/local/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy ${STAGEDIR}/usr/local/share/ntopng/httpdocs/ssl/ntopng-cert.pem
+#mv ${STAGEDIR}/usr/local/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy ${STAGEDIR}/usr/local/share/ntopng/httpdocs/ssl/ntopng-cert.pem
 mkdir ${STAGEDIR}/usr/local/share/ntopng/pro
 cp -r ${NTOPNG_HOME}/pro/httpdocs ${STAGEDIR}/usr/local/share/ntopng/pro
 cp -r ${NTOPNG_HOME}/pro/scripts ${STAGEDIR}/usr/local/share/ntopng/pro
 rm -rf ${STAGEDIR}/usr/local/share/ntopng/pro/scripts/lua/nedge
-cd ${STAGEDIR}/usr/local/share/ntopng/scripts/lua; rm -rf pro; cp -r ../../pro/scripts/lua pro
+rm -rf ${STAGEDIR}/usr/local/share/ntopng/scripts/lua/pro
+gmake -C ${NTOPNG_HOME}/pro/utils snzip || exit 1
 find ${STAGEDIR}/usr/local/share/ntopng/pro -name "*.lua" -type f -exec ${NTOPNG_HOME}/pro/utils/snzip -c -i {} -o {}r \;
 find ${STAGEDIR}/usr/local/share/ntopng/pro -name "*.lua" -type f -exec /bin/rm  {} ';';
 find ${STAGEDIR}/usr/local/share/ntopng/pro/scripts -name "*.luar" | xargs renamex -s/.luar/.lua/s;
+# Copy pro scripts only now that they are encrypted and signed (cleartext must never be shipped)
+cd ${STAGEDIR}/usr/local/share/ntopng/scripts/lua; cp -r ../../pro/scripts/lua pro
+
+# find ${STAGEDIR}/usr/local/share/ntopng/scripts/lua -name "*.lua" -type f -exec  ${NTOPNG_HOME}/tools/luac.sh {} ';'
+
+
+
+# Vulscan
+#\mkdir -p ${STAGEDIR}/usr/local/share/nmap/scripts/vulscan
+#curl -o ${STAGEDIR}/usr/local/share/nmap/scripts/vulscan/vulscan.nse https://raw.githubusercontent.com/scipag/vulscan/master/vulscan.nse
+#curl -o ${STAGEDIR}/usr/local/share/nmap/scripts/vulscan/cve.csv     https://raw.githubusercontent.com/scipag/vulscan/master/cve.csv
+
+mkdir -p ${STAGEDIR}/usr/local/share/ntop/sbom
+~/scripts/sbom/generate-sbom.sh ${STAGEDIR}/usr/local/bin/ntopng ${STAGEDIR}/usr/local/share/ntop/sbom/ntopng.json
 
 rm -f ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip/*
 find ${STAGEDIR}/usr/local/share/ntopng -name "*~"   | xargs /bin/rm -f
@@ -68,6 +85,7 @@ find . -name "*~" -exec /bin/rm {} ';'
 
 # Add GeoIP files
 mkdir -p ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip
+cp ~/dat_files/as.csv ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip/as.csv
 cp ~/dat_files/dbip-asn-lite-*.mmdb ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip/dbip-asn-lite.mmdb
 cp ~/dat_files/dbip-city-lite-*.mmdb ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip/dbip-city-lite.mmdb
 cp ~/dat_files/dbip-country-lite-*.mmdb ${STAGEDIR}/usr/local/share/ntopng/httpdocs/geoip/dbip-country-lite.mmdb
@@ -81,12 +99,40 @@ cd $HERE
 # Build +POST_INSTALL
 
 cat >> ${STAGEDIR}/+POST_INSTALL <<EOF
-if ! id "ntopng" >/dev/null 2>&1; then
-  pw useradd ntopng -s /sbin/nologin -d /nonexistent -c "ntopng user" -w no
+
+TLS_DIR="/usr/local/share/ntopng/httpdocs/ssl"
+TLS_CERT_PATH="$TLS_DIR/ntopng-cert.pem"
+if [ ! -f "$TLS_CERT_PATH" ]; then
+    mkdir -p $TLS_DIR
+    openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out $TLS_DIR/cert.pem -subj "/CN=ntopng.local" -addext "subjectAltName = DNS:ntopng.local"
+    mv privkey.pem $TLS_CERT_PATH
+    cat $TLS_DIR/cert.pem >> $TLS_CERT_PATH
+    rm $TLS_DIR/cert.pem
 fi
-chown ntopng:ntopng /usr/local/bin/ntopng-config
-chmod ugo+s /usr/local/bin/ntopng-config
-chown -R ntopng:ntopng /usr/local/etc/ntopng
+
+
+
+# Add missing libraries symlinks due to invalid shlib version
+RES=\`ldd /usr/local/bin/ntopng | grep "not found" | cut -d '=' -f 1 | sed 's/[[:blank:]]//g'\`
+
+for LIB in \$RES; do
+    BASELIB=\`echo \$LIB|cut -d '.' -f 1\`
+    if [ -f /lib/\$BASELIB.so ]; then
+        CMD=\`ln -s /lib/\$BASELIB.so /usr/local/lib/\$LIB\`
+    elif [ -f /usr/lib/\$BASELIB.so ]; then
+        CMD=\`ln -s /usr/lib/\$BASELIB.so /usr/local/lib/\$LIB\`
+    elif [ -f /usr/local/lib/\$BASELIB.so ]; then
+        CMD=\`ln -s /usr/local/lib/\$BASELIB.so /usr/local/lib/\$LIB\`
+    fi
+done
+EOF
+
+####################
+
+if ! id "ntopng" >/dev/null 2>&1; then
+  sudo pw useradd ntopng -s /sbin/nologin -d /nonexistent -c "ntopng user" -w no
+fi
+chown -R ntopng:ntopng ${STAGEDIR}/usr/local/etc/ntopng
 EOF
 
 # Build +POST_DEINSTALL
@@ -101,13 +147,18 @@ EOF
 rm -f *.txz
 pkg create -m ${STAGEDIR}/ -r ${STAGEDIR}/ -p ${STAGEDIR}/plist -o $HERE
 
-if test $VERSION -eq "13" ; then
-    PKG_NAME=ntopng-@PACKAGE_VERSION@.pkg
-else
+if test $VERSION -eq "12" ; then
     PKG_NAME=ntopng-@PACKAGE_VERSION@.txz
+else
+    PKG_NAME=ntopng-@PACKAGE_VERSION@.pkg
 fi
 
 /bin/rm -f ~/binary_packages/ntopng-*
 
-tar -tvf ${PKG_NAME}
-cp ${PKG_NAME} ~/binary_packages/
+FOUND=`tar -tvf ${PKG_NAME} | grep /usr/local/bin/ntopng | wc -l`
+
+if test $FOUND -eq "1" ; then
+    cp ${PKG_NAME} ~/binary_packages/
+else
+    echo "Broken package: missing ntopng binary"
+fi

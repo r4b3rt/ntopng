@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,11 +24,20 @@
 
 #include "ntop_includes.h"
 
+struct asn_info_query_ctx_t {
+  char* handle_buf;
+  u_int handle_len;
+  char* desc_buf;
+  u_int desc_len;
+  bool found;
+};
+
 class Geolocation {
  private:
 #ifdef HAVE_MAXMINDDB
   MMDB_s geo_ip_asn_mmdb, geo_ip_city_mmdb;
-  bool loadGeoDB(const char * base_path, const char * db_name, MMDB_s * const mmdb) const;
+  bool loadGeoDB(const char* base_path, const char* db_name,
+                 MMDB_s* const mmdb) const;
   bool mmdbs_ok;
 #endif
 
@@ -42,14 +51,17 @@ class Geolocation {
 
   inline bool isAvailable() {
 #ifdef HAVE_MAXMINDDB
-      return(mmdbs_ok);
+    return (mmdbs_ok);
 #else
-      return(false);
+    return (false);
 #endif
   };
-  void getAS(IpAddress *addr, u_int32_t *asn, char **asname);
-  void getInfo(IpAddress *addr, char **continent_code, char **country_code, char **city, float *latitude, float *longitude);
-  static void freeInfo(char **continent_code, char **country_code, char **city);
+  bool getAS(IpAddress* addr, u_int32_t* asn, char** asname);
+  bool getInfo(IpAddress* addr, char** continent_code, char** country_code,
+               char** city, float* latitude, float* longitude);
+  static void freeInfo(char** continent_code, char** country_code, char** city);
+  bool getASName(u_int32_t asn, char* handle, u_int handle_len,
+                 char* description, u_int description_len);
 };
 
 #endif /* _GEOLOCATION_H_ */

@@ -1,0 +1,594 @@
+{
+	"id": "flow_historical",
+	"data_url": "lua/pro/rest/v2/get/db/historical_db_search.lua",
+	"use_current_page": false,
+	"enable_search": false,
+	"paging": true,
+	"rsp_records_field": "records",
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.historical_flows",
+	"rsp_query_info_field": "stats",
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "split_button",
+			"button_def_array": [
+				{
+					"id": "info",
+					"icon": "fas fa-sm fa fa-search-plus",
+					"title_i18n": "info",
+					"event_id": "click_button_info"
+				},
+				{
+					"id": "pcap_download",
+					"icon": "fas fa-sm fa-download",
+					"title_i18n": "traffic_recording.pcap_download",
+					"event_id": "click_button_pcap_download"
+				},
+				{
+					"id": "track_flow",
+					"icon": "fas fa-sm fa-stream",
+					"title_i18n": "track_flow",
+					"event_id": "click_button_track_flow"
+				},
+				{
+					"id": "flow_historical",
+					"icon": "fas fa-sm fa-stream",
+					"title_i18n": "flows",
+					"event_id": "click_button_historical_flows"
+				}
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.ntopng_interface",
+			"data_field": "ntopng_interface",
+			"min-width": "100px",
+			"sortable": true,
+			"render_generic": "ntopng_interface",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.first_seen",
+			"data_field": "first_seen",
+			"min-width": "90px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.last_seen",
+			"data_field": "last_seen",
+			"min-width": "90px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.duration",
+			"data_field": "DURATION",
+			"min-width": "90px",
+			"sortable": true,
+			"class": [
+				"no-wrap text-center"
+			]
+		},
+		{
+			"title_i18n": "db_search.l4proto",
+			"data_field": "l4proto",
+			"min-width": "95px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.l7proto",
+			"data_field": "l7proto",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "score",
+			"data_field": "score",
+			"render_type": "formatScore",
+			"min-width": "70px",
+			"sortable": true,
+			"zero_is_null": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.qoe",
+			"data_field": "qoe_score",
+			"render_type": "formatQoE",
+			"min-width": "70px",
+			"sortable": true,
+			"zero_is_null": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "flow_alerts_filter",
+			"data_field": "alert_id",
+			"min-width": "140px",
+			"sortable": true,
+			"render_generic": "alert_id",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "flow",
+			"data_field": "flow",
+			"min-width": "300px",
+			"auto_max_width": false,
+			"render_type": "formatFlowTuple",
+			"sortable": false,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "tags_page.tags",
+			"data_field": "tags",
+			"render_type": "formatTagBadges",
+			"sortable": false,
+			"min-width": "120px",
+			"class": [
+				"text-nowrap",
+				"none"
+			]
+		},
+		{
+			"title_i18n": "db_search.info",
+			"data_field": "info",
+			"min-width": "30px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.vlan_id",
+			"data_field": "vlan_id",
+			"sortable": true,
+			"min-width": "70px",
+			"render_generic": "vlan_id",
+			"class": [
+				"no-wrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "db_search.packets",
+			"data_field": "packets",
+			"sortable": true,
+			"min-width": "80px",
+			"render_type": "full_number",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.bytes",
+			"data_field": "bytes",
+			"sortable": true,
+			"min-width": "90px",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.throughput",
+			"data_field": "throughput",
+			"sortable": true,
+			"min-width": "100px",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.cli_asn",
+			"data_field": "cli_asn",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.src_peer_asn",
+			"data_field": "src_peer_as",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.srv_asn",
+			"data_field": "srv_asn",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.dst_peer_asn",
+			"data_field": "dst_peer_as",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.l7cat",
+			"data_field": "l7cat",
+			"min-width": "100px",
+			"sortable": true,
+			"render_generic": "l7cat",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flow_risk",
+			"data_field": "flow_risk",
+			"min-width": "150px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.domain_name",
+			"data_field": "domain_name",
+			"min-width": "100px",
+			"sortable": true,
+			"render_generic": "domain_name",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.requested_server_name",
+			"data_field": "requested_server_name",
+			"min-width": "100px",
+			"sortable": true,
+			"render_generic": "requested_server_name",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.src2dst_tcp_flags",
+			"data_field": "src2dst_tcp_flags",
+			"min-width": "140px",
+			"sortable": true,
+			"render_type": "formatSRC2DSTTCPFlags",
+			"zero_is_null": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.dst2src_tcp_flags",
+			"data_field": "dst2src_tcp_flags",
+			"min-width": "140px",
+			"sortable": true,
+			"render_type": "formatDST2SRCTCPFlags",
+			"zero_is_null": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "traffic_labels.cli2srv_bytes",
+			"data_field": "cli2srv_bytes",
+			"sortable": true,
+			"min-width": "90px",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "traffic_labels.srv2cli_bytes",
+			"data_field": "srv2cli_bytes",
+			"sortable": true,
+			"min-width": "90px",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "traffic_labels.cli2srv_packets",
+			"data_field": "cli2srv_packets",
+			"sortable": true,
+			"min-width": "80px",
+			"render_type": "full_number",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "traffic_labels.srv2cli_packets",
+			"data_field": "srv2cli_packets",
+			"sortable": true,
+			"min-width": "80px",
+			"render_type": "full_number",
+			"style": "text-align:right;",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.cli_nw_latency",
+			"data_field": "cli_nw_latency",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.srv_nw_latency",
+			"data_field": "srv_nw_latency",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.appl_latency",
+			"data_field": "appl_latency",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.observation_point_id",
+			"data_field": "observation_point_id",
+			"min-width": "80px",
+			"sortable": true,
+			"render_generic": "observation_point_id",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.exporter_ip",
+			"data_field": "exporter_ip",
+			"sortable": true,
+			"min-width": "150px",
+			"render_type": "formatExporterIP",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.site",
+			"data_field": "site",
+			"sortable": true,
+			"min-width": "120px",
+			"render_type": "formatSite",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.next_hop_ip",
+			"data_field": "next_hop_ip",
+			"sortable": true,
+			"min-width": "150px",
+			"render_type": "formatNextHopIP",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.next_hop_site",
+			"data_field": "next_hop_site",
+			"sortable": true,
+			"min-width": "120px",
+			"render_type": "formatNextHopSite",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_network",
+			"data_field": "cli_network",
+			"sortable": false,
+			"min-width": "140px",
+			"render_generic": "cli_network",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.srv_network",
+			"data_field": "srv_network",
+			"sortable": true,
+			"min-width": "140px",
+			"render_generic": "srv_network",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_site",
+			"data_field": "cli_site",
+			"sortable": true,
+			"min-width": "120px",
+			"render_generic": "cli_site",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.srv_site",
+			"data_field": "srv_site",
+			"sortable": true,
+			"min-width": "120px",
+			"render_generic": "srv_site",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.cli_host_pool_id",
+			"data_field": "cli_host_pool_id",
+			"sortable": true,
+			"min-width": "110px",
+			"render_generic": "cli_host_pool_id",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.srv_host_pool_id",
+			"data_field": "srv_host_pool_id",
+			"sortable": false,
+			"min-width": "110px",
+			"render_generic": "srv_host_pool_id",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.input_snmp",
+			"data_field": "input_snmp",
+			"sortable": false,
+			"min-width": "100px",
+			"zero_is_null": true,
+			"render_generic": "input_snmp",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.output_snmp",
+			"data_field": "output_snmp",
+			"sortable": false,
+			"min-width": "100px",
+			"zero_is_null": true,
+			"render_generic": "output_snmp",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_country",
+			"data_field": "cli_country",
+			"sortable": false,
+			"min-width": "100px",
+			"render_generic": "cli_country",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.srv_country",
+			"data_field": "srv_country",
+			"sortable": false,
+			"min-width": "100px",
+			"render_generic": "srv_country",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_fingerprint",
+			"data_field": "cli_fingerprint",
+			"sortable": false,
+			"min-width": "100px",
+			"render_generic": "cli_fingerprint",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_proc_name",
+			"data_field": "cli_proc_name",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.srv_proc_name",
+			"data_field": "srv_proc_name",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.cli_user_name",
+			"data_field": "cli_user_name",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.srv_user_name",
+			"data_field": "srv_user_name",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.major_connection_state",
+			"data_field": "major_connection_state",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"no-wrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.minor_connection_state",
+			"data_field": "minor_connection_state",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"no-wrap"
+			]
+		}
+	]
+}

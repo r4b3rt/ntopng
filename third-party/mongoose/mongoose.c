@@ -1,4 +1,5 @@
 // Copyright (c) 2004-2013 Sergey Lyubka
+// Copyright (c) 2013-2026 ntop.org
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -1031,6 +1032,8 @@ static void send_http_error(struct mg_connection *conn, int status,
 	    "Connection: %s\r\n\r\n", status, reason, len,
 	    suggest_connection_header(conn));
   conn->num_bytes_sent += mg_printf(conn, "%s", buf);
+
+  traceHTTP(conn, (u_int16_t)status);
 }
 
 #if defined(_WIN32) && !defined(__SYMBIAN32__)
@@ -1055,6 +1058,7 @@ static void send_http_error(struct mg_connection *conn, int status,
 }
 #endif
 
+#if 0 /* see ntop_win32.c */
 /* static */int pthread_cond_init(pthread_cond_t *cv, const void *unused) {
   unused = NULL;
   cv->signal = CreateEvent(NULL, FALSE, FALSE, NULL);
@@ -1091,6 +1095,8 @@ static void send_http_error(struct mg_connection *conn, int status,
 /* static */int pthread_cond_destroy(pthread_cond_t *cv) {
   return CloseHandle(cv->signal) && CloseHandle(cv->broadcast) ? 0 : -1;
 }
+#endif
+
 
 // For Windows, change all slashes to backslashes in path names.
 static void change_slashes_to_backslashes(char *path) {
@@ -1562,7 +1568,6 @@ static int64_t push(FILE *fp, SOCKET sock, SSL *ssl, const char *buf,
 
   sent = 0;
   while (sent < len) {
-
     // How many bytes we send in this iteration
     k = len - sent > INT_MAX ? INT_MAX : (int) (len - sent);
 
@@ -2125,7 +2130,9 @@ static const struct {
   {".css", 4, "text/css"},
   {".eot", 4, "application/vnd.ms-fontobject"},
   {".js", 3, "application/javascript"},
-
+  {".css.map", 8, "text/css"},
+  {".js.map", 7, "application/javascript"},
+  
   {NULL,  0, NULL}
 };
 
@@ -2954,6 +2961,81 @@ static void fclose_on_exec(struct file *filep) {
   }
 }
 
+static int is_not_modified(const struct mg_connection *conn,
+			   const struct file *filep); /* NTOP: used by handle_file_request() */
+
+/* NTOP: true for the public files of the GUI bundles: under <document root>/dist/
+   and of a type served without authentication (see isStaticResourceUrl() in
+   HTTPserver.cpp). Only these can be cached as public/long-lived: the check is
+   done on the file system path, not on the (attacker controlled) URI */
+static int ntop_is_public_bundle_file(const struct mg_connection *conn, const char *path) {
+  static const char *exts[] = { ".js", ".css", ".map", ".ttf", ".woff", ".woff2", NULL };
+  const char *root = conn->ctx->config[DOCUMENT_ROOT], *ext;
+  size_t root_len;
+  int i;
+
+  if (root == NULL) return 0;
+
+  root_len = strlen(root);
+  while ((root_len > 0) && (root[root_len - 1] == '/')) root_len--;
+
+  if ((strncmp(path, root, root_len) != 0) || (strncmp(&path[root_len], "/dist/", 6) != 0)
+      || (strstr(path, "..") != NULL) /* Already normalized: defense in depth */)
+    return 0;
+
+  ext = strrchr(path, '.');
+  if ((ext == NULL) || (strchr(ext, '/') != NULL)) return 0;
+
+  for (i = 0; exts[i] != NULL; i++)
+    if (strcmp(ext, exts[i]) == 0) return 1;
+
+  return 0;
+}
+
+/* NTOP: true for the build assets with a content hash in the name (e.g.
+   dist/assets/fa-solid-900-B4ZZ7kfP.woff2, see assetFileNames in pro/build.mjs):
+   their content never changes for a given name */
+static int ntop_is_hashed_asset(const char *path) {
+  const char *name, *dot, *p;
+
+  if (strstr(path, "/dist/assets/") == NULL) return 0;
+
+  name = strrchr(path, '/') + 1;
+  dot = strrchr(name, '.');
+
+  /* <name>-<8 chars hash>.<ext> (the hash is base64url: it can contain '-' and '_') */
+  if ((dot == NULL) || ((dot - name) < 10) || (dot[-9] != '-')) return 0;
+
+  for (p = dot - 8; p < dot; p++)
+    if (!isalnum((unsigned char) *p) && (*p != '_') && (*p != '-')) return 0;
+
+  return 1;
+}
+
+/* NTOP: Cache-Control of the static files.
+   - public bundle files with a hash in the name: the name changes with the
+     content, cached by anybody without revalidation
+   - public bundle files requested with a version (the pages add ?<epoch>, see
+     ntop.getStaticFileEpoch()): cached without revalidation only by the browser
+     (private). The version is ignored when serving the file and it is
+     predictable: a shared cache could be filled with the current file under a
+     future version, served then after an upgrade
+   - the other public bundle files are revalidated (ETag)
+   - all the other files may require authentication: never stored by shared
+     caches (private) and always revalidated */
+static const char *ntop_cache_control(const struct mg_connection *conn, const char *path) {
+  if (!ntop_is_public_bundle_file(conn, path))
+    return "private, no-cache";
+
+  if (ntop_is_hashed_asset(path))
+    return "public, max-age=31536000, immutable";
+
+  if (conn->request_info.ntop_versioned_url)
+    return "private, max-age=31536000, immutable";
+
+  return "public, no-cache";
+}
+
 static void handle_file_request(struct mg_connection *conn, const char *path,
 				struct file *filep) {
   char date[64], lm[64], etag[64], range[64];
@@ -2962,13 +3044,55 @@ static void handle_file_request(struct mg_connection *conn, const char *path,
   int64_t cl, r1, r2;
   struct vec mime_vec;
   int n;
+  char gz_path[PATH_MAX];
+  struct file gz_file = STRUCT_FILE_INITIALIZER;
+  const char *encoding = NULL; /* NTOP: "br" or "gzip" when a pre-compressed file is sent */
+  const char *cache_control = ntop_cache_control(conn, path);
 
   get_mime_type(conn->ctx, path, &mime_vec);
+
+  // Serve a pre-compressed file (.br preferred, smaller, then .gz) if the browser accepts it and it exists
+  hdr = mg_get_header(conn, "Accept-Encoding");
+  // (the name is used only if not truncated: a truncated one could be another file)
+  if (hdr != NULL && strstr(hdr, "br") != NULL) {
+    if ((mg_snprintf(conn, gz_path, sizeof(gz_path), "%s.br", path) == (int) strlen(path) + 3)
+	&& mg_stat(conn, gz_path, &gz_file) && !gz_file.is_directory)
+      encoding = "br";
+  }
+  if (encoding == NULL && hdr != NULL && strstr(hdr, "gzip") != NULL) {
+    if ((mg_snprintf(conn, gz_path, sizeof(gz_path), "%s.gz", path) == (int) strlen(path) + 3)
+	&& mg_stat(conn, gz_path, &gz_file) && !gz_file.is_directory)
+      encoding = "gzip";
+  }
+  if (encoding != NULL) {
+    filep->size = gz_file.size;
+    filep->modification_time = gz_file.modification_time;
+  }
+
+  // NTOP: check If-None-Match against the ETag of the file actually sent (the
+  // compressed one, if any): it was checked against the uncompressed one before
+  if (is_not_modified(conn, filep)) {
+    gmt_time_string(date, sizeof(date), &curtime);
+    gmt_time_string(lm, sizeof(lm), &filep->modification_time);
+    construct_etag(etag, sizeof(etag), filep);
+    conn->status_code = 304;
+    (void) mg_printf(conn,
+		     "HTTP/1.1 304 Not Modified\r\n"
+		     "Date: %s\r\n"
+		     "Last-Modified: %s\r\n"
+		     "Etag: %s\r\n"
+		     "Cache-Control: %s\r\n"
+		     "Vary: Accept-Encoding\r\n"
+		     "Connection: %s\r\n\r\n",
+		     date, lm, etag, cache_control, suggest_connection_header(conn));
+    return;
+  }
+
   cl = filep->size;
   conn->status_code = 200;
   range[0] = '\0';
 
-  if (!mg_fopen(conn, path, "rb", filep)) {
+  if (!mg_fopen(conn, encoding ? gz_path : path, "rb", filep)) {
     send_http_error(conn, 500, http_500_error,
 		    "fopen(%s): %s", path, strerror(ERRNO));
     return;
@@ -3005,9 +3129,15 @@ static void handle_file_request(struct mg_connection *conn, const char *path,
 		   "Content-Length: %" INT64_FMT "\r\n"
 		   "Connection: %s\r\n"
 		   "Accept-Ranges: bytes\r\n"
+		   "Cache-Control: %s\r\n"
+		   "Vary: Accept-Encoding\r\n"
+		   "%s%s%s"
 		   "%s\r\n",
 		   conn->status_code, msg, date, lm, etag, (int) mime_vec.len,
-		   mime_vec.ptr, cl, suggest_connection_header(conn), range);
+		   mime_vec.ptr, cl, suggest_connection_header(conn),
+		   cache_control,
+		   encoding ? "Content-Encoding: " : "", encoding ? encoding : "", encoding ? "\r\n" : "",
+		   range);
 
 #ifdef DEBUG /* ntop */
   printf(
@@ -3020,10 +3150,13 @@ static void handle_file_request(struct mg_connection *conn, const char *path,
 	 "Content-Length: %" INT64_FMT "\n"
 	 "Connection: %s\n"
 	 "Accept-Ranges: bytes\n"
+	 "%s"
 	 "%s\n",
 	 __FUNCTION__,
 	 conn->status_code, msg, date, lm, etag, (int) mime_vec.len,
-	 mime_vec.ptr, cl, suggest_connection_header(conn), range);
+	 mime_vec.ptr, cl, suggest_connection_header(conn),
+	 encoding ? "Content-Encoding: compressed\n" : "",
+	 range);
 #endif
 
   if (strcmp(conn->request_info.request_method, "HEAD") != 0) {
@@ -4269,12 +4402,14 @@ static void handle_lsp_request(struct mg_connection *conn, const char *path,
 }
 #endif // MONGOOSE_USE_LUA
 
-int mg_upload(struct mg_connection *conn, const char *destination_dir) {
+int mg_upload(struct mg_connection *conn, const char *destination_dir,
+	      char *fname, u_int fname_len) {
   const char *content_type_header, *boundary_start;
-  char buf[MG_BUF_LEN], path[PATH_MAX], fname[1024], boundary[100], *s;
+  char buf[MG_BUF_LEN], path[PATH_MAX], boundary[100], *s;
   FILE *fp;
   int bl, n, i, j, headers_len, boundary_len, len = 0, num_uploaded_files = 0;
 
+  fname[0] = '\0';
   // Request looks like this:
   //
   // POST /upload HTTP/1.1
@@ -4421,6 +4556,10 @@ static void handle_request(struct mg_connection *conn) {
   if ((conn->request_info.query_string = strchr(ri->uri, '?')) != NULL) {
     * ((char *) conn->request_info.query_string++) = '\0';
   }
+
+  /* NTOP: static files are requested with a version (?<epoch>) by the pages, see
+     handle_file_request(). Set here as the ntopng callback discards the query string */
+  ri->ntop_versioned_url = (ri->query_string != NULL) && (ri->query_string[0] != '\0');
   
   uri_len = (int) strlen(ri->uri);
   url_decode(ri->uri, uri_len, (char *) ri->uri, uri_len + 1, 0);
@@ -4531,9 +4670,8 @@ static void handle_request(struct mg_connection *conn) {
 			 strlen(conn->ctx->config[SSI_EXTENSIONS]),
 			 path) > 0) {
    handle_ssi_file_request(conn, path);
- } else if (is_not_modified(conn, &file)) {
-   send_http_error(conn, 304, "Not Modified", "%s", "");
  } else {
+   /* NTOP: handle_file_request() also replies 304 (Not Modified) */
    handle_file_request(conn, path, &file);
  }
   }
@@ -4835,7 +4973,7 @@ static void ssl_locking_callback(int mode, int mutex_num, const char *file,
 // Dynamically load SSL library. Set up ctx->ssl_ctx pointer.
 static int set_ssl_option(struct mg_context *ctx) {
   int i, size;
-  const char *pem;
+  const char *pem, *ciphers;
 
   // If PEM file is not specified, skip SSL initialization.
   if ((pem = ctx->config[SSL_CERTIFICATE]) == NULL) {
@@ -4859,7 +4997,12 @@ static int set_ssl_option(struct mg_context *ctx) {
   }
 
   /* ntop */
-  SSL_CTX_set_cipher_list(ctx->ssl_ctx, "HIGH:!aNULL:!MD5:!RC4");
+  ciphers = (const char*)ntop->getPrefs()->getCiphersList();
+  if(ciphers == NULL) ciphers = CONST_DEFAULT_TLS_CIPHERS;
+
+  ntop->getTrace()->traceEvent(TRACE_NORMAL, "Using TLS ciphers %s", ciphers);
+  
+  SSL_CTX_set_cipher_list(ctx->ssl_ctx, ciphers);
 
 #ifndef __APPLE__ /* Brew comes with an old OpenSSL version */
 #ifdef MODERN_OPENSSL
@@ -5170,6 +5313,9 @@ static void process_new_connection(struct mg_connection *conn) {
       if (conn->ctx->callbacks.end_request != NULL) {
 	conn->ctx->callbacks.end_request(conn, conn->status_code);
       }
+#if 1 /* NTOP */
+      if(conn->status_code == 200) traceHTTP(conn, conn->status_code);
+#endif
       log_access(conn);
     }
     if (ri->remote_user != NULL) {
@@ -5231,6 +5377,8 @@ static void *worker_thread(void *thread_func_param) {
   struct mg_context *ctx = (struct mg_context *)thread_func_param;
   struct mg_connection *conn;
 
+  Utils::setThreadName("n-http-worker");
+  
   conn = (struct mg_connection *) calloc(1, sizeof(*conn) + MAX_REQUEST_SIZE);
   if (conn == NULL) {
     cry(fc(ctx), "%s", "Cannot create new connection struct, OOM");
@@ -5365,6 +5513,8 @@ static void *master_thread(void *thread_func_param) {
   struct pollfd *pfd;
   int i;
 
+  Utils::setThreadName("n-mongoose");
+  
   // Increase priority of the master thread
 #if defined(_WIN32)
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);

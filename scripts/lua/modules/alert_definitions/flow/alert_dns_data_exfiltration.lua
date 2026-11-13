@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -18,8 +20,16 @@ local alert_dns_data_exfiltration = classes.class(alert)
 
 alert_dns_data_exfiltration.meta = {
    alert_key = flow_alert_keys.flow_alert_dns_data_exfiltration,
+   issue_resolve_policy = "manual", -- Indicator of compromise: the issue is resolved by the user only
    i18n_title = "flow_details.dns_data_exfiltration",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.exfiltration,
+      mitre_technique = mitre.technique.exfiltration_over_alt_proto,
+      mitre_id = "T1048"
+   },
 
    has_attacker = true,
 }

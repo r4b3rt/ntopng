@@ -8,8 +8,11 @@ package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.p
 require "lua_utils" 
 local import_export = require "import_export"
 local json = require "dkjson"
-local snmp_config = require "snmp_config"
 local rest_utils = require "rest_utils"
+
+if (ntop.isPro and ntop.isPro()) or (ntop.isnEdge and ntop.isnEdge()) then 
+   local snmp_config = require "snmp_config"
+end
 
 -- ##############################################
 
@@ -39,12 +42,12 @@ end
 -- @param conf The configuration to be imported
 -- @return A table with a key "success" set to true is returned on success. A key "err" is set in case of failure, with one of the errors defined in rest_utils.consts.err.
 function snmp_import_export:import(conf)
+
+   err = snmp_config.restore(conf)
+
    local res = {}
-
-   local success = snmp_config.restore(conf)
-
-   if not success then
-      res.err = rest_utils.consts.err.internal_error
+   if err then
+      res.err = err
    else
       res.success = true
    end
@@ -56,8 +59,13 @@ end
 
 -- @brief Export configuration
 -- @return The current configuration
-function snmp_import_export:export()
-   local conf = snmp_config.export()
+function snmp_import_export:export(name)
+   local conf = {}
+   if name == "snmp_data" then
+      conf = snmp_config.export_data()
+   else
+      conf = snmp_config.export()
+   end
    return conf
 end
 

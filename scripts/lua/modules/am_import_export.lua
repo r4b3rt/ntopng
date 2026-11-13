@@ -5,11 +5,13 @@
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/import_export/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
 
 require "lua_utils" 
 local import_export = require "import_export"
 local host_pools = require "host_pools"
 local am_utils = require "am_utils"
+local ascan_utils = require "ascan_utils"
 
 -- ##############################################
 
@@ -38,15 +40,18 @@ end
 -- @brief Import configuration
 -- @param conf The configuration to be imported
 -- @return A table with a key "success" set to true is returned on success. A key "err" is set in case of failure, with one of the errors defined in rest_utils.consts.err.
-function am_import_export:import(conf)
+function am_import_export:import(config)
    local res = {}
+
+   local conf     = config.res
+   local vs_conf  = config.vs_config
 
    -- TODO Validate the configuration and set
    -- res.err = rest_utils.consts.err.bad_content
 
    local old_hosts = am_utils.getHosts(true --[[ config only ]])
 
-   for host_key, host_conf in pairs(conf) do
+   for host_key, host_conf in pairs(conf or {}) do
       local host = am_utils.key2host(host_key)
 
       if not host.is_infrastructure then -- Infrastructure is handled separately on another import_export
@@ -57,6 +62,9 @@ function am_import_export:import(conf)
 	 end
       end
    end
+
+
+--   ascan_utils.restore_config_backup(vs_conf)
 
    if not res.err then 
       res.success = true
@@ -82,8 +90,16 @@ function am_import_export:export()
 	 res[host_key] = host_conf
       end
    end
+
+
+   local hosts_to_scan = ascan_utils.retrieve_hosts_backup()
+
+   local am_configs = {
+      res = res,
+      vs_config = hosts_to_scan
+   }
    
-   return res
+   return am_configs
 end
 
 -- ##############################################

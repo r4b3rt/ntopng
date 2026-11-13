@@ -17,14 +17,14 @@ if not isAdministratorOrPrintErr() then
     return
 end
 
-if not ntop.isEnterpriseL() then
+if not (ntop.isEnterpriseL and ntop.isEnterpriseL()) and not (ntop.isnEdgeEnterprise and ntop.isnEdgeEnterprise()) then
    rest_utils.answer(rest_utils.consts.err.not_granted)
    return
 end
 
 -- ################################################
 
-local modules = import_export_rest_utils.unpack(_POST["JSON"])
+local modules = import_export_rest_utils.unpack(import_export_rest_utils.get_json_conf())
 
 if not modules then
   rest_utils.answer(rest_utils.consts.err.invalid_args)

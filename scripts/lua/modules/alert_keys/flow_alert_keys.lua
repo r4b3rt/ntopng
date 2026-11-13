@@ -1,5 +1,5 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 
 -- ##############################################
@@ -15,29 +15,29 @@ local flow_alert_keys = {
    flow_alert_dns_data_exfiltration                = 6,
    flow_alert_dns_invalid_query                    = 7,
    flow_alert_elephant_flow                        = 8,
-   flow_alert_elephant_remote_to_local             = 9,  -- No longer used, can be recycled
+   flow_alert_blacklisted_client_contact           = 9,
    flow_alert_external                             = 10,
    flow_alert_longlived                            = 11,
    flow_alert_low_goodput                          = 12,
-   flow_alert_malicious_signature                  = 13,
+   flow_alert_blacklisted_server_contact           = 13,
    flow_alert_internals                            = 14,
-   flow_alert_potentially_dangerous                = 15,
+   flow_alert_notused_3                            = 15, -- No longer used, can be recycled
    flow_alert_remote_to_remote                     = 16,
-   flow_alert_suspicious_tcp_probing               = 17, -- No longer used, can be recycled
-   flow_alert_suspicious_tcp_syn_probing           = 18, -- No longer used, can be recycled
-   flow_alert_tcp_connection_issues                = 19,
-   flow_alert_tcp_connection_refused               = 20,
+   flow_alert_notused_4                            = 17, -- No longer used, can be recycled
+   flow_alert_notused_5                            = 18, -- No longer used, can be recycled
+   flow_alert_tcp_packets_issues                   = 19,
+   flow_alert_notused_6                            = 20,
    flow_alert_tcp_severe_connection_issues         = 21,
    flow_alert_tls_certificate_expired              = 22,
    flow_alert_tls_certificate_mismatch             = 23,
-   flow_alert_tls_old_protocol_version             = 24,
+   flow_alert_ndpi_tls_old_protocol_version        = 24,
    flow_alert_tls_unsafe_ciphers                   = 25,
-   flow_alert_udp_unidirectional                   = 26,
+   flow_alert_ndpi_unidirectional_traffic          = 26,
    flow_alert_web_mining                           = 27,
    flow_alert_tls_certificate_selfsigned           = 28,
    flow_alert_binary_application_transfer          = 29,
    flow_alert_known_proto_on_non_std_port          = 30,
-   flow_alert_flow_risk                            = 31,
+   flow_alert_notused_8                            = 31,
    flow_alert_unexpected_dhcp_server               = 32,
    flow_alert_unexpected_dns_server                = 33,
    flow_alert_unexpected_smtp_server               = 34,
@@ -49,7 +49,7 @@ local flow_alert_keys = {
    flow_alert_ndpi_url_possible_sql_injection      = 40,
    flow_alert_ndpi_url_possible_rce_injection      = 41,
    flow_alert_ndpi_http_suspicious_user_agent      = 42,
-   flow_alert_ndpi_http_numeric_ip_host            = 43,
+   flow_alert_ndpi_numeric_ip_host                 = 43,
    flow_alert_ndpi_http_suspicious_url             = 44,
    flow_alert_ndpi_http_suspicious_header          = 45,
    flow_alert_ndpi_tls_not_carrying_https          = 46,
@@ -57,7 +57,7 @@ local flow_alert_keys = {
    flow_alert_ndpi_malformed_packet                = 48,
    flow_alert_ndpi_ssh_obsolete_server             = 49,
    flow_alert_ndpi_smb_insecure_version            = 50,
-   flow_alert_ndpi_tls_suspicious_esni_usage       = 51,
+   flow_alert_ndpi_unused_entry                    = 51, -- FREE
    flow_alert_ndpi_unsafe_protocol                 = 52,
    flow_alert_ndpi_dns_suspicious_traffic          = 53,
    flow_alert_ndpi_tls_missing_sni                 = 54,
@@ -81,9 +81,49 @@ local flow_alert_keys = {
    flow_alert_ndpi_http_crawler_bot                = 72,
    flow_alert_ndpi_suspicious_entropy              = 73,
    flow_alert_iec_invalid_command_transition       = 74,
-   flow_alert_tcp_connection_no_answer             = 75,
-   
-   -- NOTE: for flow alerts not not go beyond the size of Bitmap alert_map inside Flow.h (currently 128)
+   flow_alert_connection_failed                    = 75,
+   flow_alert_ndpi_anonymous_subscriber            = 76,
+   flow_alert_unidirectional_traffic               = 77, -- No longer used, can be recycled
+   flow_alert_ndpi_desktop_or_file_sharing_session = 78,
+   flow_alert_ndpi_malicious_fingerprint           = 79,
+   flow_alert_ndpi_malicious_sha1_certificate      = 80,
+   flow_alert_ndpi_tls_uncommon_alpn               = 81,
+   flow_alert_ndpi_tls_suspicious_extension        = 82,
+   flow_alert_ndpi_tls_fatal_alert                 = 83,
+   flow_alert_ndpi_http_obsolete_server            = 84,
+   flow_alert_ndpi_risky_asn                       = 85,
+   flow_alert_ndpi_risky_domain                    = 86,
+   flow_alert_custom_lua_script                    = 87,
+   flow_alert_ndpi_periodic_flow                   = 88,
+   flow_alert_ndpi_minor_issues                    = 89,
+   flow_alert_ndpi_tcp_issues                      = 90,
+   flow_alert_vlan_bidirectional_traffic           = 91,
+   flow_alert_rare_destination                     = 92,
+   flow_alert_modbus_unexpected_function_code      = 93,
+   flow_alert_modbus_too_many_exceptions           = 94,
+   flow_alert_modbus_invalid_transition            = 95,
+   flow_alert_ndpi_unresolved_hostname             = 96,
+   flow_alert_ndpi_tls_alpn_sni_mismatch           = 97,
+   flow_alert_ndpi_malware_host_contacted          = 98,
+   flow_alert_ndpi_binary_data_transfer            = 99,
+   flow_alert_tcp_flow_reset                       = 100,
+   flow_alert_ndpi_probing_attempt                 = 101,
+   flow_alert_access_control_list                  = 102,
+   flow_alert_host_policy                          = 103,
+   flow_alert_qoe_degraded                         = 104,
+   flow_alert_ndpi_obfuscated_traffic              = 105,
+   flow_alert_nedge_policy_violation               = 106,
+   flow_alert_ndpi_mismatching_protocol_with_ip    = 107,
+   flow_alert_s7comm_unexpected_function_code      = 108,
+   flow_alert_s7comm_too_many_errors               = 109,
+   flow_alert_s7comm_invalid_transition            = 110,
+   flow_alert_profinet_too_many_errors             = 111,
+   flow_alert_ndpi_slow_dos                        = 112,
+   flow_alert_ndpi_non_pqc                         = 113,
+   flow_alert_ndpi_ai_inference_traffic            = 114,
+   flow_alert_ndpi_non_pqc_flow                    = 115,
+
+   -- NOTE: do not go beyond the size of the alert_map bitmal inside Flow.h (currently 128)
 }
 
 -- ##############################################

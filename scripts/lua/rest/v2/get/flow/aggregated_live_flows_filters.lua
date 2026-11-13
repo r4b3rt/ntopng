@@ -1,0 +1,394 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path =
+    dirs.installdir .. "/scripts/lua/pro/enterprise/modules/?.lua;" ..
+        package.path
+
+-- ##################################################################
+-- Requires
+
+require "lua_utils"
+local rest_utils = require "rest_utils"
+local format_utils = require("format_utils")
+local site_utils
+require "lua_utils_get"
+
+if ntop.isEnterpriseM and ntop.isEnterpriseM() then 
+    require "aggregate_live_flows"
+    site_utils = require("site_utils")
+end
+-- ##################################################################
+-- REST params
+
+local ifid = _GET["ifid"]
+local criteria = _GET["aggregation_criteria"] or ""
+local rest_filters = {}
+
+rest_filters["page"] = tonumber(_GET["draw"] or 0)
+rest_filters["sort_column"] = _GET["sort"] or 'flows'
+rest_filters["sort_order"] = _GET["order"] or 'desc'
+rest_filters["start"] = 0
+rest_filters["length"] = 0
+rest_filters["map_search"] = _GET["map_search"]
+rest_filters["host"] = _GET["host"]
+
+-- ##################################################################
+-- Enums
+
+local alert_consts = require "alert_consts"
+
+local filter_types = {vlan = 1, flow_device = 2}
+
+-- ##################################################################
+-- Utils functions 
+
+local function retrieve_aggregation_criteria(criteria)
+
+    -- Aggregation criteria 
+    local criteria_type_id = 1 -- by default application_protocol
+    if criteria == "client" then
+        criteria_type_id = 2
+    elseif criteria == "server" then
+        criteria_type_id = 3
+    elseif criteria == "client_server_srv_port" then
+        criteria_type_id = 7
+    elseif criteria == "host" then
+        criteria_type_id = 11
+    elseif ntop.isEnterpriseM and ntop.isEnterpriseM() then
+        criteria_type_id = get_criteria_type_id(criteria)
+    end
+    return criteria_type_id
+end
+
+-- ******************************************************************
+
+local function is_filter_already_inserted(filters, filter_id)
+    for id, x in ipairs(filters) do
+        if (x.value == filter_id) then return id end
+    end
+    return -1
+end
+
+-- ******************************************************************
+
+local function get_filter_item_label(element, filter_type)
+    local label
+    if (filter_type == filter_types.vlan) then
+        label = ternary(element ~= 0, getFullVlanName(element, false),
+                        i18n('no_vlan'))
+    elseif (filter_type == filter_types.flow_device) then
+        label = getExporterName(element, false, false)
+    end
+
+    return label
+end
+
+-- ******************************************************************
+
+local function get_filter_key(filter_type)
+    local key
+    if (filter_type == filter_types.vlan) then
+        key = "vlan_id"
+    elseif (filter_type == filter_types.flow_device) then
+        key = "deviceIP"
+    end
+
+    return key
+end
+
+-- ******************************************************************
+
+local function add_new_filter_item_to_filters_array(filter_id,
+                                                    formatted_filters,
+                                                    filter_type)
+    local index = is_filter_already_inserted(formatted_filters, filter_id)
+    if index == -1 then
+        local filter_label = get_filter_item_label(filter_id, filter_type)
+        local filert_key = get_filter_key(filter_type)
+        local filter_item = {
+            count = 1,
+            value = filter_id,
+            label = filter_label,
+            key = filert_key
+        }
+        formatted_filters[#formatted_filters + 1] = filter_item
+    else
+        formatted_filters[index].count = formatted_filters[index].count + 1
+    end
+
+end
+
+-- ******************************************************************
+
+local function build_response(criteria)
+    local formatted_vlan_filters = {}
+    local status_filter = {}
+    local criteria_type_id = retrieve_aggregation_criteria(criteria)
+
+    local aggregated_info = interface.getProtocolFlowsStats(criteria_type_id,
+                                                            rest_filters["page"],
+                                                            rest_filters["sort_column"],
+                                                            rest_filters["sort_order"],
+                                                            rest_filters["start"],
+                                                            rest_filters["length"],
+                                                            ternary(
+                                                                not isEmptyString(
+                                                                    rest_filters["map_search"]),
+                                                                rest_filters["map_search"],
+                                                                nil), ternary(
+                                                                rest_filters["host"] ~=
+                                                                    "",
+                                                                rest_filters["host"],
+                                                                nil), nil)
+    --tprint(aggregated_info)
+    for _, data in pairs(aggregated_info or {}) do
+        add_new_filter_item_to_filters_array(data.vlan_id,
+                                             formatted_vlan_filters,
+                                             filter_types.vlan)
+        if ntop.isEnterpriseM and ntop.isEnterpriseM() then
+            if data["status"] then
+                for _, status in pairs(data["status"]) do
+                    local name =
+                    alert_consts.alertTypeLabel(status, true --[[ no html --]] )
+                    status_filter[name] = {
+                        group = i18n('flow_details.alerted_flows'),
+                        key = "status",
+                        value = status,
+                        label = name
+                    }
+                end
+            end
+        end
+    end
+
+    table.sort(formatted_vlan_filters,
+               function(a, b) return a.value < b.value end)
+    table.insert(formatted_vlan_filters, 1,
+                 {key = "vlan_id", label = i18n('all'), value = ""})
+
+    local formatted_device_filters = {}
+    if ntop.isEnterpriseM and ntop.isEnterpriseM() and interface.isPacketInterface() == false then
+        local flowdevs = interface.getFlowDevices() or {}
+        local devips = getProbesName(flowdevs)
+        if table.len(devips) > 0 then
+            local in_out_rsp = {}
+            formatted_device_filters = {
+                {key = "deviceIP", value = "", label = i18n("all")}
+            }
+            for _, device_list in pairs(devips or {}) do
+                for dev_ip, dev_resolved_name in pairsByValues(device_list, asc) do
+                    local dev_name = dev_ip
+                    if not isEmptyString(dev_resolved_name) and
+                        dev_resolved_name ~= dev_name then
+                        dev_name = dev_resolved_name
+                    end
+                    formatted_device_filters[#formatted_device_filters + 1] = {
+                        key = "deviceIP",
+                        value = dev_ip,
+                        label = dev_name
+                    }
+                end
+            end
+        end
+    end
+
+    local formatted_status_filters = {{key = "status", value = -1, label = i18n("all")}}
+    for _, status in pairs(status_filter) do
+        formatted_status_filters[#formatted_status_filters + 1] = status
+    end 
+    local rsp = {}
+
+    -- Host locality and site filters: only the per-host criteria has rows
+    -- describing a single host, so these are the only criteria where they are
+    -- meaningful (see host_locality/site_id in aggregated_live_flows.lua)
+    if (criteria_type_id == 11 and ntop.isEnterpriseM()) then
+        rsp[#rsp + 1] = {
+            action = "host_locality",
+            label = i18n("hosts_stats.location"),
+            tooltip = i18n("hosts_stats.location"),
+            name = "host_locality",
+            value = {
+                {key = "host_locality", value = "", label = i18n("all")},
+                {
+                    key = "host_locality",
+                    value = "local",
+                    label = i18n("hosts_stats.label_local_host")
+                }, {
+                    key = "host_locality",
+                    value = "remote",
+                    label = i18n("hosts_stats.label_remote_host")
+                }
+            }
+        }
+
+        local sites_list = site_utils.getSites()
+        if table.len(sites_list) > 1 then
+            local sites = {{key = "site_id", value = "-1", label = i18n("all")}}
+
+            for _, site_info in pairsByField(sites_list, "name", asc) do
+                sites[#sites + 1] = {
+                    key = "site_id",
+                    value = site_info["id"],
+                    label = site_info["name"]
+                }
+            end
+
+            rsp[#rsp + 1] = {
+                action = "site_id",
+                label = i18n("flow_devices.site"),
+                tooltip = i18n("flow_devices.site"),
+                name = "site_id",
+                value = sites
+            }
+        end
+    end
+
+    if (#formatted_vlan_filters > 2) then
+        rsp[#rsp + 1] = {
+            action = "vlan_id",
+            label = i18n("vlan"),
+            tooltip = i18n("vlan_filter"),
+            name = "vlan_id",
+            value = formatted_vlan_filters
+        }
+    end
+
+    if (#formatted_device_filters > 1) then
+        rsp[#rsp + 1] = {
+            action = "deviceIP",
+            label = i18n("flows_page.device_ip"),
+            tooltip = i18n("flows_page.device_ip"),
+            name = "deviceIP",
+            value = formatted_device_filters
+        }
+    end
+
+    if ntop.isEnterpriseM and ntop.isEnterpriseM() then
+        if (#formatted_status_filters > 1) then
+            rsp[#rsp + 1] = {
+                action = "status",
+                label = i18n("status"),
+                tooltip = i18n("status"),
+                name = "status",
+                value = formatted_status_filters
+            }
+        end
+    end
+
+    if ntop.isEnterpriseM and ntop.isEnterpriseM() and not isEmptyString(_GET["deviceIP"]) then
+        local dev_ip = _GET["deviceIP"]
+        
+        if not isEmptyString(_GET["ifIdx"]) then
+            local ports = {
+                {key = "ifIdx", value = "", label = i18n("all")}, {
+                    key = "ifIdx",
+                    value = _GET["ifIdx"],
+                    label = format_portidx_name(dev_ip, _GET["ifIdx"], true)
+                }
+            }
+
+            rsp[#rsp + 1] = {
+                action = "ifIdx",
+                label = i18n("db_search.exporter_interface"),
+                name = "ifIdx",
+                value = ports,
+                show_with_value = dev_ip,
+                show_with_key = "deviceIP"
+            }
+        else
+            -- Flow exporter requested
+            local in_ports = {
+                {key = "inIfIdx", value = "", label = i18n("all")}
+            }
+            local ports_table =
+                interface.getFlowDeviceInfoByIP(dev_ip, true --[[ Show minimal info ]] )
+
+            for _, ports in pairs(ports_table) do
+                for portidx, _ in pairsByKeys(ports, asc) do
+                    in_ports[#in_ports + 1] = {
+                        key = "inIfIdx",
+                        value = portidx,
+                        label = format_portidx_name(dev_ip, portidx, true)
+                    }
+                end
+            end
+
+            rsp[#rsp + 1] = {
+                action = "inIfIdx",
+                label = i18n("db_search.input_snmp"),
+                name = "inIfIdx",
+                value = in_ports,
+                show_with_value = dev_ip,
+                show_with_key = "deviceIP"
+            }
+
+            local out_ports = {
+                {key = "outIfIdx", value = "", label = i18n("all")}
+            }
+            local ports_table = interface.getFlowDeviceInfoByIP(dev_ip, false)
+
+            for _, ports in pairs(ports_table) do
+                for portidx, _ in pairsByKeys(ports, asc) do
+                    out_ports[#out_ports + 1] = {
+                        key = "outIfIdx",
+                        value = portidx,
+                        label = format_portidx_name(dev_ip, portidx, true)
+                    }
+                end
+            end
+
+            rsp[#rsp + 1] = {
+                action = "outIfIdx",
+                label = i18n("db_search.output_snmp"),
+                name = "outIfIdx",
+                value = out_ports,
+                show_with_value = dev_ip,
+                show_with_key = "deviceIP"
+            }
+        end
+    end
+
+    -- Server port / L4 protocol / application (e.g. from the Server Ports chart): shown
+    -- only when set, so they appear as active filters that can be removed
+    local function add_set_filter(key, label_i18n, value_label)
+        local value = _GET[key]
+        if isEmptyString(value) then return end
+        rsp[#rsp + 1] = {
+            action = key,
+            label = i18n(label_i18n),
+            name = key,
+            value = {
+                {key = key, value = "", label = i18n("all")},
+                {key = key, value = value, label = value_label(value)}
+            }
+        }
+    end
+
+    add_set_filter("srv_port", "db_search.flowfilters.srv_port", function(v) return v end)
+    add_set_filter("l4proto", "protocol", function(v) return l4_proto_to_string(tonumber(v)) or v end)
+    add_set_filter("application", "application", function(v)
+        local m, a = v:match("^(%d+)%.?(%d*)$")
+        return m and interface.getnDPIFullProtoName(tonumber(m), tonumber(a) or 0) or v
+    end)
+
+    return rsp
+end
+
+-- ##################################################################
+-- Handle REST Response
+
+if isEmptyString(ifid) then ifid = interface.getId() end
+
+-- Same access as the aggregated table (aggregated_live_flows.lua) and the live flows filters:
+-- any user, on the interfaces they are allowed to see. It was admin only, and for the other
+-- users it printed an HTML error, then the JSON error, then the filters anyway (no return)
+interface.select(ifid)
+
+local respose = build_response(criteria)
+
+rest_utils.answer(rest_utils.consts.success.ok, respose)
+
+-- ##################################################################

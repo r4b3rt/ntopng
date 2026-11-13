@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,23 +25,27 @@
 #include "ntop_includes.h"
 
 class UnexpectedSMTPServer : public UnexpectedServer {
-private:
-  FlowAlertType getAlertType() const { return UnexpectedSMTPServerAlert::getClassType(); }
+ private:
+  FlowAlertType getAlertType() const {
+    return UnexpectedSMTPServerAlert::getClassType();
+  }
+  HostService getHostService() const { return (HOST_SERVICE_SMTP); }
 
-protected:
-  bool isAllowedProto(Flow *f)       { return(f->isSMTP());                  }
-  
+ protected:
+  bool isAllowedHost(Flow* f);
+  bool isAllowedProto(Flow* f) { return (f->isSMTPorSMTPS()); }
+
  public:
   UnexpectedSMTPServer() : UnexpectedServer() {};
   ~UnexpectedSMTPServer() {};
 
-  FlowAlert *buildAlert(Flow *f) {
-    UnexpectedSMTPServerAlert *alert = new UnexpectedSMTPServerAlert(this, f);
+  FlowAlert* buildAlert(Flow* f) {
+    UnexpectedSMTPServerAlert* alert = new UnexpectedSMTPServerAlert(this, f);
     alert->setCliAttacker();
     return alert;
   }
 
-  std::string getName()          const { return(std::string("unexpected_smtp")); }
+  std::string getName() const { return (std::string("unexpected_smtp")); }
 };
 
 #endif /* _UNEXPECTED_SMTP_SERVER_H_ */

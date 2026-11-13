@@ -1,0 +1,202 @@
+{% -- Print out the infrastructure dropdown %}
+
+{% if ntop.isEnterpriseM() and isAdministrator() and (table.len(infrastructure_instances) > 0) then %}  
+
+  {% -- Form for selecting infrastrucure instance id %}
+  <form id="switch_infrastructure_form" method="POST" action="{{ ntop.getHttpPrefix() }}/lua/index.lua">
+    <input name="switch_instance" type="hidden" value="1" />
+    <input name="csrf" type="hidden" value="{{ ntop.getRandomCSRFValue() }}" />
+    <input name="instance_id" type="hidden" value="" />
+  </form>
+
+  <li class="nav-item d-none d-sm-done d-md-flex d-lg-flex p-2">
+      <select name="infrastructure-dropdown" id="infrastructure-dropdown" class="form-select">
+        <option value="{{ ntop.getHttpPrefix() }}/lua/index.lua" data-content="">&nbsp;&nbsp;{{ i18n('infrastructure_dashboard.local') }}</option>
+
+        <optgroup label="{{ i18n('infrastructure_dashboard.dashboards') }}"> 
+
+        {% local selected = '' %}
+        {% if infrastructure_view then %}
+          {% selected = 'selected' %}
+        {% end %}
+        <option value="{{ ntop.getHttpPrefix() }}/lua/index.lua?view=infrastructure" data-content="&nbsp;&nbsp;{{ "<i class='fas fa-tachometer-alt'></i> "..i18n('infrastructure_dashboard.infrastructure') }}" {{ selected }}>{{ i18n('infrastructure_dashboard.infrastructure') }}</option>
+        </optgroup>
+
+        <optgroup label="{{ i18n('infrastructure_dashboard.instances') }}">
+        {% for k, v in pairs(infrastructure_instances or {}) do %}
+          <option value="{{ v.url }}" data-content="&nbsp;&nbsp;{{ "<i class='fas fa-building'></i> "..v.name }}">{{ v.name }}</option>
+        {% end %}
+        </optgroup>
+
+      </select>
+  </li>
+{% end %}
+
+{% -- Print out the interfaces dropdown %}
+
+{% -- Generate forms for the actual switch of the currently active interface %}
+{% -- Form for the system interface %}
+<form id="switch_interface_form_{{ getSystemInterfaceId() }}" method="POST" action="{{ ntop.getHttpPrefix() }}/lua/system_stats.lua?ifid={{ getSystemInterfaceId() }}">
+  <input name="switch_interface" type="hidden" value="1" />
+  <input name="csrf" type="hidden" value="{{ ntop.getRandomCSRFValue() }}" />
+</form>
+{% -- Form for all other interfaces %}
+{% for k, v in pairsByValues(ifnames, asc) do %}
+<form id="switch_interface_form_{{ k }}" method="POST" action="{{ action_urls[k] }}">
+  <input name="switch_interface" type="hidden" value="1" />
+  <input name="csrf" type="hidden" value="{{ ntop.getRandomCSRFValue() }}" />
+</form>
+{% end %}
+
+{% local system_interface_name = i18n('system') %}
+{% if ntop.isnEdge() then %}
+{%   system_interface_name = i18n('setup') %}
+{% end %}
+
+{% if not infrastructure_view then %}
+
+<li class="nav-item d-none d-sm-done d-md-flex d-lg-flex p-2">
+  <div class="d-flex">
+    <select name="interfaces-dropdown" id="interfaces-dropdown" class="form-select">
+
+      {% if isAdministrator() then %}
+      <optgroup label="{{ i18n('system') }}">
+        <option value="{{ getSystemInterfaceId() }}" {{ selected }} data-content="&nbsp;&nbsp;{{ system_interface_name }}">{{ system_interface_name }}</option>
+      </optgroup>
+      {% end %}
+
+      <optgroup label="{{ i18n('interfaces') }}">
+
+      {% for round = 1, 2 do -- First round: only physical interfaces, second round: only virtual interfaces %}
+        {% for k, v in pairsByValues(ifHdescr, asc) do %}
+          {% if round == 1 and ifCustom[k] then %}
+            {% -- Nothing to do, this round is for physical, non-disaggregated interfaces ... %}
+          {% elseif round == 2 and not ifCustom[k] then %}
+            {% -- Nothing to do, this round is for disaggregated interfaces only ... %}
+          {% else %}
+            {% local icons, selected = {}, '' %}
+
+            {% if tonumber(k) == interface.getId() and not is_system_interface then %}
+              {% selected = 'selected' %}
+            {% end %}
+
+            {% if pcapdump[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-file'></i>" %}
+            {% elseif packetinterfaces[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-ethernet'></i>" %}
+            {% elseif zmqinterfaces[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-bezier-curve'></i>" %}
+            {% end %}
+
+            {% if views[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-eye'></i>" %}
+            {% end %}
+
+            {% if dynamic[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-code-branch'></i>" %}
+            {% end %}
+
+            {% if drops[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-tint'></i>" %}
+            {% end %}
+
+            {% if recording[k] then %}
+              {% icons[#icons + 1] = "<i class='fas fa-hdd'></i>" %}
+            {% end %}
+
+            <option data-tokens="{{ k }}" value="{{ k }}" {{ selected }} data-content="&nbsp;&nbsp;{{ table.concat(icons, ' ') }} {{ shortenCollapse(ifHdescr[k]) }}">{{ ifHdescr[k] }}</option>
+          {% end %}
+        {% end %}
+      {% end %}
+      </optgroup>
+    </select>
+  </div>
+</li>
+
+{% end %} {% -- not infrastructure_view %}
+
+{% -- Print the observation point dropdown %}
+{% if(observationPoints ~= nil) then %}
+  {% for _, v in pairsByKeys(observationPoints, asc) do %}
+  <form id="switch_observation_point_form_{{ v["obs_point"] }}" method="POST" action="{{ ntop.getHttpPrefix() .. "/lua/flows_stats.lua" }}?ifid={{ interface.getId() }}&observationPointId={{ v["obs_point"] }}">
+    <input name="switch_interface" type="hidden" value="1" />
+    <input name="csrf" type="hidden" value="{{ ntop.getRandomCSRFValue() }}" />
+  </form>
+  {% end %}
+
+  <li class="nav-item d-none d-sm-done d-md-flex d-lg-flex p-2">
+    <div class="d-flex">
+      <select name="observationpoint-dropdown" id="observationpoint-dropdown" class="form-select">
+        {% for _, v in pairsByField(observationPoints, 'obs_point', asc) do %}
+          {% local selected = '' %}
+          {% if((observationPointId ~= nil) and (tostring(v["obs_point"]) == tostring(observationPointId))) then selected = 'selected' end %}
+          <option value="{{ v["obs_point"] }}" {{ selected }}>{{ getObsPointAlias(v["obs_point"], true) }}</option>
+        {% end %}
+      </select>
+    </div>
+  </li>
+{% end %}
+
+<script type="text/javascript">
+
+function formatOptionWithIcon(option) {
+    if (!option.id) {
+        // disabled group headers
+        return $('<span class="text-muted">' + option.text + '</span>');
+    }
+    const content = $(option.element).data('content');
+    if (content && content.trim() !== '') {
+      return $('<span>' + content + '</span>');
+    }
+    return $('<span>' + option.text + '</span>');
+}
+
+function formatSelectionWithIcon(option) {
+    const content = $(option.element).data('content');
+    if (content && content.trim() !== '') {
+      return $('<span>' + content + '</span>');
+    }
+    return $('<span>' + option.text + '</span>');
+}
+
+const select2Config = {
+    theme: 'bootstrap-5',
+    width: 'auto',
+    dropdownAutoWidth: true,
+    language: {
+        searching: function() { return '{{ i18n("search") }}...'; },
+        noResults: function() { return '{{ i18n("no_results") }}'; },
+    },
+    templateResult: formatOptionWithIcon,
+    templateSelection: formatSelectionWithIcon,
+};
+
+$('#infrastructure-dropdown').select2(select2Config);
+$('#interfaces-dropdown').select2(select2Config);
+$('#observationpoint-dropdown').select2(select2Config);
+
+$('#infrastructure-dropdown').on('change', function(e) {
+    const selectedValue = $(this).val();
+    window.location.replace(selectedValue);
+});
+
+$('#observationpoint-dropdown').on('change', function(e) {
+    const selectedValue = $(this).val();
+    $('#switch_observation_point_form_' + selectedValue).submit();
+});
+
+$('#interfaces-dropdown').on('change', function(e) {
+    const selectedValue = $(this).val();
+    if (isNaN(Number(selectedValue))) {
+        window.location.replace(selectedValue);
+    } else {
+        toggleSystemInterface($('#switch_interface_form_' + selectedValue));
+    }
+});
+
+const toggleObservationPoint = ($form = null) => {
+    if ($form != null)
+        $form.submit();
+};
+
+</script>

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,29 +22,29 @@
 #include "ntop_includes.h"
 #include "flow_checks_includes.h"
 
-void TCPNoDataExchanged::checkTCPNoDataExchanged(Flow *f) {
-  if(f->isTCP()
-     && !f->getInterface()->isSampledTraffic()
-     && (f->get_goodput_bytes() == 0) && f->isUnicast()) {
+void TCPNoDataExchanged::checkTCPNoDataExchanged(Flow* f) {
+  if (f->isTCP() && !f->getInterface()->isSampledTraffic() &&
+      (f->get_goodput_bytes() == 0) && f->isUnicast()) {
     FlowAlertType alert_type = TCPNoDataExchangedAlert::getClassType();
     u_int8_t c_score, s_score;
     risk_percentage cli_score_pctg = CLIENT_HIGH_RISK_PERCENTAGE;
 
-    computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
+    computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id), cli_score_pctg,
+                       &c_score, &s_score);
 
-    f->triggerAlertAsync(alert_type, c_score, s_score);
+    FlowAlert* alert = buildAlert(f);
+    alert->setCliSrvScores(c_score, s_score);
+    f->triggerAlert(alert);
   }
 }
 
 /* ***************************************************** */
 
-void TCPNoDataExchanged::flowEnd(Flow *f) {
-  checkTCPNoDataExchanged(f);
-}
+void TCPNoDataExchanged::flowEnd(Flow* f) { checkTCPNoDataExchanged(f); }
 
 /* ***************************************************** */
 
-FlowAlert *TCPNoDataExchanged::buildAlert(Flow *f) {
+FlowAlert* TCPNoDataExchanged::buildAlert(Flow* f) {
   return new TCPNoDataExchangedAlert(this, f);
 }
 

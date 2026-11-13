@@ -1,0 +1,109 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+
+local rest_utils = require "rest_utils"
+local timeseries_info = require "timeseries_info"
+require "lua_utils_gui"
+
+local rc = rest_utils.consts.success.ok
+local ifid = tostring(_GET["ifid"] or interface.getId())
+local query = _GET["query"] or ''
+local host = _GET["host"] or _GET["am_host"]
+local asn = _GET["asn"]
+local pool = _GET["pool"]
+local vlan = _GET["vlan"]
+local mac = _GET["mac"]
+local subnet = _GET["subnet"]
+local device = _GET["device"]
+local port = _GET["port"]
+local site = _GET["site"]
+local blacklist_name = _GET["blacklist_name"]
+local epoch_begin = _GET["epoch_begin"]
+local epoch_end = _GET["epoch_end"]
+local if_index = _GET["if_index"]
+local profile = _GET["profile"]
+-- ht query: only the hash table of the page (hash_table_details.lua)
+local hash_table = _GET["hash_table"]
+
+-- flow 5-tuple tags (used by flow:hr_traffic schema)
+local cli_ip     = _GET["cli_ip"]
+local srv_ip     = _GET["srv_ip"]
+local cli_port   = _GET["cli_port"]
+local srv_port   = _GET["srv_port"]
+local protocol   = _GET["protocol"]
+local first_seen = _GET["first_seen"]
+
+local res = {}
+
+if ifid then
+    interface.select(ifid)
+end
+
+if isEmptyString(query) then
+    rest_utils.answer(rest_utils.consts.err.invalid_args)
+end
+
+local tags = {
+    ifid       = ifid,
+    host       = host,
+    asn        = asn,
+    pool       = pool,
+    vlan       = vlan,
+    mac        = mac,
+    subnet     = subnet,
+    device     = device,
+    port       = port,
+    site       = site,
+    blacklist_name = blacklist_name,
+    if_index   = if_index,
+    profile    = profile,
+    hash_table = hash_table,
+    epoch_begin = tonumber(epoch_begin),
+    epoch_end  = tonumber(epoch_end),
+    -- flow 5-tuple tags
+    cli_ip     = cli_ip,
+    srv_ip     = srv_ip,
+    cli_port   = cli_port,
+    srv_port   = srv_port,
+    protocol   = protocol,
+    first_seen = first_seen,
+}
+
+-- For flow_aggr: convert GET params to filters so that any flowfilter
+-- reaches clickhouse_utils.formatWhere dinamically/generically
+if query == "flow_aggr" then
+    local skip = { ifid=true, query=true, epoch_begin=true, epoch_end=true }
+    for key, val in pairs(_GET) do
+        if not skip[key] and not isEmptyString(val) then
+            tags[key] = val
+        end
+    end
+end
+
+if query == "iface" and isLightView() then
+    -- lightview: list timeseries available on any interface
+    local seen = {}
+
+    for if_id, _ in pairs(interface.getIfNames()) do
+        interface.select(tostring(if_id))
+        tags.ifid = tostring(if_id)
+
+        for _, info in ipairs(timeseries_info.getTimeseries(tags, query)) do
+            local key = tostring(info.schema) .. "|" .. tostring(info.query) .. "|" .. tostring(info.id)
+
+            if not seen[key] then
+                seen[key] = true
+                res[#res + 1] = info
+            end
+        end
+    end
+
+    interface.select(ifid)
+else
+    res = table.merge(res, timeseries_info.getTimeseries(tags, query))
+end
+
+rest_utils.answer(rc, res)

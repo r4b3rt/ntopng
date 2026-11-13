@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,76 +24,94 @@
 /* *************************************** */
 
 FlowStats::FlowStats() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+  asn_stats = new (nothrow) ASNStats();
   resetStats();
 }
 
 /* *************************************** */
 
 FlowStats::~FlowStats() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+  if (asn_stats) delete asn_stats;
 }
 
 /* *************************************** */
 
-void FlowStats::incStats(Bitmap128 alert_bitmap, u_int8_t l4_protocol, AlertLevel alert_level, 
-			 u_int8_t dscp_cli2srv, u_int8_t dscp_srv2cli, Flow *flow) {
+void FlowStats::incStats(Bitmap128 alert_bitmap, u_int8_t l4_protocol,
+                         AlertLevel alert_level, u_int8_t dscp_cli2srv,
+                         u_int8_t dscp_srv2cli, Flow* flow) {
   u_int i;
 
-  for(i = 0; i < alert_bitmap.numBits(); i++) {
-    if(alert_bitmap.isSetBit(i))
-      counters[i]++;
+  for (i = 0; i < alert_bitmap.numBits(); i++) {
+    if (alert_bitmap.isSetBit(i)) counters[i]++;
   }
 
   protocols[l4_protocol]++;
   alert_levels[alert_level]++;
-  if(dscp_cli2srv != dscp_srv2cli) {
+
+  if (flow) {
+    ndpi_risk risk_bitmap = flow->getRiskBitmap();
+
+    for (i = 1; i < NDPI_MAX_RISK; i++)
+      if (NDPI_ISSET_BIT(risk_bitmap, i)) risks[i]++;
+  }
+
+  if (dscp_cli2srv != dscp_srv2cli) {
     dscps[dscp_cli2srv]++;
     dscps[dscp_srv2cli]++;
-  } else 
+  } else
     dscps[dscp_cli2srv]++;
 
-  if(flow) {
+  if (flow) {
     u_int16_t cli_pool, srv_pool;
     bool cli_pool_found = false, srv_pool_found = false;
 
-    if(flow->get_cli_host()) {
+    if (flow->get_cli_host()) {
       cli_pool = flow->get_cli_host()->get_host_pool();
       cli_pool_found = true;
     } else {
       /* Host null, let's try using IpAddress */
-      IpAddress *ip = (IpAddress *) flow->get_cli_ip_addr();
-      ndpi_patricia_node_t *cli_target_node = NULL;
+      IpAddress* ip = (IpAddress*)flow->get_cli_ip_addr();
+      ndpi_patricia_node_t* cli_target_node = NULL;
 
-      if(flow->get_cli_ip_addr())
-	cli_pool_found = flow->getInterface()->getHostPools()->findIpPool(ip, flow->get_vlan_id(), &cli_pool, &cli_target_node);
+      if (flow->get_cli_ip_addr())
+        cli_pool_found = flow->getInterface()->getHostPools()->findIpPool(
+            ip, flow->get_vlan_id(), &cli_pool, &cli_target_node);
     }
 
-    if(flow->get_srv_host()) {
+    if (flow->get_srv_host()) {
       srv_pool = flow->get_srv_host()->get_host_pool();
       srv_pool_found = true;
-    } else {      
+    } else {
       /* Host null, let's try using IpAddress */
-      ndpi_patricia_node_t *srv_target_node = NULL;
-      IpAddress *ip = (IpAddress *) flow->get_srv_ip_addr();
-      
-      if(flow->get_srv_ip_addr())
-	srv_pool_found = flow->getInterface()->getHostPools()->findIpPool(ip, flow->get_vlan_id(), &srv_pool, &srv_target_node);
+      ndpi_patricia_node_t* srv_target_node = NULL;
+      IpAddress* ip = (IpAddress*)flow->get_srv_ip_addr();
+
+      if (flow->get_srv_ip_addr())
+        srv_pool_found = flow->getInterface()->getHostPools()->findIpPool(
+            ip, flow->get_vlan_id(), &srv_pool, &srv_target_node);
     }
 
-    if(srv_pool_found && cli_pool_found) {
+    if (srv_pool_found && cli_pool_found) {
       /* Both pools found */
-      if(cli_pool != srv_pool) {
-    	/* Different pool id, inc both */
-	host_pools[cli_pool]++;
-	host_pools[srv_pool]++;
+      if (cli_pool != srv_pool) {
+        /* Different pool id, inc both */
+        host_pools[cli_pool]++;
+        host_pools[srv_pool]++;
       } else {
-	/* Same pool id, inc only one time */
-	host_pools[cli_pool]++;
+        /* Same pool id, inc only one time */
+        host_pools[cli_pool]++;
       }
-    } else if(srv_pool_found) {
+    } else if (srv_pool_found) {
       host_pools[srv_pool]++;
-    } else if(cli_pool_found) {
+    } else if (cli_pool_found) {
       host_pools[cli_pool]++;
     }
+
+    if (asn_stats) asn_stats->incStats(flow);
   }
 }
 
@@ -102,8 +120,8 @@ void FlowStats::incStats(Bitmap128 alert_bitmap, u_int8_t l4_protocol, AlertLeve
 void FlowStats::lua(lua_State* vm) {
   lua_newtable(vm);
 
-  for(int i = 0; i < BITMAP_NUM_BITS; i++) {
-    if(unlikely(counters[i] > 0)) {
+  for (int i = 0; i < BITMAP_NUM_BITS; i++) {
+    if (unlikely(counters[i] > 0)) {
       lua_newtable(vm);
 
       lua_push_uint64_table_entry(vm, "count", counters[i]);
@@ -120,8 +138,8 @@ void FlowStats::lua(lua_State* vm) {
 
   lua_newtable(vm);
 
-  for(int i = 0; i < 0x100; i++) {
-    if(unlikely(protocols[i] > 0)) {
+  for (int i = 0; i < 0x100; i++) {
+    if (unlikely(protocols[i] > 0)) {
       lua_newtable(vm);
 
       lua_push_uint64_table_entry(vm, "count", protocols[i]);
@@ -138,8 +156,8 @@ void FlowStats::lua(lua_State* vm) {
 
   lua_newtable(vm);
 
-  for(int i = 0; i < 64; i++) {
-    if(unlikely(dscps[i] > 0)) {
+  for (int i = 0; i < 64; i++) {
+    if (unlikely(dscps[i] > 0)) {
       lua_newtable(vm);
 
       lua_push_uint64_table_entry(vm, "count", dscps[i]);
@@ -157,8 +175,8 @@ void FlowStats::lua(lua_State* vm) {
   /* Host pool */
   lua_newtable(vm);
 
-  for(int i = 0; i < MAX_NUM_HOST_POOLS; i++) {
-    if(unlikely(host_pools[i] > 0)) {
+  for (int i = 0; i < MAX_NUM_HOST_POOLS; i++) {
+    if (unlikely(host_pools[i] > 0)) {
       lua_newtable(vm);
 
       lua_push_uint64_table_entry(vm, "count", host_pools[i]);
@@ -174,62 +192,117 @@ void FlowStats::lua(lua_State* vm) {
   lua_settable(vm, -3);
 
   /* Alert levels */
-  u_int32_t count_notice_or_lower = 0, count_warning = 0, count_error_or_higher = 0;
+  u_int32_t count_notice_or_lower = 0, count_warning = 0, count_error = 0,
+            count_critical = 0, count_emergency = 0;
 
-  for(int i = 0; i < ALERT_LEVEL_MAX_LEVEL; i++) {
+  for (int i = 0; i < ALERT_LEVEL_MAX_LEVEL; i++) {
     AlertLevel alert_level = (AlertLevel)i;
 
-    switch(Utils::mapAlertLevelToGroup(alert_level)) {
-    case alert_level_group_notice_or_lower:
-      count_notice_or_lower += alert_levels[alert_level];
-      break;
-    case alert_level_group_warning:
-      count_warning += alert_levels[alert_level];
-      break;
-    case alert_level_group_error_or_higher:
-      count_error_or_higher += alert_levels[alert_level];
-    default:
-      break;
+    switch (Utils::mapAlertLevelToGroup(alert_level)) {
+      case alert_level_group_notice_or_lower:
+        count_notice_or_lower += alert_levels[alert_level];
+        break;
+      case alert_level_group_warning:
+        count_warning += alert_levels[alert_level];
+        break;
+      case alert_level_group_error:
+        count_error += alert_levels[alert_level];
+        break;
+      case alert_level_group_critical:
+        count_critical += alert_levels[alert_level];
+        break;
+      case alert_level_group_emergency:
+        count_error += alert_levels[alert_level];
+        break;
+      default:
+        break;
     }
   }
 
   lua_newtable(vm);
 
-  if(count_notice_or_lower > 0) lua_push_uint64_table_entry(vm, "notice_or_lower", count_notice_or_lower);
-  if(count_warning > 0)         lua_push_uint64_table_entry(vm, "warning",         count_warning);
-  if(count_error_or_higher > 0) lua_push_uint64_table_entry(vm, "error_or_higher", count_error_or_higher);
+  if (count_notice_or_lower > 0)
+    lua_push_uint64_table_entry(vm, "notice_or_lower", count_notice_or_lower);
+  if (count_warning > 0)
+    lua_push_uint64_table_entry(vm, "warning", count_warning);
+  if (count_error > 0) lua_push_uint64_table_entry(vm, "error", count_error);
+  if (count_critical > 0)
+    lua_push_uint64_table_entry(vm, "critical", count_critical);
+  if (count_emergency > 0)
+    lua_push_uint64_table_entry(vm, "emergency", count_emergency);
 
   lua_pushstring(vm, "alert_levels");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
 
+  /* Flow risks */
   lua_newtable(vm);
 
-  std::map< std::string, u_int16_t >::iterator it;
-  for(it = talking_hosts.begin(); it != talking_hosts.end(); it++)
-    lua_push_uint32_table_entry(vm, it->first.c_str(), it->second);
+  for (u_int i = 1; i < NDPI_MAX_RISK; i++) {
+    if (unlikely(risks[i] > 0)) {
+      lua_newtable(vm);
+
+      lua_push_uint64_table_entry(vm, "count", risks[i]);
+      lua_push_str_table_entry(vm, "name", ndpi_risk2str((ndpi_risk_enum)i));
+
+      lua_pushinteger(vm, i);
+      lua_insert(vm, -2);
+      lua_rawset(vm, -3);
+    }
+  }
+
+  lua_pushstring(vm, "risk");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+
+  lua_newtable(vm);
+
+  std::map<std::string, u_int16_t>::iterator it2;
+  for (it2 = talking_hosts.begin(); it2 != talking_hosts.end(); it2++)
+    lua_push_uint32_table_entry(vm, it2->first.c_str(), it2->second);
 
   lua_pushstring(vm, "talking_with");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
+
+  lua_newtable(vm);
+
+  for (it2 = wlan_ssid.begin(); it2 != wlan_ssid.end(); it2++)
+    lua_push_uint32_table_entry(vm, it2->first.c_str(), it2->second);
+
+  lua_pushstring(vm, "wlan_ssid");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
+
+  asn_stats->lua(vm, false /* Do not add table */);
 }
 
 /* *************************************** */
 
-void FlowStats::updateTalkingHosts(Flow *f) {
+void FlowStats::updateTalkingHosts(Flow* f) {
   char buf[64];
-  std::pair< std::map< std::string, u_int16_t >::iterator, bool > ret;
-  ret = talking_hosts.insert(std::pair< std::string, u_int16_t >(
+  std::pair<std::map<std::string, u_int16_t>::iterator, bool> ret;
+  ret = talking_hosts.insert(std::pair<std::string, u_int16_t>(
       f->get_cli_ip_addr()->print(buf, sizeof(buf)), 1));
 
-  if(!ret.second)
-    ret.first->second++;
+  if (!ret.second) ret.first->second++;
 
-  ret = talking_hosts.insert(std::pair< std::string, u_int16_t >(
+  ret = talking_hosts.insert(std::pair<std::string, u_int16_t>(
       f->get_srv_ip_addr()->print(buf, sizeof(buf)), 1));
 
-  if(!ret.second)
-    ret.first->second++;
+  if (!ret.second) ret.first->second++;
+}
+
+/* *************************************** */
+
+void FlowStats::updateWLANSSID(Flow* f) {
+  char* wlan_ssid_string = f->getWLANSSID();
+  if (wlan_ssid_string) {
+    std::pair<std::map<std::string, u_int16_t>::iterator, bool> ret;
+    ret = wlan_ssid.insert(
+        std::pair<std::string, u_int16_t>(wlan_ssid_string, 1));
+    if (!ret.second) ret.first->second++;
+  }
 }
 
 /* *************************************** */
@@ -238,11 +311,12 @@ void FlowStats::resetStats() {
   memset(counters, 0, sizeof(counters));
   memset(protocols, 0, sizeof(protocols));
   memset(alert_levels, 0, sizeof(alert_levels));
+  memset(risks, 0, sizeof(risks));
   memset(dscps, 0, sizeof(dscps));
   memset(host_pools, 0, sizeof(host_pools));
   talking_hosts.clear();
+  wlan_ssid.clear();
+  asn_stats->resetStats();
 }
 
 /* *************************************** */
-
-

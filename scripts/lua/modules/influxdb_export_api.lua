@@ -1,10 +1,13 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/schemas/?.lua;" .. package.path
 
+require "ntop_utils"
+require "ts_5min"
 local ts_utils_core = require("ts_utils_core")
 
 local influxdb_export_api = {}
@@ -70,11 +73,19 @@ end
 -- ##############################################
 
 function influxdb_export_api.exportStorageSize(when, influxdb)
-   local disk_bytes = influxdb:getDiskUsage()
-   local ifid = getSystemInterfaceId()
+   local skip = ntop.getCache(influxdb:getSkipRetentionAndCreationKey())
+   if isEmptyString(skip) then
+      skip = false
+   else   
+      skip = toboolean(skip) or false
+   end
 
-   if(disk_bytes ~= nil) then
-      ts_utils_core.append("influxdb:storage_size", { ifid = ifid, disk_bytes = disk_bytes }, when)
+   if (not skip) then
+      local disk_bytes = influxdb:getDiskUsage()
+      local ifid = getSystemInterfaceId()
+      if(disk_bytes ~= nil) then
+         ts_utils_core.append("influxdb:storage_size", { ifid = ifid, disk_bytes = disk_bytes }, when)
+      end
    end
 end
 

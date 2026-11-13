@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -32,127 +32,322 @@ typedef struct {
   u_int64_t last, next;
 } TCPSeqNum;
 
+typedef struct {
+  /* 0...254, 255 means more events */
+  u_int8_t num_syn, num_rst, num_fin, num_zero_window;
+} TCPStats;
+
+typedef struct {
+  /* TCP stats */
+  TCPSeqNum tcp_seq_s2d, tcp_seq_d2s;
+  u_int16_t cli2srv_window, srv2cli_window;
+  struct timeval synTime, synAckTime,
+      ackTime;                      /* network Latency (3-way handshake) */
+  float clientRTT3WH, serverRTT3WH; /* Computed at 3WH (msec) */
+  time_t last_network_issues; /* last time retr/ooo/lost has been observed */
+  struct {
+    struct ndpi_analyze_struct cli_to_srv, srv_to_cli;
+    u_int8_t cli_to_srv_winscale, srv_to_cli_winscale;
+  } tcpWin;
+
+  struct {
+    u_int32_t last_cli_ack, last_srv_ack;
+    struct bpf_timeval last_cli_ts, last_srv_ts;
+    struct ndpi_analyze_struct cli_to_srv, srv_to_cli;
+  } rtt; /* Computed continuously */
+} FlowTCP;
+
+typedef struct {
+  struct timeval first_cli_to_srv, first_srv_to_cli,
+      second_cli_to_srv; /* Time of the first packet in each direction */
+  float clientRTT3WH, serverRTT3WH; /* Computed at 3WH (msec) */
+  struct {
+    bool last_spin_set;
+    struct timeval last_ts;
+    struct ndpi_analyze_struct cli_min_rtt /* cli <-> ntopng RTT */,
+        srv_min_rtt /* ntopng <-> dst RTT */;
+  } rtt;
+} FlowUDP;
+
+typedef struct {
+  struct ndpi_in6_addr exporter_ip; /* IPv4 stored as IPv4-mapped IPv6 (original IP) */
+  struct ndpi_in6_addr mapped_exporter_ip; /* IPv4 stored as IPv4-mapped IPv6 (after SNMP mapping) */
+  struct ndpi_in6_addr next_hop, mapped_next_hop; /* Same as for exporter_ip */
+  u_int16_t exporter_site_id, next_hop_site_id;
+  u_int32_t in_index, out_index;
+  SNMPInterfaceRole in_role, out_role;
+  FlowSource source; /* sFlow / NetFlow */
+  bool return_path;
+} ExporterFlowInfo;
+
+typedef struct {
+  struct ndpi_in6_addr exporter_ip, next_hop;
+} ExporterFlowInfoKey;
+
+
+// Define the equality operator
+inline bool operator==(const ExporterFlowInfoKey& lhs, const ExporterFlowInfoKey& rhs) {
+  return std::memcmp(&lhs.exporter_ip, &rhs.exporter_ip, sizeof(ndpi_in6_addr)) == 0 &&
+    std::memcmp(&lhs.next_hop, &rhs.next_hop, sizeof(ndpi_in6_addr)) == 0;
+}
+
+// Hash functor
+struct ExporterFlowInfoKeyHash {
+  std::size_t operator()(const ExporterFlowInfoKey &k) const noexcept {
+    // FNV-1a over the raw bytes of both addresses
+    const unsigned char *p = reinterpret_cast<const unsigned char *>(&k);
+    std::size_t h = 1469598103934665603ULL; // FNV offset basis
+    for (size_t i = 0; i < sizeof(ExporterFlowInfoKey); i++) {
+      h ^= p[i];
+      h *= 1099511628211ULL; // FNV prime
+    }
+    return h;
+  }
+};
+
+typedef struct {
+  u_int32_t prevAdjacentAS, nextAdjacentAS;
+  u_int32_t vrfId;
+
+  struct {
+    char *src, *dst;
+  } bgp;
+
+  struct {
+    char* wlan_ssid;
+    u_int8_t wtp_mac_address[6];
+  } wifi;
+
+  struct {
+    /* IPv4 only, so a int32 bit is only needed */
+    u_int32_t src_ip_addr_post_nat, dst_ip_addr_post_nat;
+    u_int16_t src_port_post_nat, dst_port_post_nat;
+  } nat;
+} FlowCollectionInfo;
+
+/* ******************************************************** */
+
 class FlowAlert;
 class FlowCheck;
 
 class Flow : public GenericHashEntry {
  private:
-  Host *cli_host, *srv_host;
+  time_t creation_time; /*** Epoch of the flow creation */
+  int32_t iface_index;  /* Interface index on which this flow has been first
+                           observed */
+  Host *cli_host, *srv_host; /* They are ALWAYS NULL on ViewInterfaces. For
+                                shared hosts see below viewFlowStats */
   IpAddress *cli_ip_addr, *srv_ip_addr;
-  ICMPinfo *icmp_info;
-  u_int32_t flowCreationTime;
+  u_int8_t src2dst_tcp_flags, dst2src_tcp_flags;
+  FlowTCP* tcp;
+#ifdef NTOPNG_PRO
+  FlowUDP* udp;
+  FlowRTP* rtp;
+#endif
+  u_int32_t flow_key;
+  FlowCollectionInfo* collection;
+
+  /* Data collected from nProbe */
+  std::string l7_json;
+  std::vector<uint64_t> hr_src2dst_bytes, hr_dst2src_bytes;
+  /* Time (wall-clock) of slot 0 of HR counters (hr_src2dst_bytes, etc)
+     set by the first HR merge after a reset */
+  time_t hr_base_first_seen = 0;
+  ICMPinfo* icmp_info;
+  char* category_list_name_shared_pointer; /* NOTE: this is a pointer handled by
+					      Ntop::getPersistentCustomListNameById()
+					      and it MUST NOT BE FREED */
+  ndpi_confidence_t ndpi_confidence;
+  ndpi_protocol_category_t flow_category;
+  ndpi_protocol_breed_t flow_breed;
+  u_int32_t privateFlowId; /* Used to store specific flow info such as DNS
+                              TransactionId or SIP CallId */
   u_int8_t cli2srv_tos, srv2cli_tos; /* RFC 2474, 3168 */
   u_int16_t cli_port, srv_port;
-  VLANid vlanId;
-  u_int32_t vrfId;
-  u_int32_t srcAS, dstAS, prevAdjacentAS, nextAdjacentAS;
+  u_int16_t vlanId;
+  u_int32_t srcAS, dstAS; /* Calculated via GeoIP */
+  u_int32_t transitAS;
+  u_int16_t observation_point_id;
+  char *srcASName, *dstASName, *_srcASNameBuf, *_dstASNameBuf;
+  char searched_field[64];
+  u_int32_t srcPeerAS, dstPeerAS; /* Collected via NetFLow/IPFIX */
   u_int32_t protocolErrorCode;
-  u_int8_t protocol, src2dst_tcp_flags, dst2src_tcp_flags, flow_verdict;
+  u_int8_t protocol, flow_verdict;
   u_int16_t flow_score;
-  u_int8_t view_cli_mac[6], view_srv_mac[6];
-  struct ndpi_flow_struct *ndpiFlow;
+  bool twh_over_view : 1 /* This flag is used for view interfaces */,
+      shapers_profile_set : 1, iface_flow_accounted : 1,
+      direction_decided : 1 /* See checkTCPDirection(), checkL7Direction(),
+                               checkDirectionByProtocol() */,
+      _notused : 4;
+  u_int8_t cli_mac[6], srv_mac[6];
+  /* Viewed flows have no hosts: the OS of the client learnt from this flow is
+   * parked here, and it is set on the host of the view by the view itself (see
+   * updateViewClientOS). The flags are written by the view only, the other
+   * two when the flow is processed.
+   * NOTE: the flags come first, as they fit in the padding after the MACs */
+  u_int8_t view_cli_os_applied;
+  ndpi_os view_cli_os_hint, view_cli_fingerprint_os;
+  Mac *c_mac, *s_mac; /* Real flow MACs (hosts can have floating MACs when
+                         load-balancers are in use) Calculated using cli_mac and
+                         srv_mac[6] */
+  bool c_mac_updated, s_mac_updated;
+  struct ndpi_flow_struct* ndpiFlow;
   ndpi_risk ndpi_flow_risk_bitmap;
-  /* The bitmap of all possible flow alerts set by FlowCheck subclasses. When no alert is set, the 
-     flow is in flow_alert_normal.
+  /* The bitmap of all possible flow alerts set by FlowCheck subclasses.
+     When no alert is set, the flow is in flow_alert_normal.
 
-     A flow can have multiple alerts but at most ONE of its alerts is predominant
-     of a flow, which is written into `predominant_alert`.
+     A flow can have multiple alerts but at most ONE of its alerts is
+     predominant of a flow, which is written into `predominant_alert`.
   */
   Bitmap128 alerts_map;
-  FlowAlertType predominant_alert;          /* This is the predominant alert */
-  u_int16_t  predominant_alert_score;       /* The score associated to the predominant alert */
-  struct {
-    u_int8_t is_cli_attacker:1, 
-             is_cli_victim:1,
-             is_srv_attacker:1,
-             is_srv_victim:1;
-  } predominant_alert_info;
 
-  char *json_protocol_info, *riskInfo;
+  std::unordered_map<ExporterFlowInfoKey, ExporterFlowInfo, ExporterFlowInfoKeyHash> exporterStats;
+  ExporterFlowInfo *primary_exporter; /* First exporter in exporterStats (do not use begin() as it is not ordered) */
+  std::map<FlowAlertTypeEnum, FlowAlert*> triggered_alerts;
+  FlowAlertType predominant_alert;   /* This is the predominant alert */
+  u_int16_t predominant_alert_score; /* The score associated to the predominant
+                                        alert */
+  bool pending_alerts; /* alerts triggered with triggerAlert but waiting to be
+                          enqueued */
+  bool refresh_triggered_alerts; /* updated alerts previously triggered */
+  bool flow_end_housekeeping_done; /* used by pcap file processing to run flow-end housekeeping
+                                      (including flow-end checks) before shutting down and purging */
+  FlowSource flow_source;
 
   struct {
-    struct ndpi_analyze_struct *c2s, *s2c;
-  } entropy;
-  u_int hash_entry_id; /* Uniquely identify this Flow inside the flows_hash hash table */
-  
-  u_int16_t detection_completed:1, extra_dissection_completed:1,
-    twh_over:1, twh_ok:1, dissect_next_http_packet:1, passVerdict:1,
-    flow_dropped_counts_increased:1, quota_exceeded:1,
-    swap_done:1, swap_requested:1,
-    has_malicious_cli_signature:1, has_malicious_srv_signature:1,
-    src2dst_tcp_zero_window:1, dst2src_tcp_zero_window:1,
-    non_zero_payload_observed:1, _notused:1;
-  
+    u_int8_t is_cli_attacker : 1, is_cli_victim : 1, is_srv_attacker : 1,
+        is_srv_victim : 1, auto_acknowledge : 1;
+  } alert_info;
+
+  char *json_protocol_info, *alerts_json, *alerts_json_shadow, *riskInfo,
+      *end_reason;
+
+  u_int32_t hash_entry_id; /* Uniquely identify this flow inside the flows_hash
+                              hash table */
+  u_int32_t periodicity; /* When is_periodic_flow is set, specifies how periodic
+                            (seconds) is this flow */
+  u_int16_t detection_completed : 1, extra_dissection_completed : 1,
+      twh_over : 1, dissect_next_http_packet : 1, passVerdict : 1,
+      flow_dropped_counts_increased : 1, quota_exceeded : 1, swap_done : 1,
+      swap_requested : 1, has_malicious_cli_signature : 1,
+      has_malicious_srv_signature : 1, src2dst_tcp_zero_window : 1,
+      dst2src_tcp_zero_window : 1, non_zero_payload_observed : 1,
+      is_periodic_flow : 1, has_collected_qoe : 1;
+
+  struct {
+    u_int8_t src_to_dst, dst_to_src;
+  } collected_qoe;
+
+  DropReason dropVerdictReason;
+
+  u_int8_t rtp_stream_type;
 #ifdef ALERTED_FLOWS_DEBUG
   bool iface_alert_inc, iface_alert_dec;
 #endif
 #ifdef NTOPNG_PRO
   bool ingress2egress_direction;
-  u_int8_t routing_table_id;
   bool lateral_movement;
   PeriodicityStatus periodicity_status;
 #ifndef HAVE_NEDGE
-  FlowProfile *trafficProfile;
+#ifdef HAVE_NBPF
+  FlowProfile* trafficProfile;
+#endif
 #else
-  u_int16_t cli2srv_in, cli2srv_out, srv2cli_in, srv2cli_out;
+  u_int32_t numFlowProcessedPkts, numPktsMarkerSet;
+  u_int8_t routing_table_id;
   L7PolicySource_t cli_quota_source, srv_quota_source;
 #endif
   CounterTrend throughputTrend, goodputTrend, thptRatioTrend;
 #endif
+  char* ndpiAddressFamilyProtocol;
   ndpi_protocol ndpiDetectedProtocol;
+  char* ndpiFlowRiskName;
   custom_app_t custom_app;
-  json_object *json_info;
-  ndpi_serializer *tlv_info;
+
+  struct {
+    bool alertTriggered;
+    u_int8_t score;
+    char* msg;
+  } customFlowAlert;
+  json_object* json_info;
+  ndpi_serializer* tlv_info;
   ndpi_confidence_t confidence;
-  char *host_server_name, *bt_hash;
-  IEC104Stats *iec104;
-  char *suspicious_dga_domain; /* Stores the suspicious DGA domain for flows with NDPI_SUSPICIOUS_DGA_DOMAIN */
-  OSType operating_system;
+  char *host_server_name, *client_info, *bt_hash, *stun_mapped_address;
+  IEC104Stats* iec104;
+#ifdef NTOPNG_PRO
+  ModbusStats* modbus;
+  S7CommStats* s7comm;
+  ProfinetStats* profinet;
+#endif
+  char* suspicious_dga_domain; /* Stores the suspicious DGA domain for flows
+                                  with NDPI_SUSPICIOUS_DGA_DOMAIN */
+  ndpi_os operating_system;
 #ifdef HAVE_NEDGE
-  u_int32_t last_conntrack_update; 
+  u_int32_t last_conntrack_update;
   u_int32_t marker;
 #endif
   struct {
-    char *source;
-    json_object *json;
+    char* source;
+    json_object* json;
   } external_alert;
-  bool trigger_immediate_periodic_update; /* needed to process external alerts */
-  time_t next_call_periodic_update; /* The time at which the periodic lua script on this flow shall be called */
-  u_int32_t periodic_update_ctr;
+
+  char *tcp_fingerprint, *ndpi_fingerprint, *tls_blocks;
+  struct {
+    TCPStats cli2srv, srv2cli;
+  } tcp_stats;
+
+  bool
+      trigger_immediate_periodic_update; /* needed to process external alerts */
+  time_t next_call_periodic_update; /* The time at which the periodic lua script
+                                       on this flow shall be called */
+
+  /* Flow payload */
+  u_int16_t flow_payload_len;
+  char* flow_payload;
 
   union {
     struct {
-      char *last_url, *last_user_agent;
+      char *last_url, *last_user_agent, *last_server;
       ndpi_http_method last_method;
       u_int16_t last_return_code;
     } http;
 
     struct {
-      char *last_query;
-      char *last_query_shadow;
-      time_t last_query_update_time; /* The time when the last query was updated */
+      char *last_query, *last_query_shadow;
+      char *last_rsp, *last_rsp_shadow;
+      time_t
+          last_query_update_time; /* The time when the last query was updated */
       u_int16_t last_query_type;
       u_int16_t last_return_code;
     } dns;
 
     struct {
       char *name, *name_txt, *ssid;
-      char *answer;
+      char* answer;
     } mdns;
 
     struct {
-      char *location;
+      char* location;
     } ssdp;
 
     struct {
-      char *name;
+      char* name;
     } netbios;
+
+    struct {
+      char* name;
+    } dhcp;
+
+    struct {
+      char* call_id;
+    } sip;
 
     struct {
       char *client_signature, *server_signature;
       struct {
-	/* https://engineering.salesforce.com/open-sourcing-hassh-abed3ae5044c */
-	char *client_hash, *server_hash;
+        /* https://engineering.salesforce.com/open-sourcing-hassh-abed3ae5044c
+         */
+        char *client_hash, *server_hash;
       } hassh;
     } ssh;
 
@@ -163,29 +358,56 @@ class Flow : public GenericHashEntry {
       char *client_requested_server_name, *server_names;
       /* Certificate dissection */
       struct {
-	/* https://engineering.salesforce.com/tls-fingerprinting-with-ja3-and-ja3s-247362855967 */
-	char *client_hash, *server_hash;
-	u_int16_t server_cipher;
-	ndpi_cipher_weakness server_unsafe_cipher;
-      } ja3;
+        char* client_hash;
+      } ja4;
     } tls;
 
     struct {
+      u_int8_t igmp_type;
+    } igmp;
+
+    struct {
       struct {
-	u_int8_t icmp_type, icmp_code;
+        u_int8_t icmp_type, icmp_code;
       } cli2srv, srv2cli;
       u_int16_t max_icmp_payload_size;
+
+      struct {
+        float min_entropy, max_entropy;
+      } client_to_server;
     } icmp;
+
+    struct {
+      char* currency;
+    } mining;
+
+    struct {
+      char* mail_from;
+      char* rcpt_to;
+    } smtp;
+
+    struct {
+      char *filename;
+    } smb;
+
+    struct {
+      /* Set when the dissection ends, from the nDPI metadata (packet
+       * interfaces only). Client principal ("user@realm", "host$@realm" for
+       * a machine) and, for a machine account, its name (e.g. ws1) */
+      char *client_name, *machine;
+      int32_t error_code; /* Of a KRB-ERROR reply */
+      u_int8_t reply_ok : 1, reply_error : 1,
+        delegation : 1, /* S4U: the client name is the impersonated user */
+        /* Names truncated by nDPI */
+        username_truncated : 1, hostname_truncated : 1, domain_truncated : 1;
+    } kerberos;
+
+    /* If you add new structs here, please update getProtosUnionMember() also */
+
   } protos;
 
-  struct {
-    u_int32_t device_ip;
-    u_int32_t in_index, out_index;
-    u_int16_t observation_point_id;
-  } flow_device;
-
   /* eBPF Information */
-  ParsedeBPF *ebpf;
+  ParsedeBPF* ebpf;
 
   /* Stats */
   FlowTrafficStats stats;
@@ -193,454 +415,799 @@ class Flow : public GenericHashEntry {
   /* IP stats */
   IPPacketStats ip_stats_s2d, ip_stats_d2s;
 
-  /* TCP stats */
-  TCPSeqNum tcp_seq_s2d, tcp_seq_d2s;
-  u_int16_t cli2srv_window, srv2cli_window;
-
-  time_t doNotExpireBefore; /*
-			      Used for collected flows via ZMQ to make sure that they are not immediately
-			      expired if their last seen time is back in time with respect to ntopng
-			    */
-  struct timeval synTime, synAckTime, ackTime; /* network Latency (3-way handshake) */
-  struct timeval clientNwLatency; /* The RTT/2 between the client and nprobe */
-  struct timeval serverNwLatency; /* The RTT/2 between nprobe and the server */
   struct timeval c2sFirstGoodputTime;
   float rttSec, applLatencyMsec;
 
   InterarrivalStats *cli2srvPktTime, *srv2cliPktTime;
-  
+
   /* Counter values at last host update */
   struct {
-    PartializableFlowTrafficStats *partial;
+    PartializableFlowTrafficStats* partial;
     PartializableFlowTrafficStats delta;
     time_t first_seen, last_seen;
-    bool in_progress; /* Set to true when the flow is enqueued to be dumped */
+    bool in_progress, /* Set to true when the flow is enqueued to be dumped */
+      is_first_dump;
   } last_db_dump;
 
+#ifdef NTOPNG_PRO
   /* Lazily initialized and used by a possible view interface */
-  ViewInterfaceFlowStats *viewFlowStats;
+  ViewInterfaceFlowStats* viewFlowStats;
+#endif
 
-  /* Partial used to periodically update stats out of flows */
-  PartializableFlowTrafficStats *periodic_stats_update_partial;
+  /* Stats base updated periodically (get_partial_traffic_stats)
+   * used to compute partial stats */
+  PartializableFlowTrafficStats* periodic_stats_base;
 
 #ifdef HAVE_NEDGE
   struct {
-    struct {
-      TrafficShaper *ingress, *egress;
-    } cli2srv;
-
-    struct {
-      TrafficShaper *ingress, *egress;
-    } srv2cli;
-  } flowShaperIds;
+    TrafficShaper* cli;
+    TrafficShaper* srv;
+  } flowShapers;
+  u_int16_t cli_shaper_id, srv_shaper_id;
 #endif
   struct timeval last_update_time;
 
   float top_bytes_thpt, top_goodput_bytes_thpt, top_pkts_thpt;
-  float bytes_thpt_cli2srv, goodput_bytes_thpt_cli2srv;
-  float bytes_thpt_srv2cli, goodput_bytes_thpt_srv2cli;
-  float pkts_thpt_cli2srv, pkts_thpt_srv2cli;
+  float bytes_thpt, goodput_bytes_thpt;
+  float pkts_thpt;
   ValueTrend bytes_thpt_trend, goodput_bytes_thpt_trend, pkts_thpt_trend;
+
+  /* 64-bit tag bitmap: bits 0-31 reserved for ntop, bits 32-63 user-defined */
+  u_int64_t user_tags_bitmap; /* user-defined */
+  u_int64_t alert_tags_bitmap; /* Tags of the checks of the triggered alerts */
+
+  MinorConnectionStates current_c_state;
+  u_int counter = 0;
+  /*
+    IMPORTANT NOTE
+
+    if you add a new 'directional' field such as cliX and serverX
+    you need to handle it in the Flow::swap() method
+  */
+
+  void deferredInitialization();
   char* intoaV4(unsigned int addr, char* buf, u_short bufLen);
   void allocDPIMemory();
-  bool checkTor(char *hostname);
-  void setBittorrentHash(char *hash);
-  void updateThroughputStats(float tdiff_msec,
-			     u_int32_t diff_sent_packets, u_int64_t diff_sent_bytes, u_int64_t diff_sent_goodput_bytes,
-			     u_int32_t diff_rcvd_packets, u_int64_t diff_rcvd_bytes, u_int64_t diff_rcvd_goodput_bytes);
-  static void updatePacketStats(InterarrivalStats *stats, const struct timeval *when, bool update_iat);
-  bool isReadyToBeMarkedAsIdle();
-  char * printTCPState(char * const buf, u_int buf_len) const;
-  void update_pools_stats(NetworkInterface *iface,
-			  Host *cli_host, Host *srv_host,
-			  const struct timeval *tv,
-			  u_int64_t diff_sent_packets, u_int64_t diff_sent_bytes,
-			  u_int64_t diff_rcvd_packets, u_int64_t diff_rcvd_bytes) const;
+  bool checkTor(char* hostname);
+  void updateThroughputStats(float tdiff_msec, u_int32_t diff_sent_packets,
+                             u_int64_t diff_sent_bytes,
+                             u_int64_t diff_sent_goodput_bytes,
+                             u_int32_t diff_rcvd_packets,
+                             u_int64_t diff_rcvd_bytes,
+                             u_int64_t diff_rcvd_goodput_bytes);
+  void updatePacketStats(InterarrivalStats* stats, const struct timeval* when,
+                         bool update_iat);
+  char* printTCPState(char* const buf, u_int buf_len) const;
+  void update_pools_stats(NetworkInterface* iface, Host* cli_host,
+                          Host* srv_host, const struct timeval* tv,
+                          u_int64_t diff_sent_packets,
+                          u_int64_t diff_sent_bytes,
+                          u_int64_t diff_rcvd_packets,
+                          u_int64_t diff_rcvd_bytes) const;
   /*
     Check (and possibly enqueues) the flow for dump
-   */
+  */
   void dumpCheck(time_t t, bool last_dump_before_free);
-  void updateCliJA3();
-  void updateSrvJA3();
+  void updateCliJA4();
   void updateHASSH(bool as_client);
   void processExtraDissectedInformation();
-  void processDetectedProtocol(u_int8_t *payload, u_int16_t payload_len); /* nDPI detected protocol */
-  void processDetectedProtocolData();  /* nDPI detected protocol data (e.g., ndpiFlow->host_server_name) */
-  void setExtraDissectionCompleted();
-  void setProtocolDetectionCompleted(u_int8_t *payload, u_int16_t payload_len);
+  void processDetectedProtocol(
+      u_int8_t* payload, u_int16_t payload_len); /* nDPI detected protocol */
+  void processDetectedProtocolData(); /* nDPI detected protocol data (e.g.,
+                                         ndpiFlow->host_server_name) */
+  void setExtraDissectionCompleted(bool src2dst_direction);
+  void setProtocolDetectionCompleted(u_int8_t* payload, u_int16_t payload_len,
+                                     time_t when_seen);
   void updateProtocol(ndpi_protocol proto_id);
   const char* cipher_weakness2str(ndpi_cipher_weakness w) const;
-  bool get_partial_traffic_stats(PartializableFlowTrafficStats **dst, PartializableFlowTrafficStats *delta, bool *first_partial) const;
+  bool get_partial_traffic_stats(PartializableFlowTrafficStats** dst,
+                                 PartializableFlowTrafficStats* delta,
+                                 bool* first_partial) const;
   void lua_tos(lua_State* vm);
   void lua_confidence(lua_State* vm);
-  void updateEntropy(struct ndpi_analyze_struct *e, u_int8_t *payload, u_int payload_len);
-  void lua_entropy(lua_State* vm);
   void luaScore(lua_State* vm);
   void luaIEC104(lua_State* vm);
-  void callFlowUpdate(time_t t);
-  /*
-    Method to trigger alerts, synchronous or asynchronous, depending on the last argument.
-    - Asynchronous: The alerts bitmap is updated and the predominant alert is possibly updated.
-                    Recipients enqueue is not performed.
-    - Synchronous:  The alerts bitmap is updated and the predominant alert is possibly updated.
-                    Immediate alert JSON generation and enqueue to the recipients are performed as well.
-   */
-  bool setAlertsBitmap(FlowAlertType alert_type, u_int16_t cli_inc, u_int16_t srv_inc, bool async);
+  bool setAlertsMap(FlowAlert* alert);
   void setNormalToAlertedCounters();
-  /* Decreases scores on both client and server hosts when the flow is being destructed */
+  /* Decreases scores on both client and server hosts when the flow is being
+   * destructed */
   void decAllFlowScores();
+  void updateServerPortsStats(Host* server_host, ndpi_protocol* proto,
+                              time_t when_seen);
+  void updateClientContactedPorts(Host* client, ndpi_protocol* proto);
+  void updateUDPHostServices(bool src2dst_direction);
+  void updateServerName(Host* h);
+  void allocateCollection();
+  void mergeHRCounters(std::vector<uint64_t>& flow_counters,
+                    const std::vector<uint64_t>& update_counters,
+                    time_t update_first_seen);
+  void computeKey();
+  void accountBidirectionalTCPProtocolServices();
+  void accountBidirectionalUDPProtocolServices();
+  void setServerName(char* value);
+  void setClientInfo(char* value);
+#ifdef NTOPNG_PRO
+  void processHostName(char* host_name);
+#endif
+  void updateMac();
+  void decodeTCPstats(u_int32_t v, TCPStats* stats);
+  void serializeTCPFlagsJSON(ndpi_serializer* serializer, TCPStats* stats,
+                       const char* label);
+  void allocTCPStats();
+  void allocUDPStats();
 
  public:
-  Flow(NetworkInterface *_iface,
-       VLANid _vlanId, u_int16_t _observation_point_id,
-       u_int8_t _protocol,
-       Mac *_cli_mac, IpAddress *_cli_ip, u_int16_t _cli_port,
-       Mac *_srv_mac, IpAddress *_srv_ip, u_int16_t _srv_port,
-       const ICMPinfo * const icmp_info,
-       time_t _first_seen, time_t _last_seen, 
-       u_int8_t *_view_cli_mac, u_int8_t *_view_srv_mac);
+  Flow(NetworkInterface* _iface, int32_t iface_idx, u_int16_t _vlanId,
+       u_int16_t _observation_point_id, u_int32_t _private_flow_id,
+       u_int8_t _protocol, Mac* _cli_mac, IpAddress* _cli_ip,
+       u_int16_t _cli_port, Mac* _srv_mac, IpAddress* _srv_ip,
+       u_int16_t _srv_port, const ICMPinfo* const icmp_info, time_t _first_seen,
+       time_t _last_seen, u_int8_t* _view_cli_mac, u_int8_t* _view_srv_mac);
   ~Flow();
 
-  inline Bitmap128 getAlertsBitmap() const { return(alerts_map); }
+  virtual bool is_active_entry_now_idle(u_int max_idleness) const;
+  inline Bitmap128 getAlertsBitmap() const { return (alerts_map); }
 
   /* Enqueues an alert to all available flow recipients. */
-  bool enqueueAlertToRecipients(FlowAlert *alert);
+  bool enqueueAlertToRecipients(FlowAlert* alert);
 
   /*
-    Called by FlowCheck subclasses to trigger a flow alert. This is an asynchronous call, faster, but can
-    cause the alert JSON to be generated after the call.
-    The FlowCheck should implement the buildAlert() method which is called in the predominant check to actually build the FlowAlert object.
-   */
-  bool triggerAlertAsync(FlowAlertType alert_type, u_int16_t cli_score_inc, u_int16_t srv_score_inc);
+    Called by FlowCheck subclasses to trigger a flow alert. Setting sync
+    will causes the alert (FlowAlert) to be immediatly enqueued to recipients.
+  */
+  bool triggerAlert(FlowAlert* alert, bool sync = false);
 
-  /* 
-     Called by FlowCheck subclasses to trigger a flow alert. This is a syncrhonous call, more expensive, but
-     causes the alert (FlowAlert) to be immediately enqueued to all recipients.
-   */
-  bool triggerAlertSync(FlowAlert *alert, u_int16_t cli_score_inc, u_int16_t srv_score_inc);
+  inline FlowAlert* getTriggeredAlert(FlowAlertTypeEnum alert_type) const {
+    std::map<FlowAlertTypeEnum, FlowAlert*>::const_iterator it;
+    it = triggered_alerts.find(alert_type);
+    return (it != triggered_alerts.end()) ? it->second : NULL;
+  }
+
+  /*
+    Alerts are not flushed immediatly as optimization (unless sync is set in
+    triggerAlert). If pending_alerts, they are enqueued to recipients, in a
+    single notification for the predominant one.
+  */
+  void flushAlerts();
+
+  /*
+    Refresh alert stored in flows (rebuild JSON) as the content of some
+    of them have been updated (e.g. re-triggered) and the value may be changed
+    (e.g. the value that exceeded a threshold has increased further)
+  */
+  void refreshAlert(FlowAlertTypeEnum alert_type);
 
   /*
     Enqueues the predominant alert of the flow to all available flow recipients.
-   */
+  */
   void enqueuePredominantAlert();
 
-  inline void setFlowVerdict(u_int8_t _flow_verdict) { flow_verdict = _flow_verdict; };
- 
+  inline void setFlowVerdict(u_int8_t _flow_verdict) {
+    flow_verdict = _flow_verdict;
+  };
+
   inline void setPredominantAlert(FlowAlertType alert_type, u_int16_t score);
-  inline FlowAlertType getPredominantAlert() const { return predominant_alert; };
-  inline u_int16_t getPredominantAlertScore() const { return predominant_alert_score; };
-  inline AlertLevel getPredominantAlertSeverity() const { return Utils::mapScoreToSeverity(predominant_alert_score); };
-  inline bool isFlowAlerted()    const { return(predominant_alert.id != flow_alert_normal); };
+  inline FlowAlertType getPredominantAlert() const {
+    return predominant_alert;
+  };
+  inline u_int16_t getPredominantAlertScore() const {
+    return predominant_alert_score;
+  };
+  inline AlertLevel getPredominantAlertSeverity() const {
+    return Utils::mapScoreToSeverity(predominant_alert_score);
+  };
+  inline bool isFlowAlerted() const {
+    return (predominant_alert.id != flow_alert_normal);
+  };
 
-  void setPredominantAlertInfo(FlowAlert *alert);
-  inline u_int8_t isClientAttacker() { return predominant_alert_info.is_cli_attacker; };
-  inline u_int8_t isClientVictim() { return predominant_alert_info.is_cli_victim; };
-  inline u_int8_t isServerAttacker() { return predominant_alert_info.is_srv_attacker; };
-  inline u_int8_t isServerVictim() { return predominant_alert_info.is_srv_victim; };
-  inline char *getProtocolInfo() { return json_protocol_info; };
+#if defined(NTOPNG_PRO)
+  bool isFlowAllowed(bool* is_allowed);
 
+#endif
+  inline u_int32_t getSrcPeerAS() const { return srcPeerAS; }
+  inline u_int32_t getDstPeerAS() const { return dstPeerAS; }
+  inline u_int32_t getNextAdjacentAS() const { return (collection ? collection->nextAdjacentAS : 0); }
+
+  void setAlertInfo(FlowAlert* alert);
+  inline bool isAlertAutoAck() { return !!alert_info.auto_acknowledge; };
+  inline u_int8_t isClientAttacker() { return alert_info.is_cli_attacker; };
+  inline u_int8_t isClientVictim() { return alert_info.is_cli_victim; };
+  inline u_int8_t isServerAttacker() { return alert_info.is_srv_attacker; };
+  inline u_int8_t isServerVictim() { return alert_info.is_srv_victim; };
+  inline char* getProtocolInfo() { return json_protocol_info; };
+  void updateAlertsJSON();
+  inline char* getAlertJSON() { return alerts_json; };
+  char *getRequestedServerName();
+  const char *getDomainName(char *buf, u_int buf_len);
+  static bool isValidDomainName(const char *domain);
+  void callFlowUpdate(time_t t);
   void setProtocolJSONInfo();
-  void getProtocolJSONInfo(ndpi_serializer *serializer);
- 
-  inline char* getJa3CliHash() { return(protos.tls.ja3.client_hash); }
-  
-  bool isBlacklistedFlow()   const;
+  void serializeProtocolJSONInfo(ndpi_serializer* serializer);
+  void serializeCustomFieldsInfo(ndpi_serializer* serializer);
+
+  inline char* getJa4CliHash() { return (protos.tls.ja4.client_hash); }
+
+  char* getCliCountry(char* buf, u_int buf_len);
+  char* getSrvCountry(char* buf, u_int buf_len);
+  bool isBlacklistedFlow() const;
   bool isBlacklistedClient() const;
   bool isBlacklistedServer() const;
   struct site_categories* getFlowCategory(bool force_categorization);
   void freeDPIMemory();
-  static const ndpi_protocol ndpiUnknownProtocol;
   bool isTiny() const;
-  inline bool isProto(u_int16_t p) const { return(((ndpiDetectedProtocol.master_protocol == p)
-						   || (ndpiDetectedProtocol.app_protocol == p))
-						  ? true : false); }
+  inline bool isProto(u_int16_t p) const {
+    return (((ndpiDetectedProtocol.proto.master_protocol == p) ||
+             (ndpiDetectedProtocol.proto.app_protocol == p))
+                ? true
+                : false);
+  }
   bool isTLS() const;
-  inline bool isEncryptedProto() const { return(ndpi_is_encrypted_proto(iface->get_ndpi_struct(), ndpiDetectedProtocol)); }
-  inline bool isSSH()  const { return(isProto(NDPI_PROTOCOL_SSH));  }
-  inline bool isDNS()  const { return(isProto(NDPI_PROTOCOL_DNS));  }
-  inline bool isIEC60870()  const { return(isProto(NDPI_PROTOCOL_IEC60870));  }
-  inline bool isMDNS() const { return(isProto(NDPI_PROTOCOL_MDNS)); }
-  inline bool isSSDP() const { return(isProto(NDPI_PROTOCOL_SSDP)); }
-  inline bool isNetBIOS() const { return(isProto(NDPI_PROTOCOL_NETBIOS)); }
-  inline bool isDHCP() const { return(isProto(NDPI_PROTOCOL_DHCP)); }
-  inline bool isNTP() const  { return(isProto(NDPI_PROTOCOL_NTP));  }
-  inline bool isSMTP() const { return(isProto(NDPI_PROTOCOL_MAIL_SMTP) || isProto(NDPI_PROTOCOL_MAIL_SMTPS));  }
-  inline bool isHTTP() const { return(isProto(NDPI_PROTOCOL_HTTP)); }
-  inline bool isICMP() const { return(isProto(NDPI_PROTOCOL_IP_ICMP) || isProto(NDPI_PROTOCOL_IP_ICMPV6)); }
-  inline bool isBittorrent() const { return(isProto(NDPI_PROTOCOL_BITTORRENT)); }
+  inline bool isEncryptedProto() const {
+    return (ndpi_is_encrypted_proto(iface->get_ndpi_struct(),
+                                    ndpiDetectedProtocol.proto));
+  }
+  inline bool isSSH() const { return (isProto(NDPI_PROTOCOL_SSH));       }
+  inline bool isMining() const { return (isProto(NDPI_PROTOCOL_MINING)); }
+  inline bool isDNS() const { return (isProto(NDPI_PROTOCOL_DNS));       }
+  inline bool isSTUN() const { return (isProto(NDPI_PROTOCOL_STUN));     }
+  inline bool isQUIC() const { return (isProto(NDPI_PROTOCOL_QUIC));     }
+  inline bool isSMB() const { return (isProto(NDPI_PROTOCOL_SMBV23));    }
+  inline bool isKerberos() const { return (isProto(NDPI_PROTOCOL_KERBEROS)); }
+  inline bool hasKerberosInfo() const {
+    return (isKerberos() && (protos.kerberos.client_name || protos.kerberos.reply_ok ||
+                             protos.kerberos.reply_error));
+  }
+  static inline bool isKerberosKDCPort(u_int16_t port) {
+    return ((port == 88) || (port == 464));
+  }
+  inline bool isZoomRTP() const {
+    return (isProto(NDPI_PROTOCOL_ZOOM) &&
+            (isProto(NDPI_PROTOCOL_RTP) || isProto(NDPI_PROTOCOL_SRTP)));
+  }
+  inline bool isIEC60870() const { return (isProto(NDPI_PROTOCOL_IEC60870)); }
+  inline bool isModbus() const { return (isProto(NDPI_PROTOCOL_MODBUS));     }
+  inline bool isS7Comm() const { return (isProto(NDPI_PROTOCOL_S7COMM));     }
+  inline bool isProfinet() const {
+    return (isProto(NDPI_PROTOCOL_PROFINET_IO));
+  }
+  inline bool isMDNS() const { return (isProto(NDPI_PROTOCOL_MDNS));        }
+  inline bool isSSDP() const { return (isProto(NDPI_PROTOCOL_SSDP));        }
+  inline bool isNetBIOS() const { return (isProto(NDPI_PROTOCOL_NETBIOS));  }
+  inline bool isSIP() const { return (isProto(NDPI_PROTOCOL_SIP));          }
+  inline bool isDHCP() const { return (isProto(NDPI_PROTOCOL_DHCP));        }
+  inline bool isDHCPv6() const { return (isProto(NDPI_PROTOCOL_DHCPV6));    }
+  inline bool isNTP() const { return (isProto(NDPI_PROTOCOL_NTP));          }
+  inline bool isSMTPorSMTPS() const { return (isSMTP() || isSMTPS());       }
+  inline bool isSMTP() const { return (isProto(NDPI_PROTOCOL_MAIL_SMTP));   }
+  inline bool isSMTPS() const { return (isProto(NDPI_PROTOCOL_MAIL_SMTPS)); }
+  inline bool isHTTP() const { return (isProto(NDPI_PROTOCOL_HTTP));        }
+  inline bool isHTTP_PROXY() const {
+    return (isProto(NDPI_PROTOCOL_HTTP_PROXY));
+  }
+  inline bool isHTTP_CONNECT() const {
+    return (isProto(NDPI_PROTOCOL_HTTP_CONNECT));
+  }
+  inline bool isIGMP() const { return (isProto(NDPI_PROTOCOL_IP_IGMP)); }
+  inline bool isICMP() const {
+    return (isProto(NDPI_PROTOCOL_IP_ICMP) || isProto(NDPI_PROTOCOL_IP_ICMPV6));
+  }
+  inline bool isBittorrent() const {
+    return (isProto(NDPI_PROTOCOL_BITTORRENT));
+  }
 
+  inline bool isTwhOverForViewInterface() {
+    return ((twh_over_view == 1) ? true : false);
+  }
+  inline void setTwhOverForViewInterface() { twh_over_view = 1; }
 #if defined(NTOPNG_PRO)
-  inline bool isLateralMovement() const { return(lateral_movement);  }
+  inline bool isLateralMovement() const { return (lateral_movement); }
   inline void setLateralMovement(bool change) { lateral_movement = change; }
-  PeriodicityStatus getPeriodicity() const { return(periodicity_status);   }
-  inline void setPeriodicity(PeriodicityStatus _periodicity_status) { periodicity_status = _periodicity_status;  }
+  PeriodicityStatus getPeriodicity() const { return (periodicity_status); }
+  inline void setPeriodicity(PeriodicityStatus _periodicity_status) {
+    periodicity_status = _periodicity_status;
+  }
 #endif
 
   inline bool isCliDeviceAllowedProtocol() const {
-    return !cli_host || cli_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), true) == device_proto_allowed;
-  }		      
+    return !cli_host ||
+           cli_host->getDeviceAllowedProtocolStatus(
+               get_detected_protocol(), true) == device_proto_allowed;
+  }
   inline bool isSrvDeviceAllowedProtocol() const {
-    return !srv_host
-      || get_bytes_srv2cli() == 0 /* Server must respond to be considered NOT allowed */
-      || srv_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), false) == device_proto_allowed;
+    return !srv_host ||
+           get_bytes_srv2cli() ==
+               0 /* Server must respond to be considered NOT allowed */
+           || srv_host->getDeviceAllowedProtocolStatus(
+                  get_detected_protocol(), false) == device_proto_allowed;
   }
   inline bool isDeviceAllowedProtocol() const {
     return isCliDeviceAllowedProtocol() && isSrvDeviceAllowedProtocol();
   }
   inline u_int16_t getCliDeviceDisallowedProtocol() const {
-    DeviceProtoStatus cli_ps = cli_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), true);
-    return (cli_ps == device_proto_forbidden_app) ? ndpiDetectedProtocol.app_protocol : ndpiDetectedProtocol.master_protocol;
+    DeviceProtoStatus cli_ps =
+        cli_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), true);
+
+    return (cli_ps == device_proto_forbidden_app)
+               ? ndpiDetectedProtocol.proto.app_protocol
+               : ndpiDetectedProtocol.proto.master_protocol;
   }
   inline u_int16_t getSrvDeviceDisallowedProtocol() const {
-    DeviceProtoStatus srv_ps = srv_host->getDeviceAllowedProtocolStatus(get_detected_protocol(), false);
-    return (srv_ps == device_proto_forbidden_app) ? ndpiDetectedProtocol.app_protocol : ndpiDetectedProtocol.master_protocol;
+    DeviceProtoStatus srv_ps = srv_host->getDeviceAllowedProtocolStatus(
+        get_detected_protocol(), false);
+
+    return (srv_ps == device_proto_forbidden_app)
+               ? ndpiDetectedProtocol.proto.app_protocol
+               : ndpiDetectedProtocol.proto.master_protocol;
   }
   inline bool isMaskedFlow() const {
-    int16_t network_id;
-    return(Utils::maskHost(get_cli_ip_addr()->isLocalHost(&network_id))
-	   || Utils::maskHost(get_srv_ip_addr()->isLocalHost(&network_id)));
+    return ((get_cli_ip_addr() &&
+             Utils::maskHost(get_cli_ip_addr()->isLocalHost())) ||
+            (get_srv_ip_addr() &&
+             Utils::maskHost(get_srv_ip_addr()->isLocalHost())));
   };
-  inline const char* getServerCipherClass()  const { return(isTLS() ? cipher_weakness2str(protos.tls.ja3.server_unsafe_cipher) : NULL); }
-  char* serialize(bool use_labels = false);
+  char* serialize(ExportFormat format = export_format_GENERIC);
   /* Prepares an alert JSON and puts int in the resulting `serializer`. */
-  void alert2JSON(FlowAlert *alert, ndpi_serializer *serializer);
-  json_object* flow2JSON();
-  json_object* flow2es(json_object *flow_object);
-  void formatECSInterface(json_object *my_object);
-  void formatECSNetwork(json_object *my_object, const IpAddress *addr);
-  void formatECSHost(json_object *my_object, bool is_client, const IpAddress *addr, Host *host);
-  void formatECSFlow(json_object *my_object);
-  void formatSyslogFlow(json_object *my_object);
-  void formatGenericFlow(json_object *my_object);
-  void formatECSExtraInfo(json_object *my_object);
-  void formatECSAppProto(json_object *my_object);
-  void formatECSObserver(json_object *my_object);
+  void alert2JSON(FlowAlert* alert, ndpi_serializer* serializer);
+  json_object* flow2JSON(ExportFormat format);
+  json_object* flow2es(json_object* flow_object);
+  void formatECSInterface(json_object* my_object);
+  void formatECSNetwork(json_object* my_object, const IpAddress* addr);
+  void formatECSHost(json_object* my_object, bool is_client,
+                     const IpAddress* addr, Host* host);
+  void formatECSEvent(json_object* my_object);
+  void formatECSFlow(json_object* my_object);
+  void formatSyslogFlow(json_object* my_object);
+  void formatGenericFlow(json_object* my_object);
+  void formatECSExtraInfo(json_object* my_object);
+  void formatECSAppProto(json_object* my_object);
+  void formatECSObserver(json_object* my_object);
 
-  inline u_int16_t getLowerProtocol() { return(ndpi_get_lower_proto(ndpiDetectedProtocol)); }
+  inline u_int16_t getLowerProtocol() {
+    return (ndpi_get_lower_proto(ndpiDetectedProtocol.proto));
+  }
+  inline u_int16_t getUpperProtocol() {
+    return (ndpi_get_upper_proto(ndpiDetectedProtocol.proto));
+  }
 
-  inline void updateJA3C(char *j) { if(j && (j[0] != '\0') && (protos.tls.ja3.client_hash == NULL)) protos.tls.ja3.client_hash = strdup(j); updateCliJA3(); }
-  inline void updateJA3S(char *j) { if(j && (j[0] != '\0') && (protos.tls.ja3.server_hash == NULL)) protos.tls.ja3.server_hash = strdup(j); updateSrvJA3(); }
-  
-  inline u_int8_t getTcpFlags()        const { return(src2dst_tcp_flags | dst2src_tcp_flags);  };
-  inline u_int8_t getTcpFlagsCli2Srv() const { return(src2dst_tcp_flags);                      };
-  inline u_int8_t getTcpFlagsSrv2Cli() const { return(dst2src_tcp_flags);                      };
+  inline void updateJA4C(char* j) {
+    if (j && (j[0] != '\0') && (protos.tls.ja4.client_hash == NULL))
+      protos.tls.ja4.client_hash = strdup(j);
+    updateCliJA4();
+  }
+
+  inline u_int8_t getTcpFlags() const {
+    return (src2dst_tcp_flags | dst2src_tcp_flags);
+  };
+  inline u_int8_t getTcpFlagsCli2Srv() const { return (src2dst_tcp_flags); };
+  inline u_int8_t getTcpFlagsSrv2Cli() const { return (dst2src_tcp_flags); };
 #ifdef HAVE_NEDGE
-  bool checkPassVerdict(const struct tm *now);
-  bool isPassVerdict() const;
-  inline void setConntrackMarker(u_int32_t marker) 	{ this->marker = marker; }
-  inline u_int32_t getConntrackMarker() 		{ return(marker); }
+  bool checkPassVerdict(const struct tm* now);
+  bool isPassVerdict();
+  inline void setConntrackMarker(u_int32_t marker) { this->marker = marker; }
+  inline u_int32_t getConntrackMarker() { return (marker); }
   void incFlowDroppedCounters();
 #endif
-  void setDropVerdict();
+  void setDropVerdict(DropReason reason);
+  inline bool getVerdict() { return passVerdict; };
+  inline DropReason getDropReason() { return dropVerdictReason; };
   u_int32_t getPid(bool client);
   u_int32_t getFatherPid(bool client);
   u_int32_t get_uid(bool client) const;
   char* get_proc_name(bool client);
   char* get_user_name(bool client);
-  u_int32_t getNextTcpSeq(u_int8_t tcpFlags, u_int32_t tcpSeqNum, u_int32_t payloadLen) ;
-  static double toMs(const struct timeval *t);
-  void timeval_diff(struct timeval *begin, const struct timeval *end, struct timeval *result, u_short divide_by_two);
-  char* getFlowInfo(char *buf, u_int buf_len, bool isLuaRequest);
+  u_int32_t getNextTcpSeq(u_int8_t tcpFlags, u_int32_t tcpSeqNum,
+                          u_int32_t payloadLen);
+  static double toMs(const struct timeval* t);
+  void timeval_diff(struct timeval* begin, const struct timeval* end,
+                    struct timeval* result, bool divide_by_two);
+  std::string getFlowInfo(bool isLuaRequest);
+  inline std::string getL7JSON() { return (l7_json); }
+  inline void setL7JSON(const std::string &j) { l7_json = j; }
   inline char* getFlowServerInfo() {
-    return (isTLS() && protos.tls.client_requested_server_name) ? protos.tls.client_requested_server_name : host_server_name;
+    return (isTLS() && protos.tls.client_requested_server_name)
+               ? protos.tls.client_requested_server_name
+               : host_server_name;
   }
-  inline char* getBitTorrentHash() { return(bt_hash);          };
-  inline void  setBTHash(char *h)  { if(!h) return; if(bt_hash) free(bt_hash); bt_hash = h; }
-  inline void  setServerName(char *v)  { if(host_server_name) free(host_server_name);  host_server_name = v; }
-  void updateICMPFlood(const struct bpf_timeval *when, bool src2dst_direction);
-  void updateTcpFlags(const struct bpf_timeval *when,
-		      u_int8_t flags, bool src2dst_direction);
+  inline char* getBitTorrentHash() { return (bt_hash); };
+  inline void setBTHash(char* h) {
+    if (!h) return;
+    if (bt_hash) free(bt_hash);
+    bt_hash = h;
+  }
+  void updateICMPFlood(const struct bpf_timeval* when, bool src2dst_direction);
+  void updateDNSFlood(const struct bpf_timeval* when, bool src2dst_direction);
+  void updateSNMPFlood(const struct bpf_timeval* when, bool src2dst_direction);
+  void updateTcpFlags(const struct bpf_timeval* when, u_int8_t flags,
+                      bool src2dst_direction, bool new_flow);
   void updateTcpWindow(u_int16_t window, bool src2dst_direction);
-  void updateTcpSeqIssues(const ParsedFlow *pf);
-  void updateTLS(ParsedFlow *zflow);
-  void updateDNS(ParsedFlow *zflow);
-  void updateHTTP(ParsedFlow *zflow);
+  void updateTcpSeqIssues(const ParsedFlow* pf);
+  void updateTLS(ParsedFlow* zflow);
+  void updateDNS(ParsedFlow* zflow);
+  void updateHTTP(ParsedFlow* zflow);
   void updateSuspiciousDGADomain();
-  static void incTcpBadStats(bool src2dst_direction,
-			     Host *cli, Host *srv,
-			     NetworkInterface *iface,
-			     u_int32_t ooo_pkts, u_int32_t retr_pkts,
-			     u_int32_t lost_pkts, u_int32_t keep_alive_pkts);
-  
-  void updateTcpSeqNum(const struct bpf_timeval *when,
-		       u_int32_t seq_num, u_int32_t ack_seq_num,
-		       u_int16_t window, u_int8_t flags,
-		       u_int16_t payload_len, bool src2dst_direction);
+  void incTcpBadStats(bool src2dst_direction, Host* cli, Host* srv,
+                      NetworkInterface* iface, u_int32_t ooo_pkts,
+                      u_int32_t retr_pkts, u_int32_t lost_pkts,
+                      u_int32_t keep_alive_pkts);
+
+  void updateTcpSeqNum(const struct bpf_timeval* when, u_int32_t seq_num,
+                       u_int32_t ack_seq_num, u_int16_t window, u_int8_t flags,
+                       u_int16_t payload_len, bool src2dst_direction);
 
   void updateSeqNum(time_t when, u_int32_t sN, u_int32_t aN);
-  void setDetectedProtocol(ndpi_protocol proto_id);
-  void processPacket(const struct pcap_pkthdr *h,
-		     const u_char *ip_packet, u_int16_t ip_len, u_int64_t packet_time,
-		     u_int8_t *payload, u_int16_t payload_len, u_int16_t src_port);
-  void processDNSPacket(const u_char *ip_packet, u_int16_t ip_len, u_int64_t packet_time);
-  void processIEC60870Packet(bool tx_direction,
-			     const u_char *payload, u_int16_t payload_len,
-			     struct timeval *packet_time);
-  
-  void endProtocolDissection();
+  void setDetectedProtocol(ndpi_protocol proto_id, bool src2dst_direction);
+  void processPacket(bool src2dst_direction, const struct pcap_pkthdr* h,
+                     const u_char* ip_packet, u_int16_t ip_len,
+                     u_int64_t packet_time, u_int8_t* payload,
+                     u_int16_t payload_len, u_int16_t src_port);
+  void processDNSPacket(const u_char* ip_packet, u_int16_t ip_len,
+                        u_int64_t packet_time);
+  void checkSMBFileName();
+  void processSMBPacket(const u_char* payload, u_int16_t payload_len);
+  void processIEC60870Packet(bool tx_direction, const u_char* payload,
+                             u_int16_t payload_len,
+                             const struct pcap_pkthdr* h);
+#ifdef NTOPNG_PRO
+  void updateOTStats(ParsedFlow* zflow);
+  void processModbusPacket(bool is_query, const u_char* payload,
+                           u_int16_t payload_len, const struct pcap_pkthdr* h);
+  void processRTPPacket(const u_char* payload, u_int16_t payload_len,
+                        const struct pcap_pkthdr* h, bool src2dst_direction);
+  void updateQUICStats(bool src2dst_direction, const struct timeval* tv,
+                       u_int8_t* payload, u_int16_t payload_len);
+  void updateUDPTimestamp(bool src2dst_direction, const struct timeval* tv);
+  void computeQoEscore(u_int8_t* cli_to_srv_qoe,
+                       std::vector<std::string>* cli_to_srv_qoe_issues,
+                       u_int8_t* srv_to_cli_qoe,
+                       std::vector<std::string>* srv_to_cli_qoe_issues);
+  u_int8_t computeQoETCPscore(QoELimits* l, bool cli_to_srv,
+                              std::vector<std::string>* issues);
+  u_int8_t computeQoEUDPscore(QoELimits* l, bool cli_to_srv,
+                              std::vector<std::string>* issues);
+  u_int8_t computeQoEMOSscore(bool cli_to_srv);
+  u_int8_t getQoEScore();
+  void serializeQoEInfo(ndpi_serializer* serializer);
+  QoEType getQoEType();
+#endif
+  void endProtocolDissection(bool src2dst_direction);
   inline void setCustomApp(custom_app_t ca) {
     memcpy(&custom_app, &ca, sizeof(custom_app));
   };
-  inline custom_app_t getCustomApp() const {
-    return custom_app;
-  };
+  inline custom_app_t getCustomApp() const { return custom_app; };
   u_int16_t getStatsProtocol() const;
-  void setJSONInfo(json_object *json);
-  void setTLVInfo(ndpi_serializer *tlv);
-  void incStats(bool cli2srv_direction, u_int pkt_len,
-		u_int8_t *payload, u_int payload_len, 
-                u_int8_t l4_proto, u_int8_t is_fragment,
-		u_int16_t tcp_flags, const struct timeval *when,
-		u_int16_t fragment_extra_overhead);
-  void addFlowStats(bool new_flow,
-		    bool cli2srv_direction, u_int in_pkts, u_int in_bytes, u_int in_goodput_bytes,
-		    u_int out_pkts, u_int out_bytes, u_int out_goodput_bytes, 
-		    u_int in_fragments, u_int out_fragments,
-		    time_t first_seen, time_t last_seen);
-  void check_swap();
+  void setJSONInfo(json_object* json);
+  void setTLVInfo(ndpi_serializer* tlv);
+  void incStats(bool cli2srv_direction, u_int pkt_len, u_int8_t* payload,
+                u_int payload_len, u_int8_t l4_proto, u_int8_t is_fragment,
+                u_int16_t tcp_flags, const struct timeval* when,
+                u_int16_t fragment_extra_overhead);
+  bool addFlowStats(bool new_flow, bool cli2srv_direction, u_int in_pkts,
+                    u_int in_bytes, u_int in_goodput_bytes, u_int out_pkts,
+                    u_int out_bytes, u_int out_goodput_bytes,
+                    u_int in_fragments, u_int out_fragments, time_t first_seen,
+                    time_t last_seen);
 
-  inline bool isThreeWayHandshakeOK()    const { return(twh_ok ? true : false);                 };
-  inline bool isDetectionCompleted()     const { return(detection_completed ? true : false);    };
-  inline bool isOneWay()                 const { return(get_packets() && (!get_packets_cli2srv() || !get_packets_srv2cli())); };
-  inline bool isBidirectional()          const { return(get_packets_cli2srv() && get_packets_srv2cli()); };
-  inline bool isRemoteToRemote()         const { return (cli_host && srv_host && !cli_host->isLocalHost() && !srv_host->isLocalHost()); };
+  void addPostNATIPv4(u_int32_t _src_ip_addr_post_nat,
+                      u_int32_t _dst_ip_addr_post_nat);
+
+  void addPostNATPort(u_int32_t _src_port_post_nat,
+                      u_int32_t _dst_port_post_nat);
+
+  /* Client and server of TCP flows (packet interfaces), from the strongest
+   * evidence to the weakest:
+   * 1. the first SYN (sent by the client) or SYN-ACK (sent by the server)
+   *    seen, whatever came before it: final (checkTCPDirection());
+   * 2. no handshake seen: once the protocol is detected, the side using one of
+   *    its default ports (nDPI) is the server, when only one side uses one
+   *    (checkDirectionByProtocol());
+   * 3. otherwise the guess made on the first packet: the lower port is the
+   *    server (check_swap()).
+   * Once the protocol is detected on a flow that has carried payload, the
+   * direction is final: a later SYN or SYN-ACK belongs to another connection.
+   * A swap is requested, and performed by the next packet or when the flow
+   * ends. Nothing is done when the flow swap heuristic is disabled.
+   * Client and server of UDP and ICMP flows: the first request or reply seen
+   * (checkL7Direction()); otherwise, for UDP, once the protocol is detected by
+   * DPI, the side using one of its default ports, as above, final
+   * (checkDirectionByProtocol()). */
+  void check_swap();
+  void checkTCPDirection(bool src2dst_direction, u_int8_t tcp_flags,
+                         bool new_flow);
+  void checkDirectionByProtocol();
+  void checkL7Direction(bool src2dst_direction, u_int16_t l7proto,
+                        const u_int8_t* payload, u_int16_t payload_len);
+
+  bool isThreeWayHandshakeOK() const;
+
+  inline ndpi_classification_state getDetectionState() {
+    return (ndpiDetectedProtocol.state);
+  }
+  inline bool isDetectionCompleted() const {
+    return (detection_completed ? true : false);
+  };
+  inline bool isOneWay() const {
+    return (get_packets() &&
+            (!get_packets_cli2srv() || !get_packets_srv2cli()));
+  };
+  inline bool isBidirectional() const {
+    return (get_packets_cli2srv() && get_packets_srv2cli());
+  };
+
+  /*
+    Find a simple criteria to ignore probing attempts selecting
+    only flows with real data exchanged both ways
+  */
+  inline bool isTCPReallyBidirectional() const {
+    return ((get_packets_cli2srv() > NUM_MIN_TCP_PKTS_PER_DIRECTION) &&
+            (src2dst_tcp_flags & TH_PUSH) &&
+            (get_packets_srv2cli() > NUM_MIN_TCP_PKTS_PER_DIRECTION) &&
+            (dst2src_tcp_flags & TH_PUSH));
+  };
+
+  inline bool isRemoteToRemote() const {
+    return (cli_host && srv_host && !cli_host->isLocalHost() &&
+            !srv_host->isLocalHost());
+  };
+
   inline bool isLocalToRemote() const {
-    int16_t network_id;
-    return get_cli_ip_addr()->isLocalHost(&network_id) && !get_srv_ip_addr()->isLocalHost(&network_id);
+    return get_cli_ip_addr()->isLocalHost() &&
+           !get_srv_ip_addr()->isLocalHost();
   };
+
   inline bool isRemoteToLocal() const {
-    int16_t network_id;
-    return !get_cli_ip_addr()->isLocalHost(&network_id) && get_srv_ip_addr()->isLocalHost(&network_id);
+    return !get_cli_ip_addr()->isLocalHost() &&
+           get_srv_ip_addr()->isLocalHost();
   };
-  inline bool isLocalToLocal()           const { 
-    int16_t network_id;
-    return get_cli_ip_addr()->isLocalHost(&network_id) && get_srv_ip_addr()->isLocalHost(&network_id);
+
+  inline bool isLocalToLocal() const {
+    return get_cli_ip_addr()->isLocalHost() && get_srv_ip_addr()->isLocalHost();
   };
-  inline bool isUnicast()                const { return (cli_ip_addr && srv_ip_addr && !cli_ip_addr->isBroadMulticastAddress() && !srv_ip_addr->isBroadMulticastAddress()); };
-  inline u_int32_t get_cli_ipv4()        const { return(cli_host->get_ip()->get_ipv4());  };
-  inline u_int32_t get_srv_ipv4()        const { return(srv_host->get_ip()->get_ipv4());  };
-  inline ndpi_protocol get_detected_protocol() const { return(isDetectionCompleted() ? ndpiDetectedProtocol : ndpiUnknownProtocol);          };
-  inline struct ndpi_flow_struct* get_ndpi_flow()   const { return(ndpiFlow);                        };
-  inline const struct ndpi_in6_addr* get_cli_ipv6() const { return(cli_host->get_ip()->get_ipv6());  };
-  inline const struct ndpi_in6_addr* get_srv_ipv6() const { return(srv_host->get_ip()->get_ipv6());  };
-  inline u_int16_t get_cli_port()        const { return(ntohs(cli_port));                 };
-  inline u_int16_t get_srv_port()        const { return(ntohs(srv_port));                 };
-  inline VLANid    get_vlan_id()              const { return(filterVLANid(vlanId));                        };
-  inline u_int8_t  get_protocol()        const { return(protocol);                        };
-  inline u_int64_t get_bytes()           const { return(stats.get_cli2srv_bytes() + stats.get_srv2cli_bytes() );                };
-  inline u_int64_t get_bytes_cli2srv()   const { return(stats.get_cli2srv_bytes());                                             };
-  inline u_int64_t get_bytes_srv2cli()   const { return(stats.get_srv2cli_bytes());                                             };
-  inline u_int64_t get_goodput_bytes()   const { return(stats.get_cli2srv_goodput_bytes() + stats.get_srv2cli_goodput_bytes()); };
-  inline u_int64_t get_goodput_bytes_cli2srv() const { return(stats.get_cli2srv_goodput_bytes()); };
-  inline u_int64_t get_goodput_bytes_srv2cli() const { return(stats.get_srv2cli_goodput_bytes()); };
-  inline u_int64_t get_packets()         const { return(stats.get_cli2srv_packets() + stats.get_srv2cli_packets());             };
-  inline u_int32_t get_packets_cli2srv() const { return(stats.get_cli2srv_packets());                                           };
-  inline u_int32_t get_packets_srv2cli() const { return(stats.get_srv2cli_packets());                                           };
-  inline u_int64_t get_partial_bytes()           const { return get_partial_bytes_cli2srv() + get_partial_bytes_srv2cli();      };
-  inline u_int64_t get_partial_packets()         const { return get_partial_packets_cli2srv() + get_partial_packets_srv2cli();  };
-  inline u_int64_t get_partial_goodput_bytes()   const { return last_db_dump.delta.get_cli2srv_goodput_bytes() + last_db_dump.delta.get_srv2cli_goodput_bytes();       };
-  inline u_int64_t get_partial_bytes_cli2srv()   const { return last_db_dump.delta.get_cli2srv_bytes();   };
-  inline u_int64_t get_partial_bytes_srv2cli()   const { return last_db_dump.delta.get_srv2cli_bytes();   };
-  inline u_int64_t get_partial_packets_cli2srv() const { return last_db_dump.delta.get_cli2srv_packets(); };
-  inline u_int64_t get_partial_packets_srv2cli() const { return last_db_dump.delta.get_srv2cli_packets(); };
-  inline void set_dump_in_progress()                   { last_db_dump.in_progress = true;                 };
-  inline void set_dump_done()                          { last_db_dump.in_progress = false;                };
+
+  inline bool isUnicast() const {
+    return (cli_ip_addr && srv_ip_addr &&
+            !cli_ip_addr->isBroadMulticastAddress() &&
+            !srv_ip_addr->isBroadMulticastAddress());
+  };
+
+  inline u_int32_t get_cli_ipv4() const {
+    return (cli_host->get_ip()->get_ipv4());
+  };
+
+  inline u_int32_t get_srv_ipv4() const {
+    return (srv_host->get_ip()->get_ipv4());
+  };
+  inline ndpi_protocol get_detected_protocol() const {
+    return (ndpiDetectedProtocol);
+  }
+
+  inline struct ndpi_flow_struct* get_ndpi_flow() const { return (ndpiFlow); };
+  inline const struct ndpi_in6_addr* get_cli_ipv6() const {
+    return (cli_host->get_ip()->get_ipv6());
+  };
+
+  inline const struct ndpi_in6_addr* get_srv_ipv6() const {
+    return (srv_host->get_ip()->get_ipv6());
+  };
+
+  inline u_int16_t get_cli_port() const { return (ntohs(cli_port)); };
+  inline u_int16_t get_srv_port() const { return (ntohs(srv_port)); };
+  inline u_int16_t get_vlan_id() const { return (vlanId); };
+  inline u_int8_t get_protocol() const { return (protocol); };
+  inline u_int64_t get_bytes() const {
+    return (stats.get_cli2srv_bytes() + stats.get_srv2cli_bytes());
+  };
+  inline u_int64_t get_bytes_cli2srv() const {
+    return (stats.get_cli2srv_bytes());
+  };
+  inline u_int64_t get_bytes_srv2cli() const {
+    return (stats.get_srv2cli_bytes());
+  };
+  inline u_int64_t get_goodput_bytes() const {
+    return (stats.get_cli2srv_goodput_bytes() +
+            stats.get_srv2cli_goodput_bytes());
+  };
+  inline u_int64_t get_goodput_bytes_cli2srv() const {
+    return (stats.get_cli2srv_goodput_bytes());
+  };
+  inline u_int64_t get_goodput_bytes_srv2cli() const {
+    return (stats.get_srv2cli_goodput_bytes());
+  };
+  inline u_int64_t get_packets() const {
+    return (stats.get_cli2srv_packets() + stats.get_srv2cli_packets());
+  };
+  inline u_int32_t get_packets_cli2srv() const {
+    return (stats.get_cli2srv_packets());
+  };
+  inline u_int32_t get_packets_srv2cli() const {
+    return (stats.get_srv2cli_packets());
+  };
+  inline u_int64_t get_partial_bytes() const {
+    return get_partial_bytes_cli2srv() + get_partial_bytes_srv2cli();
+  };
+  inline u_int64_t get_partial_packets() const {
+    return get_partial_packets_cli2srv() + get_partial_packets_srv2cli();
+  };
+  inline u_int64_t get_partial_goodput_bytes() const {
+    return last_db_dump.delta.get_cli2srv_goodput_bytes() +
+           last_db_dump.delta.get_srv2cli_goodput_bytes();
+  };
+  inline u_int64_t get_partial_bytes_cli2srv() const {
+    return last_db_dump.delta.get_cli2srv_bytes();
+  };
+  inline u_int64_t get_partial_bytes_srv2cli() const {
+    return last_db_dump.delta.get_srv2cli_bytes();
+  };
+  inline u_int64_t get_partial_packets_cli2srv() const {
+    return last_db_dump.delta.get_cli2srv_packets();
+  };
+  inline u_int64_t get_partial_packets_srv2cli() const {
+    return last_db_dump.delta.get_srv2cli_packets();
+  };
+  inline void set_dump_in_progress() { last_db_dump.in_progress = true; };
+  inline void set_dump_done() { last_db_dump.in_progress = false, last_db_dump.is_first_dump = false; };
   bool needsExtraDissection();
   bool hasDissectedTooManyPackets();
-  bool get_partial_traffic_stats_view(PartializableFlowTrafficStats *delta, bool *first_partial);
+#ifdef NTOPNG_PRO
+  bool get_partial_traffic_stats_view(PartializableFlowTrafficStats* delta,
+                                      bool* first_partial);
+#endif
   bool update_partial_traffic_stats_db_dump();
-  inline float get_pkts_thpt()           const { return(pkts_thpt_cli2srv + pkts_thpt_srv2cli);                   };
-  inline float get_bytes_thpt()          const { return(bytes_thpt_cli2srv + bytes_thpt_srv2cli);                 };
-  inline float get_goodput_bytes_thpt()  const { return(goodput_bytes_thpt_cli2srv + goodput_bytes_thpt_srv2cli); };
-  inline float get_goodput_ratio()       const { return((float)(100*get_goodput_bytes()) / ((float)get_bytes() + 1)); };
-  inline time_t get_partial_first_seen() const { return(last_db_dump.first_seen); };
-  inline time_t get_partial_last_seen()  const { return(last_db_dump.last_seen);  };
-  inline u_int32_t get_duration()        const { return((u_int32_t)(get_last_seen() - get_first_seen())); };
-  inline char* get_protocol_name()       const { return(Utils::l4proto2name(protocol));   };
+  inline float get_pkts_thpt() const { return (pkts_thpt); };
+  inline float get_bytes_thpt() const { return (bytes_thpt); };
+  inline float get_goodput_bytes_thpt() const { return (goodput_bytes_thpt); };
+  inline float get_goodput_ratio() const {
+    return ((float)(100 * get_goodput_bytes()) / ((float)get_bytes() + 1));
+  };
+  inline time_t get_partial_first_seen() const {
+    return (last_db_dump.first_seen);
+  };
+  inline time_t get_partial_last_seen() const {
+    return (last_db_dump.last_seen);
+  };
+  inline char* get_protocol_name() const {
+    return (Utils::l4proto2name(protocol));
+  };
 
-  inline Host* get_cli_host()               const { return(cli_host);    };
-  inline Host* get_srv_host()               const { return(srv_host);    };
-  inline const IpAddress* get_cli_ip_addr() const { return(cli_ip_addr); };
-  inline const IpAddress* get_srv_ip_addr() const { return(srv_ip_addr); };
-  inline const IpAddress* get_dns_srv_ip_addr() const { return((get_cli_port() == 53) ? get_cli_ip_addr() : get_srv_ip_addr()); };
-  inline const IpAddress* get_dhcp_srv_ip_addr() const { return((get_cli_port() == 67) ? get_cli_ip_addr() : get_srv_ip_addr()); };
+  inline Host* get_cli_host() const { return (cli_host); };
+  inline Host* get_srv_host() const { return (srv_host); };
+  u_int64_t getTags();
+  inline IpAddress* get_cli_ip_addr() const { return (cli_ip_addr); };
+  inline IpAddress* get_srv_ip_addr() const { return (srv_ip_addr); };
+  inline IpAddress* get_dns_srv_ip_addr() const {
+    return ((get_cli_port() == 53) ? get_cli_ip_addr() : get_srv_ip_addr());
+  };
+  /* Whether the DHCP server of the flow is its client (e.g. a reply sent to
+   * broadcast) rather than its server: see Flow.cpp */
+  bool isDHCPServerClient() const;
+  inline IpAddress* get_dhcp_srv_ip_addr() const {
+    return (isDHCPServerClient() ? get_cli_ip_addr() : get_srv_ip_addr());
+  };
 
-  inline json_object* get_json_info()	    const  { return(json_info);                       };
-  inline ndpi_serializer* get_tlv_info()	    const  { return(tlv_info);                       };
-  inline void setICMPPayloadSize(u_int16_t size)     { if(isICMP()) protos.icmp.max_icmp_payload_size = max(protos.icmp.max_icmp_payload_size, size); };
-  inline u_int16_t getICMPPayloadSize()             const { return(isICMP() ? protos.icmp.max_icmp_payload_size : 0); };
-  inline ICMPinfo* getICMPInfo()                    const { return(isICMP() ? icmp_info : NULL); }
+  inline json_object* get_json_info() const { return (json_info); };
+  inline ndpi_serializer* get_tlv_info() const { return (tlv_info); };
+  inline void setICMPPayloadSize(u_int16_t size) {
+    if (isICMP())
+      protos.icmp.max_icmp_payload_size =
+          max(protos.icmp.max_icmp_payload_size, size);
+  };
+  inline u_int16_t getICMPPayloadSize() const {
+    return (isICMP() ? protos.icmp.max_icmp_payload_size : 0);
+  };
+  inline ICMPinfo* getICMPInfo() const { return (isICMP() ? icmp_info : NULL); }
   inline ndpi_protocol_breed_t get_protocol_breed() const {
-    return(ndpi_get_proto_breed(iface->get_ndpi_struct(), isDetectionCompleted() ? ndpi_get_upper_proto(ndpiDetectedProtocol) : NDPI_PROTOCOL_UNKNOWN));
-  };
-  inline const char * get_protocol_breed_name() const { return(ndpi_get_proto_breed_name(iface->get_ndpi_struct(), get_protocol_breed())); };
-  inline ndpi_protocol_category_t get_protocol_category() const {
-    return(ndpi_get_proto_category(iface->get_ndpi_struct(),
-				   isDetectionCompleted() ? ndpiDetectedProtocol : ndpiUnknownProtocol));
-};
-  inline const char * get_protocol_category_name() const {
-    return(ndpi_category_get_name(iface->get_ndpi_struct(), get_protocol_category()));
-  };
-  char* get_detected_protocol_name(char *buf, u_int buf_len) const {
-    return(iface->get_ndpi_full_proto_name(isDetectionCompleted() ? ndpiDetectedProtocol : ndpiUnknownProtocol, buf, buf_len));
+    return (flow_breed);
   }
-  static inline ndpi_protocol get_ndpi_unknown_protocol() { return ndpiUnknownProtocol; };
+  inline const char* get_protocol_breed_name() const {
+    return (ndpi_get_proto_breed_name(get_protocol_breed()));
+  };
+  inline ndpi_protocol_category_t get_protocol_category() const {
+    return (flow_category);
+  };
 
-  /* NOTE: the caller must ensure that the hosts returned by these methods are not used
-   * concurrently by subinterfaces since hosts are shared between all the subinterfaces of the same
-   * ViewInterface. */
-  inline Host* getViewSharedClient() { return(viewFlowStats ? viewFlowStats->getViewSharedClient() : get_cli_host()); };
-  inline Host* getViewSharedServer() { return(viewFlowStats ? viewFlowStats->getViewSharedServer() : get_srv_host()); };
+  inline const char* get_protocol_category_name() const {
+    return (ndpi_category_get_name(iface->get_ndpi_struct(),
+                                   get_protocol_category()));
+  };
+  char* get_detected_protocol_name(char* buf, u_int buf_len) const {
+    return (iface->get_ndpi_full_proto_name(isDetectionCompleted()
+                                                ? ndpiDetectedProtocol
+                                                : getConstNdpiUnknownProtocol(),
+                                            buf, buf_len));
+  }
+  static inline ndpi_protocol get_ndpi_unknown_protocol() {
+    return getConstNdpiUnknownProtocol();
+  };
+
+#ifdef NTOPNG_PRO
+  /* NOTE: the caller must ensure that the hosts returned by these methods are
+   * not used concurrently by subinterfaces since hosts are shared between all
+   * the subinterfaces of the same ViewInterface. */
+  inline Host* getViewSharedClient() {
+    return (viewFlowStats ? viewFlowStats->getViewSharedClient()
+                          : get_cli_host());
+  };
+  inline Host* getViewSharedServer() {
+    return (viewFlowStats ? viewFlowStats->getViewSharedServer()
+                          : get_srv_host());
+  };
+#else
+  inline Host* getViewSharedClient() { return (get_cli_host()); }
+  inline Host* getViewSharedServer() { return (get_srv_host()); }
+#endif
 
   u_int32_t get_packetsLost();
   u_int32_t get_packetsRetr();
   u_int32_t get_packetsOOO();
+  inline bool isUnderNetworkIssues(time_t now) {
+    return tcp && tcp->last_network_issues >= now - 1;
+  };
 
-  inline const struct timeval *get_current_update_time() const {return &last_update_time; } ;
+  inline const struct timeval* get_current_update_time() const {
+    return &last_update_time;
+  };
   u_int64_t get_current_bytes_cli2srv() const;
   u_int64_t get_current_bytes_srv2cli() const;
   u_int64_t get_current_goodput_bytes_cli2srv() const;
   u_int64_t get_current_goodput_bytes_srv2cli() const;
   u_int64_t get_current_packets_cli2srv() const;
   u_int64_t get_current_packets_srv2cli() const;
-
-  inline bool is_swap_requested()  const { return(swap_requested ? true : false);  };
-  inline bool is_swap_done()       const { return(swap_done ? true : false);       };
-  inline void set_swap_done()            { swap_done = 1;                          };
+  void request_swap();
+  void performPendingSwap();
+  inline bool is_swap_requested() const {
+    return (swap_requested ? true : false);
+  };
+  inline bool is_swap_done() const { return (swap_done ? true : false); };
+  inline void set_swap_done() { swap_done = 1; };
   /*
-    Returns actual client and server, that is the client and server as determined after
-    the swap heuristic that has taken place.
-   */
-  inline void get_actual_peers(Host **actual_client, Host **actual_server) const {
-    if(is_swap_requested())
+    Returns actual client and server, that is the client and server as
+    determined after the swap heuristic that has taken place.
+  */
+  inline void get_actual_peers(Host** actual_client,
+                               Host** actual_server) const {
+    if (is_swap_requested())
       *actual_client = get_srv_host(), *actual_server = get_cli_host();
     else
       *actual_client = get_cli_host(), *actual_server = get_srv_host();
   };
+  /*
+    Same as above, for the IP addresses of the peers: they are used in place of
+    the hosts with viewed interfaces, where flows have no hosts.
+  */
+  inline void get_actual_peers_ip(IpAddress** actual_client,
+                                  IpAddress** actual_server) const {
+    if (is_swap_requested())
+      *actual_client = srv_ip_addr, *actual_server = cli_ip_addr;
+    else
+      *actual_client = cli_ip_addr, *actual_server = srv_ip_addr;
+  };
   bool is_hash_entry_state_idle_transition_ready();
-  void hosts_periodic_stats_update(NetworkInterface *iface, Host *cli_host, Host *srv_host, PartializableFlowTrafficStats *partial,
-				   bool first_partial, const struct timeval *tv) const;
-  void periodic_stats_update(const struct timeval *tv);
-  void  set_hash_entry_id(u_int assigned_hash_entry_id);
-  u_int get_hash_entry_id() const;
+  void hosts_periodic_stats_update(NetworkInterface* iface, Host* cli_host,
+                                   Host* srv_host,
+                                   PartializableFlowTrafficStats* partial,
+                                   bool first_partial,
+                                   const struct timeval* tv);
+  void periodic_stats_update(const struct timeval* tv, bool force_update);
+  void flow_end_stats_update();
+  void flow_end_housekeeping();
+  void set_hash_entry_id(u_int32_t assigned_hash_entry_id);
+  u_int32_t get_hash_entry_id() const;
 
-  static char* printTCPflags(u_int8_t flags, char * const buf, u_int buf_len);
-  char* print(char *buf, u_int buf_len) const;
-    
-  u_int32_t key();
-  static u_int32_t key(Host *cli, u_int16_t cli_port,
-		       Host *srv, u_int16_t srv_port,
-		       VLANid vlan_id,
-		       u_int16_t _observation_point_id,
-		       u_int16_t protocol);
-  void lua(lua_State* vm, AddressTree * ptree,
-	   DetailsLevel details_level, bool asListElement);
+  static char* printTCPflags(u_int8_t flags, char* const buf, u_int buf_len);
+  char* print(char* buf, u_int buf_len, bool full_report = true);
+
+  inline u_int32_t key() { return (flow_key); }
+  static u_int32_t key(Host* cli, u_int16_t cli_port, Host* srv,
+                       u_int16_t srv_port, u_int16_t vlan_id,
+                       u_int16_t _observation_point_id, u_int16_t protocol);
+  void lua(lua_State* vm, AddressTree* allowed_nets, DetailsLevel details_level,
+           bool asListElement);
   void lua_get_min_info(lua_State* vm);
   void lua_duration_info(lua_State* vm);
+  void lua_dump_tcp_stats(lua_State* vm, const TCPStats* s,
+                          const char* label) const;
   void lua_snmp_info(lua_State* vm);
-  void lua_device_protocol_allowed_info(lua_State *vm);
-  void lua_get_tcp_stats(lua_State *vm) const;
-
+  void lua_device_protocol_allowed_info(lua_State* vm);
+  void lua_get_flow_connection_state(lua_State* vm);
   void lua_get_unicast_info(lua_State* vm) const;
   void lua_get_status(lua_State* vm) const;
   void lua_get_protocols(lua_State* vm) const;
@@ -650,202 +1217,405 @@ class Flow : public GenericHashEntry {
   void lua_get_packets(lua_State* vm) const;
   void lua_get_throughput(lua_State* vm) const;
   void lua_get_time(lua_State* vm) const;
-  void lua_get_ip(lua_State *vm, bool client) const;
-  void lua_get_mac(lua_State *vm, bool client) const;
-  void lua_get_info(lua_State *vm, bool client) const;
-  void lua_get_tls_info(lua_State *vm) const;
-  void lua_get_ssh_info(lua_State *vm) const;
-  void lua_get_http_info(lua_State *vm) const;
-  void lua_get_dns_info(lua_State *vm) const;
-  void lua_get_tcp_info(lua_State *vm) const;
-  void lua_get_port(lua_State *vm, bool client) const;
-  void lua_get_geoloc(lua_State *vm, bool client, bool coords, bool country_city) const;
+  void lua_get_ip(lua_State* vm, bool client) const;
+  void lua_get_mac(lua_State* vm, bool client) const;
+  void lua_get_info(lua_State* vm, bool client) const;
+  void lua_get_sip_info(lua_State* vm) const;
+  void lua_get_tls_info(lua_State* vm) const;
+  void lua_get_ssh_info(lua_State* vm) const;
+  void lua_get_kerberos_info(lua_State* vm) const;
+  void lua_get_http_info(lua_State* vm) const;
+  void lua_get_dns_info(lua_State* vm) const;
+  void lua_get_tcp_info(lua_State* vm) const;
+  void lua_get_port(lua_State* vm, bool client) const;
+  void lua_get_geoloc(lua_State* vm, bool client, bool coords,
+                      bool country_city) const;
+#if defined(NTOPNG_PRO)
+  void lua_get_qoe_score(lua_State* vm);
+#endif
   void lua_get_risk_info(lua_State* vm);
-  
-  void getInfo(ndpi_serializer *serializer);
-  void getHTTPInfo(ndpi_serializer *serializer) const;
-  void getDNSInfo(ndpi_serializer *serializer) const;
-  void getICMPInfo(ndpi_serializer *serializer) const;
-  void getTLSInfo(ndpi_serializer *serializer) const;
-  void getMDNSInfo(ndpi_serializer *serializer) const;
-  void getNetBiosInfo(ndpi_serializer *serializer) const;
-  void getSSHInfo(ndpi_serializer *serializer) const;
-  
-  bool equal(const IpAddress *_cli_ip, const IpAddress *_srv_ip,
-	     u_int16_t _cli_port, u_int16_t _srv_port,
-	     VLANid _vlanId, u_int16_t _observation_point_id,
-	     u_int8_t _protocol,
-	     const ICMPinfo * const icmp_info,
-	     bool *src2srv_direction) const;
-  void sumStats(nDPIStats *ndpi_stats, FlowStats *stats);
+
+  void getInfo(ndpi_serializer* serializer);
+  void getHTTPInfo(ndpi_serializer* serializer) const;
+  void getDNSInfo(ndpi_serializer* serializer) const;
+  void getICMPInfo(ndpi_serializer* serializer) const;
+  void getTLSInfo(ndpi_serializer* serializer) const;
+  void getMDNSInfo(ndpi_serializer* serializer) const;
+  void getNetBiosInfo(ndpi_serializer* serializer) const;
+  void getSIPInfo(ndpi_serializer* serializer) const;
+  void getSSHInfo(ndpi_serializer* serializer) const;
+
+  bool equal(const Mac* src_mac, const Mac* dst_mac, const IpAddress* _cli_ip,
+             const IpAddress* _srv_ip, u_int16_t _cli_port, u_int16_t _srv_port,
+             u_int16_t _u_int16_t, u_int16_t _observation_point_id,
+             u_int32_t _private_flow_id, u_int8_t _protocol,
+             const ICMPinfo* const icmp_info, bool* src2srv_direction) const;
+  void getFingerprintInfo(ndpi_serializer* serializer);
+  void serializeExporters(ndpi_serializer* serializer);
+  void sumStats(nDPIStats* ndpi_stats, FlowStats* stats);
   bool dump(time_t t, bool last_dump_before_free);
-  bool match(AddressTree *ptree);
-  void dissectHTTP(bool src2dst_direction, char *payload, u_int16_t payload_len);
-  void dissectDNS(bool src2dst_direction, char *payload, u_int16_t payload_len);
-  void dissectTLS(char *payload, u_int16_t payload_len);
-  void dissectSSDP(bool src2dst_direction, char *payload, u_int16_t payload_len);
-  void dissectMDNS(u_int8_t *payload, u_int16_t payload_len);
-  void dissectNetBIOS(u_int8_t *payload, u_int16_t payload_len);
-  void dissectBittorrent(char *payload, u_int16_t payload_len);
-  void updateInterfaceLocalStats(bool src2dst_direction, u_int num_pkts, u_int pkt_len);
-  void fillZmqFlowCategory(const ParsedFlow *zflow, ndpi_protocol *res) const;
-  inline void setICMP(bool src2dst_direction, u_int8_t icmp_type, u_int8_t icmp_code, u_int8_t *icmpdata) {
-    if(isICMP()) {
-      if(src2dst_direction)
-	protos.icmp.cli2srv.icmp_type = icmp_type, protos.icmp.cli2srv.icmp_code = icmp_code;
-      else	
-	protos.icmp.srv2cli.icmp_type = icmp_type, protos.icmp.srv2cli.icmp_code = icmp_code;
-      // if(get_cli_host()) get_cli_host()->incICMP(icmp_type, icmp_code, src2dst_direction ? true : false, get_srv_host());
-      // if(get_srv_host()) get_srv_host()->incICMP(icmp_type, icmp_code, src2dst_direction ? false : true, get_cli_host());
+  bool match(AddressTree* ptree);
+  bool matchFlowIP(IpAddress* ip, u_int16_t vlan_id);
+  bool matchFlowVLAN(u_int16_t vlan_id);
+  bool matchFlowDeviceIP(struct ndpi_in6_addr *flow_device_ip);
+  bool matchInIfIdx(u_int32_t in_if_idx);
+  bool matchOutIfIdx(u_int32_t out_if_idx);
+  bool matchAlertsStatus(u_int32_t out_if_idx);
+  void dissectHTTP(bool src2dst_direction, char* payload,
+                   u_int16_t payload_len);
+  void dissectDNS(bool src2dst_direction, char* payload, u_int16_t payload_len);
+  void dissectTLS(char* payload, u_int16_t payload_len);
+  void dissectSSDP(bool src2dst_direction, char* payload,
+                   u_int16_t payload_len);
+  void dissectMDNS(u_int8_t* payload, u_int16_t payload_len);
+  void dissectNetBIOS(u_int8_t* payload, u_int16_t payload_len);
+  void dissectBittorrent(char* payload, u_int16_t payload_len);
+  void fillZMQFlowCategory(ndpi_protocol* res);
+  void setDHCPHostName(const char* name);
+  void setSIPCallId(const char* name);
+  inline void setICMP(bool src2dst_direction, u_int8_t icmp_type,
+                      u_int8_t icmp_code, u_int8_t* icmpdata) {
+    if (isICMP()) {
+      if (src2dst_direction)
+        protos.icmp.cli2srv.icmp_type = icmp_type,
+        protos.icmp.cli2srv.icmp_code = icmp_code;
+      else
+        protos.icmp.srv2cli.icmp_type = icmp_type,
+        protos.icmp.srv2cli.icmp_code = icmp_code;
+      // if(get_cli_host()) get_cli_host()->incICMP(icmp_type, icmp_code,
+      // src2dst_direction ? true : false, get_srv_host()); if(get_srv_host())
+      // get_srv_host()->incICMP(icmp_type, icmp_code, src2dst_direction ? false
+      // : true, get_cli_host());
     }
   }
-  inline void getICMP(u_int8_t *_icmp_type, u_int8_t *_icmp_code) {
-    if(isBidirectional())
-      *_icmp_type = protos.icmp.srv2cli.icmp_type, *_icmp_code = protos.icmp.srv2cli.icmp_code;
+  inline void getICMP(u_int8_t* _icmp_type, u_int8_t* _icmp_code) {
+    if (isBidirectional())
+      *_icmp_type = protos.icmp.srv2cli.icmp_type,
+      *_icmp_code = protos.icmp.srv2cli.icmp_code;
     else
-      *_icmp_type = protos.icmp.cli2srv.icmp_type, *_icmp_code = protos.icmp.cli2srv.icmp_code;
+      *_icmp_type = protos.icmp.cli2srv.icmp_type,
+      *_icmp_code = protos.icmp.cli2srv.icmp_code;
   }
   inline u_int8_t getICMPType() {
-    if(isICMP()) {
-      return isBidirectional() ? protos.icmp.srv2cli.icmp_type : protos.icmp.cli2srv.icmp_type;
+    if (isICMP()) {
+      return isBidirectional() ? protos.icmp.srv2cli.icmp_type
+                               : protos.icmp.cli2srv.icmp_type;
     }
 
     return 0;
   }
 
-  inline bool hasInvalidDNSQueryChars() const { return(isDNS() && hasRisk(NDPI_INVALID_CHARACTERS)); }
-  inline bool hasMaliciousSignature(bool as_client) const { return as_client ? has_malicious_cli_signature : has_malicious_srv_signature; }
-  
+  inline bool hasInvalidDNSQueryChars() const {
+    return (isDNS() && hasRisk(NDPI_INVALID_CHARACTERS));
+  }
+  inline bool hasMaliciousSignature(bool as_client) const {
+    return as_client ? has_malicious_cli_signature
+                     : has_malicious_srv_signature;
+  }
+
   void setRisk(ndpi_risk r);
   void addRisk(ndpi_risk r);
   inline ndpi_risk getRiskBitmap() const { return ndpi_flow_risk_bitmap; }
   bool hasRisk(ndpi_risk_enum r) const;
   bool hasRisks() const;
-  inline char* getDGADomain() const { return(hasRisk(NDPI_SUSPICIOUS_DGA_DOMAIN) && suspicious_dga_domain ? suspicious_dga_domain : (char*)""); }
-  inline char* getDNSQuery()  const { return(isDNS() ? protos.dns.last_query : (char*)"");  }
-  bool setDNSQuery(char *v);
-  inline void  setDNSQueryType(u_int16_t t) { if(isDNS()) { protos.dns.last_query_type = t; } }
-  inline void  setDNSRetCode(u_int16_t c)   { if(isDNS()) { protos.dns.last_return_code = c; } }
-  inline u_int16_t getLastQueryType()       { return(isDNS() ? protos.dns.last_query_type : 0); }
-  inline u_int16_t getDNSRetCode()          { return(isDNS() ? protos.dns.last_return_code : 0); }
-  inline char* getHTTPURL()                 { return(isHTTP() ? protos.http.last_url : (char*)"");   }
-  inline void  setHTTPURL(char *v)          { if(isHTTP()) { if(!protos.http.last_url) protos.http.last_url = v; } else { if(v) free(v); } }
-  inline char* getHTTPUserAgent()           { return(isHTTP() ? protos.http.last_user_agent : (char*)"");   }
-  inline void  setHTTPUserAgent(char *v)    { if(isHTTP()) { if(!protos.http.last_user_agent) protos.http.last_user_agent = v; } else { if(v) free(v); } }
+  void clearRisks();
+  inline void setDGADomain(char* name) {
+    if (name) {
+      if (suspicious_dga_domain) free(suspicious_dga_domain);
+      suspicious_dga_domain = strdup(name);
+    }
+  }
+  inline char* getDGADomain() const {
+    return (hasRisk(NDPI_SUSPICIOUS_DGA_DOMAIN) && suspicious_dga_domain
+                ? suspicious_dga_domain
+                : (char*)"");
+  }
+  inline char* getDNSQuery() const {
+    return (isDNS() ? protos.dns.last_query : (char*)"");
+  }
+  bool setDNSQuery(char* value, char* rsp_addresses, bool copy_memory);
+  inline void setDNSQueryType(u_int16_t t) {
+    if (isDNS()) {
+      protos.dns.last_query_type = t;
+    }
+  }
+  inline void setDNSRetCode(u_int16_t c) {
+    if (isDNS()) {
+      protos.dns.last_return_code = c;
+    }
+  }
+  inline u_int16_t getLastQueryType() {
+    return (isDNS() ? protos.dns.last_query_type : 0);
+  }
+  inline u_int16_t getDNSRetCode() {
+    return (isDNS() ? protos.dns.last_return_code : 0);
+  }
+  inline char* getHTTPURL() {
+    return (isHTTP() ? protos.http.last_url : (char*)"");
+  }
+  inline void setHTTPURL(char* v) {
+    if (isHTTP()) {
+      if (!protos.http.last_url)
+        protos.http.last_url = v;
+      else
+        free(v);
+    } else {
+      if (v) free(v);
+    }
+  }
+  inline char* getHTTPUserAgent() {
+    return (isHTTP() ? protos.http.last_user_agent : (char*)"");
+  }
+  inline void setHTTPUserAgent(char* v) {
+    if (isHTTP()) {
+      if (!protos.http.last_user_agent)
+        protos.http.last_user_agent = v;
+      else
+        free(v);
+    } else {
+      if (v) free(v);
+    }
+  }
   void setHTTPMethod(const char* method, ssize_t method_len);
   void setHTTPMethod(ndpi_http_method m);
-  inline void  setHTTPRetCode(u_int16_t c)  { if(isHTTP()) { protos.http.last_return_code = c; } }
-  inline u_int16_t getHTTPRetCode()   const { return isHTTP() ? protos.http.last_return_code : 0;           };
-  inline const char* getHTTPMethod()  const { return isHTTP() ? ndpi_http_method2str(protos.http.last_method) : (char*)"";        };
+  inline void setHTTPRetCode(u_int16_t c) {
+    if (isHTTP()) {
+      protos.http.last_return_code = c;
+    }
+  }
+  inline u_int16_t getHTTPRetCode() const {
+    return isHTTP() ? protos.http.last_return_code : 0;
+  };
+  inline const char* getHTTPMethod() const {
+    return isHTTP() ? ndpi_http_method2str(protos.http.last_method) : (char*)"";
+  };
 
-  void setExternalAlert(json_object *a);
+  void setExternalAlert(json_object* a);
   inline bool hasExternalAlert() const { return external_alert.json != NULL; };
-  inline json_object *getExternalAlert() { return external_alert.json; };
-  inline char *getExternalSource() { return external_alert.source; };
-  void luaRetrieveExternalAlert(lua_State *vm);
+  inline json_object* getExternalAlert() { return external_alert.json; };
+  inline char* getExternalSource() { return external_alert.source; };
+  void luaRetrieveExternalAlert(lua_State* vm);
 
   u_int32_t getSrvTcpIssues();
   u_int32_t getCliTcpIssues();
   double getCliRetrPercentage();
   double getSrvRetrPercentage();
 
-#if defined(NTOPNG_PRO) && !defined(HAVE_NEDGE)
-  inline void updateProfile()     { trafficProfile = iface->getFlowProfile(this); }
-  inline char* get_profile_name() { return(trafficProfile ? trafficProfile->getName() : (char*)"");}
+#if defined(NTOPNG_PRO)
+  void updateTCPAck(const struct bpf_timeval* when, bool src2dst_direction,
+                    u_int32_t ack_id);
+  void updateTCPWinScale(bool src2dst_direction, u_int8_t winscale);
+  void updateTCPWin(bool src2dst_direction, u_int16_t win);
+  void getModbusInfo(ndpi_serializer* serializer);
+  void getS7CommInfo(ndpi_serializer* serializer);
+  void getProfinetInfo(ndpi_serializer* serializer);
+
+#if !defined(HAVE_NEDGE)
+#ifdef HAVE_NBPF
+  inline void updateProfile() { trafficProfile = iface->getFlowProfile(this); }
 #endif
-  /* http://bradhedlund.com/2008/12/19/how-to-calculate-tcp-throughput-for-long-distance-links/ */
-  inline float getCli2SrvMaxThpt() const { return(rttSec ? ((float)(cli2srv_window*8)/rttSec) : 0); }
-  inline float getSrv2CliMaxThpt() const { return(rttSec ? ((float)(srv2cli_window*8)/rttSec) : 0); }
+#endif
+  inline char* get_profile_name() {
+    return (
+#if !defined(HAVE_NEDGE)
+#ifdef HAVE_NBPF
+        trafficProfile ? trafficProfile->getName() :
+#endif
+#endif
+                       (char*)"");
+  }
+#endif
+  /* http://bradhedlund.com/2008/12/19/how-to-calculate-tcp-throughput-for-long-distance-links/
+   */
+  inline float getCli2SrvMaxThpt() const {
+    if (tcp == NULL)
+      return (0);
+    else
+      return (rttSec ? ((float)(tcp->cli2srv_window * 8) / rttSec) : 0);
+  }
+  inline float getSrv2CliMaxThpt() const {
+    if (tcp == NULL)
+      return (0);
+    else
+      return (rttSec ? ((float)(tcp->srv2cli_window * 8) / rttSec) : 0);
+  }
 
-  inline InterarrivalStats* getCli2SrvIATStats() const { return cli2srvPktTime; }
-  inline InterarrivalStats* getSrv2CliIATStats() const { return srv2cliPktTime; }
+  inline InterarrivalStats* getCli2SrvIATStats() const {
+    return cli2srvPktTime;
+  }
+  inline InterarrivalStats* getSrv2CliIATStats() const {
+    return srv2cliPktTime;
+  }
 
-  inline bool isTCP()            const { return protocol == IPPROTO_TCP; };
-  inline bool isTCPEstablished() const { return (!isTCPClosed() && !isTCPReset() && isThreeWayHandshakeOK()); }
-  inline bool isTCPConnecting()  const { return (src2dst_tcp_flags == TH_SYN
-						 && (!dst2src_tcp_flags || (dst2src_tcp_flags == (TH_SYN | TH_ACK)))); }
-  inline bool isTCPClosed()      const { return (((src2dst_tcp_flags & (TH_SYN | TH_ACK | TH_FIN)) == (TH_SYN | TH_ACK | TH_FIN))
-						 && ((dst2src_tcp_flags & (TH_SYN | TH_ACK | TH_FIN)) == (TH_SYN | TH_ACK | TH_FIN))); }
-  inline bool isTCPReset()       const { return (!isTCPClosed()
-						 && ((src2dst_tcp_flags & TH_RST) || (dst2src_tcp_flags & TH_RST))); };
-  inline bool isTCPRefused()     const { return (!isThreeWayHandshakeOK() && (dst2src_tcp_flags & TH_RST) == TH_RST); };
-  inline bool isTCPZeroWindow()  const { return (src2dst_tcp_zero_window || dst2src_tcp_zero_window); };
-  inline void setVRFid(u_int32_t v) { vrfId = v; }
-  inline void setSrcAS(u_int32_t v) { srcAS = v; }
-  inline void setDstAS(u_int32_t v) { dstAS = v; }
-  inline void setPrevAdjacentAS(u_int32_t v) { prevAdjacentAS = v; }
-  inline void setNextAdjacentAS(u_int32_t v) { nextAdjacentAS = v; }
-
-  inline ViewInterfaceFlowStats* getViewInterfaceFlowStats() { return(viewFlowStats); }
-
-  inline double getFlowNwLatency(bool client) const {
-    return client ? Utils::timeval2ms(&clientNwLatency) : Utils::timeval2ms(&serverNwLatency);
+  inline bool isTCP() const { return protocol == IPPROTO_TCP; };
+  inline bool isUDP() const { return protocol == IPPROTO_UDP; };
+  inline bool isTCPEstablished() const {
+    return (!isTCPClosed() && !isTCPReset() && isThreeWayHandshakeOK());
+  }
+  inline bool isTCPConnecting() const {
+    if (tcp == NULL)
+      return (false);
+    else
+      return (src2dst_tcp_flags == TH_SYN &&
+              (!dst2src_tcp_flags || (dst2src_tcp_flags == (TH_SYN | TH_ACK))));
+  }
+  inline bool isTCPClosed() const {
+    if (tcp == NULL)
+      return (false);
+    else
+      return (((src2dst_tcp_flags & (TH_SYN | TH_ACK | TH_FIN)) ==
+               (TH_SYN | TH_ACK | TH_FIN)) &&
+              ((dst2src_tcp_flags & (TH_SYN | TH_ACK | TH_FIN)) ==
+               (TH_SYN | TH_ACK | TH_FIN)));
+  }
+  inline bool isTCPReset() const {
+    if (tcp == NULL)
+      return (false);
+    else
+      return (!isTCPClosed() &&
+              ((src2dst_tcp_flags & TH_RST) || (dst2src_tcp_flags & TH_RST)));
   };
-  inline void setFlowNwLatency(const struct timeval * const tv, bool client) {
-    if(client) {
-      memcpy(&clientNwLatency, tv, sizeof(*tv));
-      if(cli_host) cli_host->updateRoundTripTime(Utils::timeval2ms(&clientNwLatency));
-    } else {
-      memcpy(&serverNwLatency, tv, sizeof(*tv));
-      if(srv_host) srv_host->updateRoundTripTime(Utils::timeval2ms(&serverNwLatency));
+  inline bool isOnlyTCPReset() const {
+    if (tcp == NULL)
+      return (false);
+    else
+      return ((src2dst_tcp_flags & TH_RST) || (dst2src_tcp_flags & TH_RST));
+  }
+  inline bool isTCPRefused() const {
+    if (tcp == NULL)
+      return (false);
+    else
+      return (!isThreeWayHandshakeOK() &&
+              (dst2src_tcp_flags & TH_RST) == TH_RST);
+  };
+  inline bool isTCPZeroWindow() const {
+    return (src2dst_tcp_zero_window || dst2src_tcp_zero_window);
+  };
+  inline void setVRFid(u_int32_t v) {
+    allocateCollection();
+    if (collection) collection->vrfId = v;
+  }
+  inline void setSrcPeerAS(u_int32_t v) {
+    if(v != srcAS) srcPeerAS = v;
+  } /* Used when collecting flows via ZMQ (usually it contains the peer AS) */
+  inline void setDstPeerAS(u_int32_t v) {
+    if(v != dstAS) dstPeerAS = v;
+  } /* Used when collecting flows via ZMQ (usually it contains the peer AS) */
+  inline void setPrevAdjacentAS(u_int32_t v) {
+    allocateCollection();
+    if (collection) collection->prevAdjacentAS = v;
+  }
+  inline void setNextAdjacentAS(u_int32_t v) {
+    allocateCollection();
+    if (collection) collection->nextAdjacentAS = v;
+  }
+
+#ifdef NTOPNG_PRO
+  inline ViewInterfaceFlowStats* getViewInterfaceFlowStats() {
+    return (viewFlowStats);
+  }
+
+  void postDetectionCallback();
+#endif
+
+  inline double getFlowRTT(bool client) const {
+    if (tcp == NULL)
+      return (0.0);
+    else
+      return client ? tcp->clientRTT3WH : tcp->serverRTT3WH;
+  };
+
+  inline void setFlowRTT(const struct timeval* const tv, bool client) {
+    allocTCPStats();
+
+    if (tcp != NULL) {
+      if (client) {
+        tcp->clientRTT3WH = Utils::timeval2ms(tv);
+
+        if (cli_host) cli_host->updateNetworkRTT(tcp->clientRTT3WH);
+      } else {
+        tcp->serverRTT3WH = Utils::timeval2ms(tv);
+
+        if (srv_host) srv_host->updateNetworkRTT(tcp->serverRTT3WH);
+      }
     }
   }
-  inline void setFlowTcpWindow(u_int16_t window_val, bool client) {
-    if(client)
-      cli2srv_window = window_val;
-    else
-      srv2cli_window = window_val;
-  }
-  inline void setRtt() {
-    rttSec = ((float)(serverNwLatency.tv_sec + clientNwLatency.tv_sec))
-      +((float)(serverNwLatency.tv_usec + clientNwLatency.tv_usec)) / (float)1000000;
-  }
-  inline void setFlowApplLatency(float latency_msecs) { applLatencyMsec = latency_msecs; }
-  inline void setFlowDevice(u_int32_t device_ip, u_int16_t observation_point_id,
-			    u_int32_t inidx, u_int32_t outidx) {
-    flow_device.device_ip = device_ip, flow_device.observation_point_id = observation_point_id;
-    flow_device.in_index = inidx, flow_device.out_index = outidx;
-    if(cli_host) cli_host->setLastDeviceIp(device_ip);
-    if(srv_host) srv_host->setLastDeviceIp(device_ip);
-  }
-  inline u_int32_t getFlowDeviceIP()           { return flow_device.device_ip;             };
-  inline u_int16_t getFlowObservationPointId() { return flow_device.observation_point_id;  };
-  inline u_int16_t get_observation_point_id()  { return(getFlowObservationPointId());      };
-  inline u_int32_t getFlowDeviceInIndex()      { return flow_device.in_index;              };
-  inline u_int32_t getFlowDeviceOutIndex()     { return flow_device.out_index;             };
 
-  inline const u_int16_t getScore()            const { return(flow_score); };
+  inline void setFlowTcpWindow(u_int16_t window_val, bool client) {
+    allocTCPStats();
+    if (tcp != NULL) {
+      if (client)
+        tcp->cli2srv_window = window_val;
+      else
+        tcp->srv2cli_window = window_val;
+    }
+  }
+  inline void setRTT() {
+    allocTCPStats();
+
+    if (tcp != NULL) rttSec = (tcp->serverRTT3WH + tcp->clientRTT3WH) / 1000.;
+  }
+  inline void setFlowApplLatency(float latency_msecs) {
+    applLatencyMsec = latency_msecs;
+  }
+  inline float getFlowApplLatency() const { return (applLatencyMsec); }
+
+  struct ndpi_in6_addr getExporterIP();
+  struct ndpi_in6_addr getOriginalExporterIP();
+  struct ndpi_in6_addr getNextHopIP();
+  struct ndpi_in6_addr getOriginalNextHopIP();
+  u_int32_t getInIndex();
+  u_int32_t getOutIndex();
+  SNMPInterfaceRole getInRole();
+  SNMPInterfaceRole getOutRole();
+  SNMPInterfaceRole getMainRole();
+
+  inline u_int16_t getObservationPointId() { return (observation_point_id); };
+
+  u_int16_t getExporterSiteId();
+  u_int16_t getNextHopSiteId();
+  u_int16_t getSrcNetworkSiteId();
+  u_int16_t getDstNetworkSiteId();
+
+  void setUserTags(u_int64_t bitmap);
+
+  inline const u_int16_t getScore() const { return (flow_score); };
 
 #ifdef HAVE_NEDGE
-  inline void setLastConntrackUpdate(u_int32_t when) { last_conntrack_update = when; }
+  inline void setLastConntrackUpdate(u_int32_t when) {
+    last_conntrack_update = when;
+  }
+  inline u_int32_t getLastConntrackUpdate() { return (last_conntrack_update); }
   bool isNetfilterIdleFlow() const;
 
-  void setPacketsBytes(time_t now, u_int32_t s2d_pkts, u_int32_t d2s_pkts, u_int64_t s2d_bytes, u_int64_t d2s_bytes);  
-  void getFlowShapers(bool src2dst_direction, TrafficShaper **shaper_ingress, TrafficShaper **shaper_egress) {
-    if(src2dst_direction) {
-      *shaper_ingress = flowShaperIds.cli2srv.ingress,
-	*shaper_egress = flowShaperIds.cli2srv.egress;
-    } else {
-      *shaper_ingress = flowShaperIds.srv2cli.ingress,
-	*shaper_egress = flowShaperIds.srv2cli.egress;
-    }
+  void setPacketsBytes(time_t now, u_int32_t s2d_pkts, u_int32_t d2s_pkts,
+		       u_int64_t s2d_bytes, u_int64_t d2s_bytes,
+		       u_int32_t *delta_pkts /* out */,
+		       u_int64_t *delta_bytes /* out */);
+  void getFlowShapers(TrafficShaper** shaper_cli, TrafficShaper** shaper_srv) {
+    *shaper_cli = flowShapers.cli;
+    *shaper_srv = flowShapers.srv;
   }
-  bool updateDirectionShapers(bool src2dst_direction, TrafficShaper **ingress_shaper, TrafficShaper **egress_shaper);
-  void updateFlowShapers(bool first_update=false);
-  void recheckQuota(const struct tm *now);
-  inline u_int8_t getFlowRoutingTableId() { return(routing_table_id); }
-  inline void setIngress2EgressDirection(bool _ingress2egress) { ingress2egress_direction = _ingress2egress; }
-  inline bool isIngress2EgressDirection() { return(ingress2egress_direction); }
+  bool updateCliSrvShapers(TrafficShaper** ingress_shaper,
+                           TrafficShaper** egress_shaper);
+  void updateFlowShapers(bool first_update = false);
+  void recheckQuota(const struct tm* now);
+  inline u_int8_t getFlowRoutingTableId() { return (routing_table_id); }
+  inline void setIngress2EgressDirection(bool _ingress2egress) {
+    ingress2egress_direction = _ingress2egress;
+  }
+  inline bool isIngress2EgressDirection() { return (ingress2egress_direction); }
+  void fillDynamicPoolBlacklist();
 #endif
   void housekeep(time_t t);
-  void setParsedeBPFInfo(const ParsedeBPF * const _ebpf);
+  void setParsedeBPFInfo(const ParsedeBPF* const _ebpf, bool swap_directions);
   inline const ContainerInfo* getClientContainerInfo() const {
     return ebpf && ebpf->container_info_set ? &ebpf->src_container_info : NULL;
   }
   inline const ContainerInfo* getServerContainerInfo() const {
     return ebpf && ebpf->container_info_set ? &ebpf->dst_container_info : NULL;
   }
-  inline const ProcessInfo * getClientProcessInfo() const {
+  inline const ProcessInfo* getClientProcessInfo() const {
     return ebpf && ebpf->process_info_set ? &ebpf->src_process_info : NULL;
   }
   inline const ProcessInfo* getServerProcessInfo() const {
@@ -859,71 +1629,271 @@ class Flow : public GenericHashEntry {
   }
 
   inline bool isNotPurged() {
-    return(getInterface()->isPacketInterface()
-	   && getInterface()->is_purge_idle_interface()
-	   && (!idle())
-	   && is_active_entry_now_idle(10 * getInterface()->getFlowMaxIdle()));
+    return (getInterface()->isPacketInterface() &&
+            getInterface()->is_purge_idle_interface() && (!idle()) &&
+            is_active_entry_now_idle(10 * getInterface()->getFlowMaxIdle()));
   }
 
-  inline u_int16_t getTLSVersion()   { return(isTLS() ? protos.tls.tls_version : 0); }
-  inline u_int32_t getTLSNotBefore() { return(isTLS() ? protos.tls.notBefore   : 0); };
-  inline u_int32_t getTLSNotAfter()  { return(isTLS() ? protos.tls.notAfter    : 0); };
-  inline char* getTLSCertificateIssuerDN()  { return(isTLS() ? protos.tls.issuerDN  : NULL); }
-  inline char* getTLSCertificateSubjectDN() { return(isTLS() ? protos.tls.subjectDN : NULL); }
+  inline u_int16_t getTLSVersion() {
+    return (isTLS() ? protos.tls.tls_version : 0);
+  }
+  inline u_int32_t getTLSNotBefore() {
+    return (isTLS() ? protos.tls.notBefore : 0);
+  };
+  inline u_int32_t getTLSNotAfter() {
+    return (isTLS() ? protos.tls.notAfter : 0);
+  };
+  inline char* getTLSCertificateIssuerDN() {
+    return (isTLS() ? protos.tls.issuerDN : NULL);
+  }
+  inline char* getTLSCertificateSubjectDN() {
+    return (isTLS() ? protos.tls.subjectDN : NULL);
+  }
+  void setTLSCertificateIssuerDN(char* issuer);
+  void setTCPFingerprint(char* fp);
+  void setnDPIFingerprint(char* fp);
+  inline char* getTCPFingerprint() { return (tcp_fingerprint); }
+  inline char* getnDPIFingerprint() { return (ndpi_fingerprint); }
 
-  inline void setTOS(u_int8_t tos, bool is_cli_tos) { if(is_cli_tos) cli2srv_tos = tos; srv2cli_tos = tos; }
-  inline u_int8_t getTOS(bool is_cli_tos) const { return (is_cli_tos ? cli2srv_tos : srv2cli_tos); }
+  /* For now, the check is only on the nDPI fingerprint, but it will
+    need to be extended to the TCP fingerprint and JA4 when they are
+    merged into the fingerprints block of proto_json_info.*/
+  inline bool isFingerprintAvailable() {
+    return getnDPIFingerprint() != nullptr;
+  }
+
+  inline void setSearchedField(const char* field) {
+    snprintf(searched_field, sizeof(searched_field), "%s", field);
+  }
+  inline void resetSearchedField() { searched_field[0] = '\0'; }
+
+  inline void setTOS(u_int8_t tos, bool is_cli_tos) {
+    if (is_cli_tos)
+      cli2srv_tos = tos;
+    else
+      srv2cli_tos = tos;
+  }
+  inline u_int8_t getTOS(bool is_cli_tos) const {
+    return (is_cli_tos ? cli2srv_tos : srv2cli_tos);
+  }
 
   inline u_int8_t getCli2SrvDSCP() const { return (cli2srv_tos & 0xFC) >> 2; }
   inline u_int8_t getSrv2CliDSCP() const { return (srv2cli_tos & 0xFC) >> 2; }
 
-  inline u_int8_t getCli2SrvECN()  { return (cli2srv_tos & 0x3); }
-  inline u_int8_t getSrv2CliECN()  { return (srv2cli_tos & 0x3); }
+  inline u_int8_t getCli2SrvECN() { return (cli2srv_tos & 0x3); }
+  inline u_int8_t getSrv2CliECN() { return (srv2cli_tos & 0x3); }
 
-  inline float getEntropy(bool src2dst_direction) {
-    struct ndpi_analyze_struct *e = src2dst_direction ? entropy.c2s : entropy.s2c;
-
-    return(e ? ndpi_data_entropy(e) : 0);
+  inline float getICMPPacketsEntropy() {
+    return (protos.icmp.client_to_server.max_entropy -
+            protos.icmp.client_to_server.min_entropy);
   }
 
   inline bool timeToPeriodicDump(u_int sec) {
-    return((sec - get_first_seen()        >= CONST_DB_DUMP_FREQUENCY) &&
-           (sec - get_partial_last_seen() >= CONST_DB_DUMP_FREQUENCY));
+    return ((sec - get_first_seen() >= CONST_DB_DUMP_FREQUENCY) &&
+            (sec - get_partial_last_seen() >= CONST_DB_DUMP_FREQUENCY));
   }
 
-  u_char* getCommunityId(u_char *community_id, u_int community_id_len);
-  void         setJSONRiskInfo(char *r);
-  char*        getJSONRiskInfo();
-  void         getJSONRiskInfo(ndpi_serializer *serializer);
-  
-  inline FlowTrafficStats* getTrafficStats()    { return(&stats); };
-  inline char* get_custom_category_file() const { return((char*)ndpiDetectedProtocol.custom_category_userdata); }
-  
-  inline u_int8_t* getViewCliMac() { return(view_cli_mac); };
-  inline u_int8_t* getViewSrvMac() { return(view_srv_mac); };
+  u_char* getCommunityId(u_char* community_id, u_int community_id_len);
+  void setJSONRiskInfo(char* r);
+  void setEndReason(char* r);
+  char* getEndReason();
+  void setSMTPMailFrom(char* r);
+  char* getSMTPMailFrom();
+  void setSMTPRcptTo(char* r);
+  char* getSMTPRcptTo();
+  void setFlowRiskName(char* r);
+  char* getFlowRiskName();
+  void serializeJSONRiskInfo(ndpi_serializer* serializer);
+  void serializeVerdictInfo(ndpi_serializer* serializer);
+  void serializeTCPFlagsAnalysis(ndpi_serializer* serializer);
+  void serializeBGPInfo(ndpi_serializer* serializer);
+  void setWLANInfo(char* wlan_ssid, u_int8_t* wtp_mac_address);
+  void setClientBGPInfo(char* bgp_info);
+  void setServerBGPInfo(char* bgp_info);
+  inline char* getClientBGPInfo() { return((collection && collection->bgp.src) ? collection->bgp.src : (char*)""); }
+  inline char* getServerBGPInfo() { return((collection && collection->bgp.dst) ? collection->bgp.dst : (char*)""); }
+  void updateHRSrc2DstBytes(const std::vector<uint64_t>& v, time_t update_first_seen) {
+    mergeHRCounters(hr_src2dst_bytes, v, update_first_seen);
+  }
+  void updateHRDst2SrcBytes(const std::vector<uint64_t>& v, time_t update_first_seen) {
+    mergeHRCounters(hr_dst2src_bytes, v, update_first_seen);
+  }
+  inline const std::vector<uint64_t>& getHRSrc2DstBytes() const { return hr_src2dst_bytes; }
+  inline const std::vector<uint64_t>& getHRDst2SrcBytes() const { return hr_dst2src_bytes; }
+  inline void resetHRCounters() { hr_src2dst_bytes.clear(); hr_dst2src_bytes.clear(); hr_base_first_seen = 0; }
+  char* getWLANSSID() {
+    return (collection ? collection->wifi.wlan_ssid : NULL);
+  };
+  u_int8_t* getWTPMACAddress() {
+    return (collection ? collection->wifi.wtp_mac_address : NULL);
+  };
 
-  inline u_int32_t getErrorCode()        { return(protocolErrorCode); }
-  inline void setErrorCode(u_int32_t rc) { protocolErrorCode = rc;    }
-  
-  inline ndpi_confidence_t getConfidence()        { return(confidence); }
-  inline void setConfidence(ndpi_confidence_t rc) { confidence = rc;    }
+  inline FlowTrafficStats* getTrafficStats() { return (&stats); };
+  inline char* get_custom_category_file() const {
+    if (category_list_name_shared_pointer)
+      return (category_list_name_shared_pointer);
+    else
+      return ((char*)ndpiDetectedProtocol.custom_category_userdata);
+  }
+
+  inline u_int32_t getErrorCode() { return (protocolErrorCode); }
+  inline void setErrorCode(u_int32_t rc) { protocolErrorCode = rc; }
+
+  inline char* getAddressFamilyProtocol() const {
+    return (ndpiAddressFamilyProtocol);
+  }
+  inline void setAddressFamilyProtocol(char* proto) {
+    if (ndpiAddressFamilyProtocol) free(ndpiAddressFamilyProtocol);
+    ndpiAddressFamilyProtocol = proto ? strdup(proto) : NULL;
+  }
+
+  inline ndpi_confidence_t getConfidence() { return (confidence); }
+  inline void setConfidence(ndpi_confidence_t rc) { confidence = rc; }
+  inline void setNdpiConfidence(ndpi_confidence_t rc) { ndpi_confidence = rc; }
 
   inline u_int8_t getCliLocation() {
-    if(cli_host && cli_host->isMulticastHost())  return 2; // Multicast host
-    else if(cli_host && cli_host->isLocalHost()) return 1; // Local host
-    else return 0; // Remote host
+    if ((cli_host && cli_host->isMulticastHost()) ||
+        (cli_ip_addr && cli_ip_addr->isMulticastAddress()))
+      return 2;  // Multicast host
+    else if ((cli_host && cli_host->isLocalHost()) ||
+             (cli_ip_addr && cli_ip_addr->isLocalHost()))
+      return 1;  // Local host
+    else
+      return 0;  // Remote host
   }
   inline u_int8_t getSrvLocation() {
-    if(srv_host && srv_host->isMulticastHost())  return 2; // Multicast host
-    else if(srv_host && srv_host->isLocalHost()) return 1; // Local host
-    else return 0; // Remote host
+    if ((srv_host && srv_host->isMulticastHost()) ||
+        (srv_ip_addr && srv_ip_addr->isMulticastAddress()))
+      return 2;  // Multicast host
+    else if ((srv_host && srv_host->isLocalHost()) ||
+             (srv_ip_addr && srv_ip_addr->isLocalHost()))
+      return 1;  // Local host
+    else
+      return 0;  // Remote host
   }
-  
-  /* Placeholder */
-  inline char* getCliProcessName()     { return((char*)""); }
-  inline char* getSrvProcessName()     { return((char*)""); }
-  inline char* getCliProcessUserName() { return((char*)""); }
-  inline char* getSrvProcessUserName() { return((char*)""); }
+
+  inline u_int32_t getPrivateFlowId() const { return (privateFlowId); }
+
+  inline bool isCustomFlowAlertTriggered() {
+    return (customFlowAlert.alertTriggered);
+  }
+  inline u_int8_t getCustomFlowAlertScore() { return (customFlowAlert.score); }
+  inline char* getCustomFlowAlertMessage() { return (customFlowAlert.msg); }
+  void triggerCustomFlowAlert(u_int8_t score, char* msg);
+  /* Before each custom script: an alert of a script must not be re-triggered by the next one */
+  inline void resetCustomFlowAlert() { customFlowAlert.alertTriggered = false; }
+  /* Alerts already enqueued (stored) and an updated one must be stored again (custom scripts) */
+  inline bool hasPendingAlerts() const { return (pending_alerts); }
+  /* OT protocols dissected by ntopng: { iec104 = {...}, modbus = {...}, s7comm = {...}, profinet = {...} } */
+  void luaOTInfo(lua_State* vm);
+  inline void setPendingAlerts() { pending_alerts = true; }
+  inline void setRTPStreamType(u_int8_t s) { rtp_stream_type = s; }
+  inline u_int8_t getRTPStreamType() { return (rtp_stream_type); }
+  inline void setPeriodicFlow(u_int32_t _periodicity) {
+    is_periodic_flow = 1, periodicity = _periodicity;
+  }
+  inline bool isPeriodicFlow() { return (is_periodic_flow ? true : false); }
+  void swap();
+  bool isDPIDetectedFlow();
+  void updateHostBlacklists();
+  int32_t getInterfaceIndex() { return (iface_index); };
+  inline void setFlowSource(FlowSource n) { flow_source = n; }
+  inline FlowSource getFlowSource() { return (flow_source); }
+  inline MinorConnectionStates setCurrentConnectionState(u_int8_t new_state) {
+    current_c_state = static_cast<MinorConnectionStates>(new_state);
+    return (current_c_state);
+  };
+  inline MinorConnectionStates getCurrentConnectionState() {
+    return (current_c_state);
+  };
+  bool checkS1ConnState();
+  bool isTCPFlagSet(u_int8_t flags, int flag_to_check);
+  MinorConnectionStates calculateConnectionState(bool is_cumulative);
+  MajorConnectionStates getMajorConnState();
+  inline u_int32_t getPostNATSrcIp() {
+    return (collection ? ntohl(collection->nat.src_ip_addr_post_nat) : 0);
+  };
+  inline u_int32_t getPostNATDstIp() {
+    return (collection ? ntohl(collection->nat.dst_ip_addr_post_nat) : 0);
+  };
+  inline u_int16_t getPostNATSrcPort() {
+    return (collection ? ntohs(collection->nat.src_port_post_nat) : 0);
+  };
+  inline u_int16_t getPostNATDstPort() {
+    return (collection ? ntohs(collection->nat.dst_port_post_nat) : 0);
+  };
+
+  void getSrcAS(u_int32_t* as, char** as_name);
+  void getDstAS(u_int32_t* as, char** as_name);
+  void getTransitAS(u_int32_t* as, char** as_nam);
+
+  TransitAS getTransitASType();
+  void setBittorrentHash(char* hash, u_int len);
+  inline bool isFlowAccounted() { return iface_flow_accounted; };
+  inline void setFlowAccounted() { iface_flow_accounted = 1; };
+  void accountFlowTraffic(bool src2dst_direction);
+  void setICMPTypeCode(u_int16_t icmp_type_code);
+  inline void setQoE(u_int8_t c2s, u_int8_t s2c) {
+    if ((c2s != NTOP_QOE_UNKNOWN) || (s2c != NTOP_QOE_UNKNOWN))
+      collected_qoe.src_to_dst = c2s, collected_qoe.dst_to_src = s2c,
+      has_collected_qoe = 1;
+  }
+  void setHostTCPFingerprint(char* fp, ndpi_os os_hint);
+  void setClientOSHint(ndpi_os os_hint);
+  void updateViewClientOS(Host* view_cli_host);
+
+  u_int32_t getSrcAS() { return (srcAS); }
+  u_int32_t getDstAS() { return (dstAS); }
+  u_int32_t getSrcPeerAS() { return (srcPeerAS); }
+  u_int32_t getDstPeerAS() { return (dstPeerAS); }
+
+  inline Mac* getCliMac() { return (c_mac); }
+  inline Mac* getSrvMac() { return (s_mac); }
+
+  inline u_int8_t* getCliMacRaw() { return (cli_mac); }
+  inline u_int8_t* getSrvMacRaw() { return (srv_mac); }
+  inline void setCliMacRaw(u_int8_t* m) {
+    memcpy(cli_mac, m, 6);
+    updateMac();
+  };
+  inline void setSrvMacRaw(u_int8_t* m) {
+    memcpy(srv_mac, m, 6);
+    updateMac();
+  };
+
+#ifdef HAVE_NEDGE
+  inline void incNumProcessedPkts() { numFlowProcessedPkts++; }
+  inline void setNumPktsMarker() { numPktsMarkerSet = numFlowProcessedPkts; }
+#endif
+
+  void updateTCPStats(u_int32_t cli_stats, u_int32_t srv_stats);
+
+  void setCliService(HostService service_enum);
+  void setSrvService(HostService service_enum);
+  /* evidence: why the tag is set, beside the flow (journal of the assets),
+   * e.g. "risk <name>" */
+  void setCliTag(int tag_idx, const char* evidence = NULL);
+  void setSrvTag(int tag_idx, const char* evidence = NULL);
+#ifdef NTOPNG_PRO
+  void refreshHostsTags();
+#endif
+  inline void setIGMPType(u_int8_t t) { protos.igmp.igmp_type = t; }
+  void addExporterInfo(struct ndpi_in6_addr *exporter_ip,
+		       struct ndpi_in6_addr *next_hop,
+		       struct ndpi_in6_addr *mapped_exporter_ip,
+		       struct ndpi_in6_addr *mapped_next_hop,
+		       u_int16_t exporter_site_id,
+		       u_int16_t next_hop_site_id,
+                       u_int32_t in_index, u_int32_t out_index,
+		       SNMPInterfaceRole in_role,
+		       SNMPInterfaceRole out_role,
+                       FlowSource source, bool src2dst_direction);
+
+  inline bool isFirstFlowDump()  { return(last_db_dump.is_first_dump); }
+
+  u_int64_t get_transit_bytes();
+  u_int64_t get_peering_bytes();
+  u_int64_t get_ix_bytes();
 };
 
 #endif /* _FLOW_H_ */

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,13 +26,17 @@
 
 class LowGoodputFlowAlert : public FlowAlert {
  private:
-  ndpi_serializer *getAlertJSON(ndpi_serializer* serializer);
+  ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType() { return { flow_alert_low_goodput, alert_category_network }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_low_goodput, alert_category_network};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- LowGoodputFlowAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
+  LowGoodputFlowAlert(FlowCheck* c, Flow* f) : FlowAlert(c, f) {
+    setAlertScore(getDefaultScore());
+  };
   ~LowGoodputFlowAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }

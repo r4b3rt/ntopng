@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -20,6 +22,13 @@ alert_ndpi_unsafe_protocol.meta = {
    alert_key  = flow_alert_keys.flow_alert_ndpi_unsafe_protocol,
    i18n_title = "alerts_dashboard.ndpi_unsafe_protocol_title",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.credential_access,
+      mitre_technique = mitre.technique.forced_authentication,
+      mitre_id = "T1187"
+   },
 
    has_attacker = true,
 }
@@ -36,7 +45,7 @@ end
 -- #######################################################
 
 function alert_ndpi_unsafe_protocol.format(ifid, alert, alert_type_params)
-   return
+   return i18n('flow_risk.ndpi_unsafe_protocol_descr')
 end
 
 -- #######################################################

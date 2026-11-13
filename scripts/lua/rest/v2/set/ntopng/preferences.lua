@@ -1,0 +1,267 @@
+--
+-- (C) 2014-26 - ntop.org
+--
+-- POST /lua/rest/v2/set/ntopng/preferences.lua
+--
+-- Persists a single preference field to Redis.
+-- Called by page-preferences.vue for each changed field on save.
+--
+-- POST body (JSON):
+--   {
+--     "csrf":         "<token>",
+--     "pref_section": "<section_id>",
+--     "pref_key":     "<entry_key>",
+--     "pref_value":   "<new_value>"
+--   }
+--
+-- Special behaviours (server-side only):
+--   - Password fields: if value == "********" the write is skipped.
+--   - Data retention ordering (clickhouse): aggregated_flows >= raw + 1 is enforced.
+--   - Auth at-least-one: rejecting a change that would disable the last auth method.
+--
+-- This is a NEW endpoint — it does not modify any existing Lua page.
+--
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+
+require "lua_utils"
+
+local rest_utils = require "rest_utils"
+local auth       = require "auth"
+local json       = require "dkjson"
+
+-- Auth guard
+if not auth.has_capability(auth.capabilities.preferences) then
+   rest_utils.answer(rest_utils.consts.err.not_granted)
+   return
+end
+
+-- Parse POST body
+local body = {}
+if _POST and _POST["payload"] then
+   body = json.decode(_POST["payload"]) or {}
+elseif _POST then
+   body = _POST
+end
+
+local section_id = body["pref_section"] or ""
+local entry_key  = body["pref_key"]     or ""
+local new_value  = body["pref_value"]
+
+if isEmptyString(section_id) or isEmptyString(entry_key) or new_value == nil then
+   rest_utils.answer(rest_utils.consts.err.invalid_args)
+   return
+end
+
+-- Rebuild schema to locate the entry and its redis_key
+local prefs_menu_schema = require "prefs_menu_schema"
+local flags             = prefs_menu_schema.get_flags()
+local all_sections      = prefs_menu_schema.get_sections(flags)
+
+-- Locate the target entry
+local target_section = nil
+local target_entry   = nil
+
+for _, section in ipairs(all_sections) do
+   if section.id == section_id and not section.hidden then
+      for _, entry in ipairs(section.entries or {}) do
+         if entry.key == entry_key and not entry.hidden then
+            target_section = section
+            target_entry   = entry
+            break
+         end
+      end
+      break
+   end
+end
+
+if not target_section or not target_entry then
+   rest_utils.answer(rest_utils.consts.err.not_found)
+   return
+end
+
+-- Guard: reject writes to pro/enterprise sections on community builds
+if target_section.pro_only then
+   local is_pro = flags.is_pro or false
+   if not is_pro then
+      rest_utils.answer(rest_utils.consts.err.not_granted)
+      return
+   end
+end
+
+-- Guard: locked preferences are shown read-only in the GUI (missing license,
+-- ClickHouse down, value forced on the command line, ...). The control is
+-- disabled client-side; refuse here too so a direct API call cannot bypass it,
+-- and hand back the same reason the tooltip shows.
+local lock_reason = target_entry.locked or target_section.locked
+
+if lock_reason then
+   -- One or more missing prerequisites: report every one of them
+   if type(lock_reason) == "table" then
+      lock_reason = table.concat(lock_reason, " ")
+   end
+
+   rest_utils.answer(rest_utils.consts.err.not_granted, { message = lock_reason })
+   return
+end
+
+-- Guard: auth at-least-one (local/ldap/radius/http/oidc toggles)
+local auth_toggle_keys = {
+   "ntopng.prefs.local.auth_enabled",
+   "ntopng.prefs.ldap.auth_enabled",
+   "ntopng.prefs.radius.auth_enabled",
+   "ntopng.prefs.http_authenticator.auth_enabled",
+   "ntopng.prefs.oidc.enabled",
+}
+
+local function is_auth_toggle(redis_key)
+   for _, k in ipairs(auth_toggle_keys) do
+      if k == redis_key then return true end
+   end
+   return false
+end
+
+-- An authentication method that was never toggled has no key in Redis: local
+-- auth ships enabled, so on a fresh install its key is simply missing and must
+-- not be read as "disabled" (that would make every other method impossible to
+-- turn off). Fall back to the schema default, exactly like the read path does.
+local function is_auth_method_enabled(entry)
+   local value = ntop.getPref(entry.redis_key) or ""
+
+   if value == "" then
+      value = tostring(entry.default or "0")
+   end
+
+   return value == "1"
+end
+
+-- Auth toggles visible on this build: a method hidden or locked because the
+-- feature is not available (e.g. missing license) cannot be used to log in,
+-- so it does not count as a fallback.
+local function get_auth_toggle_entries()
+   local entries = {}
+
+   for _, section in ipairs(all_sections) do
+      if not section.hidden then
+         for _, entry in ipairs(section.entries or {}) do
+            if not entry.hidden and not entry.locked and is_auth_toggle(entry.redis_key) then
+               entries[#entries + 1] = entry
+            end
+         end
+      end
+   end
+
+   return entries
+end
+
+if is_auth_toggle(target_entry.redis_key) and new_value == "0" then
+   local one_enabled = false
+   for _, entry in ipairs(get_auth_toggle_entries()) do
+      if entry.redis_key ~= target_entry.redis_key and is_auth_method_enabled(entry) then
+         one_enabled = true
+         break
+      end
+   end
+   if not one_enabled then
+      rest_utils.answer(rest_utils.consts.err.bad_content,
+         { message = i18n("prefs.at_least_one_auth_required") })
+      return
+   end
+end
+
+-- Guard: data retention ordering (aggregated > raw)
+local RAW_KEY  = "ntopng.prefs.flows_and_alerts_data_retention_days"
+local AGG_KEY  = "ntopng.prefs.aggregated_flows_data_retention_days"
+
+if target_entry.redis_key == RAW_KEY or target_entry.redis_key == AGG_KEY then
+   local raw_val = tonumber(ntop.getPref(RAW_KEY)  or "30") or 30
+   local agg_val = tonumber(ntop.getPref(AGG_KEY)  or "365") or 365
+   local new_num = tonumber(new_value) or 0
+
+   if target_entry.redis_key == RAW_KEY then
+      raw_val = new_num
+   else
+      agg_val = new_num
+   end
+
+   if agg_val <= raw_val then
+      -- Auto-correct: bump aggregated to raw+1
+      ntop.setPref(AGG_KEY, tostring(raw_val + 1))
+   end
+end
+
+-- Choices (select, button group): only one of the options
+if target_entry.options and (target_entry.type == "select" or target_entry.type == "button_group") then
+   local valid = false
+
+   for _, option in ipairs(target_entry.options) do
+      if tostring(option.value) == tostring(new_value) then
+         valid = true
+         break
+      end
+   end
+
+   if not valid then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+end
+
+-- Numbers: within the bounds of the field, when set (attrs min/max; empty values
+-- are left as before)
+if (target_entry.input_type == "number") and target_entry.attrs and (tostring(new_value) ~= "") then
+   local num = tonumber(new_value)
+   local min = tonumber(target_entry.attrs.min)
+   local max = tonumber(target_entry.attrs.max)
+
+   if (min or max) and ((not num) or (min and num < min) or (max and num > max)) then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+end
+
+-- Resolve user-scoped keys
+local redis_key = target_entry.redis_key
+if target_entry.user_pref then
+   local session_user = _SESSION and _SESSION["user"] or ""
+   redis_key = redis_key:gsub("__SESSION_USER__", session_user)
+end
+
+-- Convert display units back to storage units (e.g. days -> seconds)
+if target_entry.display_multiplier then
+   local num = tonumber(new_value)
+   if num then
+      new_value = tostring(math.floor(num * target_entry.display_multiplier))
+   end
+end
+
+-- Write to Redis
+ntop.setPref(redis_key, tostring(new_value))
+
+-- Notify runtime for logging-level changes
+if entry_key == "toggle_logging_level" then
+   ntop.setLoggingLevel(new_value)
+end
+
+-- Issues: apply at once (the in-memory preferences are otherwise reloaded within a few
+-- seconds) and register the recipients again, as those delivering issues receive the
+-- alerts while the issues are disabled
+if (entry_key == "issues_min_severity") or (entry_key == "issues_max_open") or
+   (entry_key == "issues_reopen_window") then
+   ntop.reloadPreferences()
+elseif entry_key == "toggle_issues" then
+   package.path = dirs.installdir .. "/scripts/lua/modules/notifications/?.lua;" .. package.path
+   local recipients = require "recipients"
+
+   ntop.reloadPreferences()
+   recipients.register_all()
+end
+
+-- In case of Radius changes, force a backend update (a restart is required otherwise)
+if string.find(redis_key, "ntopng%.prefs%.radius%.") then
+   ntop.updateRadiusLoginInfo()
+end
+
+rest_utils.answer(rest_utils.consts.success.ok, {})

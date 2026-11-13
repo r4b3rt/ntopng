@@ -1,15 +1,15 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
-local checks = require("checks")
 local alerts_api = require("alerts_api")
 local alert_consts = require("alert_consts")
+local alert_categories = require "alert_categories"
 
 local script = {
   -- Script category
-  category = checks.check_categories.internals,
-
+  category = alert_categories.internals,
+  severity = alert_consts.get_printable_severities().error,
 
   -- See below
   hooks = {},
@@ -29,7 +29,7 @@ local function dropped_alerts_check(params)
    -- Fetch the number of dropped alerts out of system host stats
    -- The number fetched is the number of drops occured in the internal queue, that is,
    -- in the queue currently used to generate alerts from C
-   local dropped_alerts = system_host_stats["alerts_stats"]["alert_queues"]["internal_alerts_queue"]["num_not_enqueued"]
+   local dropped_alerts = system_host_stats["alerts_stats"]["alert_queues"]["internal_alerts_queue"]["num_not_enqueued"] or 0
 
    -- Compute the delta with the previous value for drops
    local delta_drops = alerts_api.interface_delta_val(script.key, params.granularity, dropped_alerts, true --[[ skip first --]])
@@ -39,9 +39,8 @@ local function dropped_alerts_check(params)
       delta_drops
       )
 
-   alert:set_score_error()
-   alert:set_granularity(params.granularity)
-
+   alert:set_info(params)
+   
    if(delta_drops > 0) then
       alert:trigger(params.alert_entity, nil, params.cur_alerts)
    else

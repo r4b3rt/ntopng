@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -17,9 +19,17 @@ local alert_tcp_connection_no_answer = classes.class(alert)
 -- ##############################################
 
 alert_tcp_connection_no_answer.meta = {
-   alert_key = flow_alert_keys.flow_alert_tcp_connection_no_answer,
-   i18n_title = "flow_checks_config.tcp_connection_no_answer_title",
-   icon = "fas fa-fw fa-exclamation",
+  alert_key = flow_alert_keys.flow_alert_connection_failed,
+  i18n_title = "flow_checks_config.tcp_connection_no_answer_title",
+  icon = "fas fa-fw fa-exclamation",
+
+  -- Mitre Att&ck Matrix values
+  mitre_values = {
+    mitre_tactic = mitre.tactic.persistence,
+    mitre_technique = mitre.technique.traffic_signaling,
+    mitre_sub_technique = mitre.sub_technique.port_knocking,
+    mitre_id = "T1205.001"
+  },
 }
 
 -- ##############################################
@@ -40,10 +50,7 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_tcp_connection_no_answer.format(ifid, alert, alert_type_params)
-  local cli = format_alert_hostname(alert, "cli")
-  local srv = format_alert_hostname(alert, "srv")
-  
-  return i18n("flow_details.tcp_connection_no_answer_descr", { cli = cli, srv = srv })   
+  return i18n("flow_checks_config.tcp_connection_no_answer_descr")   
 end
 
 -- #######################################################

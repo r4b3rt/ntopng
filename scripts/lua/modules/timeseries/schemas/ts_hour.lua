@@ -2,6 +2,9 @@
 -- (C) 2021 - ntop.org
 --
 
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/?.lua;" .. package.path
+
 local ts_utils = require "ts_utils_core"
 local schema
 
@@ -71,3 +74,36 @@ schema = ts_utils.newSchema("am_host:latency_hour", {
 schema:addTag("ifid")
 schema:addTag("host")
 schema:addMetric("latency")
+
+-- ##############################################
+
+schema = ts_utils.newSchema("am_vuln_scan:num_hosts_scanned", {
+  step = 3600,
+  metrics_type = ts_utils.metrics.gauge,
+  is_system_schema = true,
+})
+
+schema:addTag("ifid")
+schema:addMetric("num_hosts_scanned")
+
+-- ##############################################
+
+schema = ts_utils.newSchema("am_vuln_scan:num_configured_hosts", {
+  step = 3600,
+  metrics_type = ts_utils.metrics.gauge,
+  is_system_schema = true,
+})
+
+schema:addTag("ifid")
+schema:addMetric("num_hosts")
+
+-- ##############################################
+
+schema = ts_utils.newSchema("am_vuln_scan:num_open_ports", {
+  step = 3600,
+  metrics_type = ts_utils.metrics.gauge,
+  is_system_schema = true,
+})
+
+schema:addTag("ifid")
+schema:addMetric("num_open_ports")

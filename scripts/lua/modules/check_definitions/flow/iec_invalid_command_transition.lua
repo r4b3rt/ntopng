@@ -1,11 +1,10 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local checks = require("checks")
-local alerts_api = require("alerts_api")
-local alert_consts = require("alert_consts")
 local flow_alert_keys = require "flow_alert_keys"
+local IEC_INVALID_TRANSITION_KEY = "ntopng.checks.iec104_invalid_command_transition_enable"
 
 -- #################################################################
 
@@ -24,10 +23,20 @@ local script = {
 
    gui = {
       i18n_title        = "flow_checks.iec104_command_title",
-      i18n_description  = "flow_checks.iec104_command)description",
+      i18n_description  = "flow_checks.iec104_command_description",
    }
 }
 
 -- #################################################################
+
+function script.onEnable()
+  ntop.setCache(IEC_INVALID_TRANSITION_KEY, "1")
+end
+
+-- #################################################################
+
+function script.onDisable()
+  ntop.setCache(IEC_INVALID_TRANSITION_KEY, "0")
+end
 
 return script

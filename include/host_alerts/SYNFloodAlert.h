@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,14 +26,18 @@
 
 class SYNFloodAlert : public FlowHitsAlert {
  private:
-  
  public:
-  static HostAlertType getClassType() { return { host_alert_syn_flood, alert_category_security }; }
+  static HostAlertType getClassType() {
+    return {host_alert_syn_flood, alert_category_security};
+  }
 
-  SYNFloodAlert(HostCheck *c, Host *h, risk_percentage cli_pctg, u_int16_t hits, u_int64_t threshold, bool is_attacker) : FlowHitsAlert(c, h, cli_pctg, hits, threshold, is_attacker) {};
+  SYNFloodAlert(HostCheck* c, Host* h, risk_percentage cli_pctg, u_int16_t hits,
+                u_int64_t threshold, bool is_attacker)
+      : FlowHitsAlert(c, h, cli_pctg, hits, threshold, is_attacker) {};
   ~SYNFloodAlert() {};
 
   HostAlertType getAlertType() const { return getClassType(); }
+  u_int8_t getAlertScore() const { return SCORE_LEVEL_EMERGENCY; };
 };
 
 #endif /* _SYN_FLOOD_ALERT_H_ */

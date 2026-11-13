@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,31 +24,30 @@
 
 /* ***************************************************** */
 
-bool BlacklistedCountry::hasBlacklistedCountry(Host *h) const {
-  char buf[3], *country;
-
-  if(!h) return false;
-
-  country = h->get_country(buf, sizeof(buf));
-
+bool BlacklistedCountry::hasBlacklistedCountry(char *country) const {
+  // Safekeeping, in case the buffer is empty
+  if (!country || country[0] == '\0') {
+    return false;
+  }
   return blacklisted_countries.find(country) != blacklisted_countries.end();
 }
 
 /* ***************************************************** */
 
-void BlacklistedCountry::protocolDetected(Flow *f) {
+void BlacklistedCountry::protocolDetected(Flow* f) {
+  char buf[3];
   u_int8_t c_score, s_score;
+  bool is_client_bl = false, is_server_bl = false;
   risk_percentage cli_score_pctg = CLIENT_FAIR_RISK_PERCENTAGE;
-  bool is_server_bl = false, is_client_bl = false;
 
-  if(blacklisted_countries.size() == 0)
+  if (blacklisted_countries.size() == 0)
     return; /* Check enabled but no blacklisted country is configured */
 
-  if(hasBlacklistedCountry(f->get_cli_host())) {
+  if (hasBlacklistedCountry(f->getCliCountry(buf, sizeof(buf)))) {
     is_client_bl = true;
   }
 
-  if(hasBlacklistedCountry(f->get_srv_host())) {
+  if (hasBlacklistedCountry(f->getSrvCountry(buf, sizeof(buf)))) {
     is_server_bl = true;
     cli_score_pctg = CLIENT_HIGH_RISK_PERCENTAGE; /* Client is being attacked */
   }
@@ -56,38 +55,45 @@ void BlacklistedCountry::protocolDetected(Flow *f) {
   if (is_server_bl || is_client_bl) {
     FlowAlertType alert_type = BlacklistedCountryAlert::getClassType();
 
-    computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
+    computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id), cli_score_pctg,
+                       &c_score, &s_score);
 
-    f->triggerAlertAsync(alert_type, c_score, s_score);
+    FlowAlert* alert = buildAlert(f);
+    alert->setCliSrvScores(c_score, s_score);
+    f->triggerAlert(alert);
   }
 }
 
 /* ***************************************************** */
 
-FlowAlert *BlacklistedCountry::buildAlert(Flow *f) {
-  bool is_server_bl = hasBlacklistedCountry(f->get_srv_host());
-  bool is_client_bl = hasBlacklistedCountry(f->get_cli_host());
+FlowAlert* BlacklistedCountry::buildAlert(Flow* f) {
+  char buf[3];
+  bool is_client_bl = hasBlacklistedCountry(f->getCliCountry(buf, sizeof(buf)));
+  bool is_server_bl = hasBlacklistedCountry(f->getSrvCountry(buf, sizeof(buf)));
+  BlacklistedCountryAlert* alert =
+      new (std::nothrow) BlacklistedCountryAlert(this, f, is_server_bl);
 
-  BlacklistedCountryAlert *alert = new BlacklistedCountryAlert(this, f, is_server_bl);
-
-  /*
-    When a BLACKLISTED client contacts a normal host, the client is assumed to be the attacker and the server the victim
-    When a normal client contacts a BLACKLISTED server, both peers are considered to be attackers
-    When both peers are blacklisted, both are considered attackers
-  */
-  if(is_client_bl && !is_server_bl)
-    alert->setCliAttacker(), alert->setSrvVictim();
-  else if(!is_client_bl && is_server_bl)
-    alert->setCliAttacker(), alert->setSrvAttacker();
-  else if(is_client_bl && is_server_bl)
-    alert->setCliAttacker(), alert->setSrvAttacker();
+  if (alert) {
+    /*
+      When a BLACKLISTED client contacts a normal host, the client is assumed to
+      be the attacker and the server the victim When a normal client contacts a
+      BLACKLISTED server, both peers are considered to be attackers When both
+      peers are blacklisted, both are considered attackers
+    */
+    if (is_client_bl && !is_server_bl)
+      alert->setCliAttacker(), alert->setSrvVictim();
+    else if (!is_client_bl && is_server_bl)
+      alert->setCliAttacker(), alert->setSrvAttacker();
+    else if (is_client_bl && is_server_bl)
+      alert->setCliAttacker(), alert->setSrvAttacker();
+  }
 
   return alert;
 }
 
 /* ***************************************************** */
 
-bool BlacklistedCountry::loadConfiguration(json_object *config) {
+bool BlacklistedCountry::loadConfiguration(json_object* config) {
   FlowCheck::loadConfiguration(config); /* Parse parameters in common */
   json_object *countries_json, *country_json;
 
@@ -98,7 +104,7 @@ bool BlacklistedCountry::loadConfiguration(json_object *config) {
   */
 
   /* Iterathe through the items array with country codes */
-  if(json_object_object_get_ex(config, "items", &countries_json)) {
+  if (json_object_object_get_ex(config, "items", &countries_json)) {
     int size = json_object_array_length(countries_json);
     for (int i = 0; i < size; i++) {
       country_json = json_object_array_get_idx(countries_json, i);
@@ -111,16 +117,16 @@ bool BlacklistedCountry::loadConfiguration(json_object *config) {
 
   /*
 
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s", json_object_to_json_string(config));
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s",
+    json_object_to_json_string(config));
 
     std::set<string>::iterator it;
-    for(it = blacklisted_countries.begin(); it != blacklisted_countries.end(); ++it)
-    ntop->getTrace()->traceEvent(TRACE_NORMAL, "Parsed: %s", (*it).c_str());
+    for(it = blacklisted_countries.begin(); it != blacklisted_countries.end();
+    ++it) ntop->getTrace()->traceEvent(TRACE_NORMAL, "Parsed: %s",
+    (*it).c_str());
   */
 
-
-  return(true);
+  return (true);
 }
 
 /* ***************************************************** */
-

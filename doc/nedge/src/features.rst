@@ -25,7 +25,6 @@ interesting features are available:
 
 Some of the ntopng features, however, are *not* available in nEdge:
 
-- No flow data export/historical explorer (e.g. MySQL and ElasticSearch export)
 - No traffic profiles
 - No ability to read data from nProbe (e.g. NetFlow/sFlow data)
 - No LDAP integration
@@ -36,4 +35,4 @@ Some of the ntopng features, however, are *not* available in nEdge:
    Currently, IPv6 traffic is neither handled nor forwarded by
    nEdge. IPv6 traffic is never forwarded to LAN or WAN devices.
 
-.. _ntopng: http://www.ntop.org/products/traffic-analysis/ntop/
+.. _ntopng: https://www.ntop.org/products/traffic-analysis/ntop/

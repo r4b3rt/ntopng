@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can addresstribute it and/or modify
@@ -27,16 +27,17 @@
 class AddressResolution {
   int num_resolvers;
   u_int32_t num_resolved_addresses, num_resolved_fails;
-  pthread_t *resolveThreadLoop;
+  pthread_t* resolveThreadLoop;
   Mutex m;
 
  public:
-  AddressResolution();
+  AddressResolution(int num_resolvers);
   ~AddressResolution();
 
   void startResolveAddressLoop();
-  void resolveHostName(const char *numeric_ip, char *rsp = NULL, u_int rsp_len = 0);
-  bool resolveHost(const char *host, char *rsp, u_int rsp_len, bool v4);
+  void resolveHostName(const char* numeric_ip, char* rsp = NULL,
+                       u_int rsp_len = 0);
+  bool resolveHost(const char* host, char* rsp, u_int rsp_len, bool v4);
 };
 
 #endif /* _ADDRESS_RESOLUTION_H_ */

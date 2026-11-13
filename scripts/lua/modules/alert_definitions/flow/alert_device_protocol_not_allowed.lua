@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -22,6 +24,13 @@ alert_device_protocol_not_allowed.meta = {
    i18n_title = "alerts_dashboard.suspicious_device_protocol",
    icon = "fas fa-fw fa-exclamation",
 
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.c_and_c,
+      mitre_technique = mitre.technique.app_layer_proto,
+      mitre_id = "T1071"
+   },
+   
    has_attacker = true,
 }
 
@@ -68,9 +77,11 @@ function alert_device_protocol_not_allowed.format(ifid, alert, alert_type_params
    end
 
    local label = discover.devtype2string(devtype)
-   return i18n(msg, {proto=interface.getnDPIProtoName(forbidden_proto), devtype=label,
+   local description = i18n(msg, {proto=interface.getnDPIProtoName(forbidden_proto), devtype=label,
       url=getDeviceProtocolPoliciesUrl("device_type="..
       devtype.."&l7proto="..forbidden_proto)})
+
+   return description
 end
 
 -- #######################################################

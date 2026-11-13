@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,17 +28,18 @@ class Flow;
 
 class FlowChecksExecutor { /* One instance per ntopng Interface */
  private:
-  NetworkInterface *iface;
-  std::list<FlowCheck*> *protocol_detected, *periodic_update, *flow_end, *flow_begin;
+  NetworkInterface* iface;
+  std::list<FlowCheck*>*protocol_detected, *periodic_update, *flow_end,
+      *flow_begin;
 
-  void loadFlowChecksAlerts(std::list<FlowCheck*> *cb_list);
-  void loadFlowChecks(FlowChecksLoader *fcl);
+  void loadFlowChecksAlerts(std::list<FlowCheck*>* cb_list);
+  void loadFlowChecks(FlowChecksLoader* fcl);
 
  public:
-  FlowChecksExecutor(FlowChecksLoader *fcl, NetworkInterface *_iface);
+  FlowChecksExecutor(FlowChecksLoader* fcl, NetworkInterface* _iface);
   virtual ~FlowChecksExecutor();
 
-  FlowAlert *execChecks(Flow *f, FlowChecks c);
+  void execChecks(Flow* f, FlowChecks c);
 };
 
 #endif /* _FLOW_CHECKS_EXECUTOR_H_ */

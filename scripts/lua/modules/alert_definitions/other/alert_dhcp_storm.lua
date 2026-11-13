@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -11,6 +11,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local alert_entities = require "alert_entities"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -25,6 +27,14 @@ alert_dhcp_storm.meta = {
   entities = {
      alert_entities.interface,
   },
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.credential_access,
+      mitre_technique = mitre.technique.adversary_in_the_middle,
+      mitre_sub_technique = mitre.sub_technique.dhcp_spoofing,
+      mitre_id = "T1557.003"
+   },
 }
 
 -- ##############################################

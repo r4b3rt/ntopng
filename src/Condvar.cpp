@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +24,8 @@
 /* ************************************ */
 
 Condvar::Condvar() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
   init();
 }
 
@@ -38,6 +40,8 @@ void Condvar::init() {
 /* ************************************ */
 
 Condvar::~Condvar() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
   pthread_mutex_destroy(&mutex);
   pthread_cond_destroy(&condvar);
 }
@@ -47,13 +51,13 @@ Condvar::~Condvar() {
 int Condvar::wait() {
   int rc;
 
-  if((rc = pthread_mutex_lock(&mutex)) != 0) {
-    ntop->getTrace()->traceEvent(TRACE_ERROR, "Condvar::wait() lock failed %d/%s", rc, strerror(rc));
+  if ((rc = pthread_mutex_lock(&mutex)) != 0) {
+    ntop->getTrace()->traceEvent(
+        TRACE_ERROR, "Condvar::wait() lock failed %d/%s", rc, strerror(rc));
     return rc;
   }
 
-  while(predicate == false)
-    rc = pthread_cond_wait(&condvar, &mutex);
+  while (predicate == false) rc = pthread_cond_wait(&condvar, &mutex);
 
   predicate = false;
 
@@ -64,27 +68,29 @@ int Condvar::wait() {
 
 /* ************************************ */
 
-int Condvar::timedWait(struct timespec *expiration) {
+int Condvar::timedWait(struct timespec* expiration) {
   int rc;
 
-  if((rc = pthread_mutex_lock(&mutex)) != 0) {
-    ntop->getTrace()->traceEvent(TRACE_ERROR,
-				 "Condvar::wait() lock failed %d/%s", rc, strerror(rc));
+  if ((rc = pthread_mutex_lock(&mutex)) != 0) {
+    ntop->getTrace()->traceEvent(
+        TRACE_ERROR, "Condvar::wait() lock failed %d/%s", rc, strerror(rc));
     return rc;
   }
 
 #if 1
-  while(predicate == false)
-    if((rc = pthread_cond_timedwait(&condvar, 
-				    &mutex, expiration)) == ETIMEDOUT) {
+  while (predicate == false) {
+    rc = pthread_cond_timedwait(&condvar, &mutex, expiration);
+
+    if (rc == ETIMEDOUT) {
       pthread_mutex_unlock(&mutex);
       return rc;
     }
+  }
 #endif
 
   predicate = false;
-  
-  return(pthread_mutex_unlock(&mutex));
+
+  return (pthread_mutex_unlock(&mutex));
 }
 
 /* ************************************ */
@@ -98,11 +104,10 @@ int Condvar::signal_waiters(bool signal_all) {
 
   rc = pthread_mutex_unlock(&mutex);
 
-  if(signal_all)
+  if (signal_all)
     rc = pthread_cond_broadcast(&condvar);
   else
     rc = pthread_cond_signal(&condvar);
 
   return rc;
 }
-

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -20,6 +22,13 @@ alert_ndpi_url_possible_sql_injection.meta = {
    alert_key  = flow_alert_keys.flow_alert_ndpi_url_possible_sql_injection,
    i18n_title = "alerts_dashboard.ndpi_url_possible_sql_injection_title",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.initial_access,
+      mitre_technique = mitre.technique.exploit_pub_facing_app,
+      mitre_id = "T1190"
+   },
 
    has_victim = true,
    has_attacker = true,
@@ -37,7 +46,11 @@ end
 -- #######################################################
 
 function alert_ndpi_url_possible_sql_injection.format(ifid, alert, alert_type_params)
-   return
+   if alert_type_params and alert_type_params.proto and alert_type_params.proto.http then
+      return i18n('alerts_dashboard.ndpi_url_possible_sql_injection_descr', { url =  alert_type_params.proto.http.last_url})
+   else
+      return i18n('alerts_dashboard.ndpi_url_possible_sql_injection_descr_generic')
+   end
 end
 
 -- #######################################################

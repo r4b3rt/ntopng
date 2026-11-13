@@ -1,0 +1,387 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/pro/enterprise/modules/?.lua;" .. package.path
+
+-- ############################################
+-- Requires
+
+require "lua_utils"
+local rest_utils = require("rest_utils")
+local format_utils = require("format_utils")
+require "lua_utils_get"
+
+if ntop.isEnterpriseM and ntop.isEnterpriseM() then
+    require "aggregate_live_flows"
+end
+
+-- ############################################
+-- Set up input variables 
+
+local ifid = _GET["ifid"]
+local vlan = tonumber(_GET["vlan_id"] or -1)
+local device_ip = _GET["deviceIP"]
+local ifIdx = tonumber(_GET["ifIdx"] or -1)
+local inIfIdx = tonumber(_GET["inIfIdx"] or -1)
+local outIfIdx = tonumber(_GET["outIfIdx"] or -1)
+local status = tonumber(_GET["status"] or -1)
+local criteria = _GET["aggregation_criteria"] or ""
+-- Host locality filter ("local"/"remote")
+local host_locality = 0
+if _GET["host_locality"] == "local" then
+    host_locality = 1
+elseif _GET["host_locality"] == "remote" then
+    host_locality = 2
+end
+-- Site filter, applied by the same per-host aggregation (it was never read: the filter had no effect)
+local site_id = tonumber(_GET["site_id"])
+if (site_id == nil) or (site_id < 0) then
+    site_id = nil
+end
+-- Flows of a server port / L4 protocol / application ("M.A" or "X" id, as the Server Ports chart)
+local srv_port = tonumber(_GET["srv_port"])
+local l4proto = tonumber(_GET["l4proto"])
+local application = _GET["application"]
+if isEmptyString(application) then
+    application = nil
+end
+local rc = rest_utils.consts.success.ok
+local filters = {}
+
+filters["page"] = tonumber(_GET["draw"] or 0)
+filters["sort_column"] = _GET["sort"]
+filters["sort_order"] = _GET["order"] or 'asc'
+filters["start"] = tonumber(_GET["start"] or 0)
+filters["length"] = tonumber(_GET["length"] or 10)
+filters["map_search"] = _GET["map_search"]
+filters["host"] = _GET["host"]
+
+if (vlan) and (vlan == '') then
+    vlan = nil
+end
+
+if (isEmptyString(device_ip)) then
+    device_ip = nil
+end
+
+-- ############################################
+
+local debugger = false
+
+-- Badges of a host as raw flags (the page draws them): the HTML version called i18n for each
+-- badge and loaded the whole locale, most of the time of this REST
+local function host_flags(h)
+    h = h or {}
+    local flags = format_utils.formatMainAddressCategoryNoHTML(h, {})
+    flags.is_broadcast = (h["is_broadcast"] == true) or nil
+    flags.broadcast_domain_host = (h["broadcast_domain_host"] == true) or nil
+    flags.privatehost = (h["privatehost"] == true) or nil
+    flags.dhcp_host = (h["dhcpHost"] == true) or nil
+    return flags
+end
+
+local function set_host_info(host_vlan_id, host_ip, host_name, is_host_in_mem, flow_vlan_id)
+    local host_info = {}
+    local vlan_id_to_use = host_vlan_id
+    if (not is_host_in_mem) then
+        vlan_id_to_use = flow_vlan_id
+    end
+    host_info.vlan_name = getFullVlanName(vlan_id_to_use)
+    host_info.ip = ternary(tonumber(vlan_id_to_use) ~= 0, string.format("%s@%s", host_ip, vlan_id_to_use), host_ip)
+    host_info.ip_label = ternary(tonumber(vlan_id_to_use) ~= 0, string.format("%s@%s", host_ip, host_info.vlan_name),
+        host_ip)
+
+    host_info.name = host_name
+    if (not isEmptyString(host_info.name)) then
+        host_info.name = ternary(host_info.name ~= host_info.ip and host_info.name ~= host_ip, host_info.name, "")
+        host_info.name = ternary(vlan_id_to_use ~= 0, string.format("%s@%s", host_info.name, host_info.vlan_name),
+            host_info.name)
+    end
+
+    return host_info
+end
+
+-- ############################################
+
+if isEmptyString(ifid) then
+    ifid = interface.getId()
+end
+
+interface.select(ifid)
+
+local res = {}
+local num_entries = 0
+
+-- Aggregation criteria 
+local criteria_type_id = 1 -- by default application_protocol
+if criteria == "client" then
+    criteria_type_id = 2
+elseif criteria == "server" then
+    criteria_type_id = 3
+elseif criteria == "client_server" then
+    criteria_type_id = 4
+elseif criteria == "app_client_server_criteria" then
+    criteria_type_id = 5
+elseif criteria == "info" then
+    criteria_type_id = 6
+elseif criteria == "client_server_srv_port" then
+    criteria_type_id = 7
+elseif criteria == "client_server_srv_port_app_proto" then
+    criteria_type_id = 8
+elseif criteria == "src_as_dst_as" then
+    criteria_type_id = 9
+elseif criteria == "src_as_transit_as_dst_as" then
+    criteria_type_id = 10
+elseif criteria == "host" then
+    criteria_type_id = 11
+elseif ntop.isEnterpriseM and ntop.isEnterpriseM() then
+    criteria_type_id = get_criteria_type_id(criteria)
+end
+
+local isView = interface.isView()
+local x = 0
+-- Retrieve the flows
+local aggregated_info = interface.getProtocolFlowsStats(criteria_type_id, filters["page"], filters["sort_column"],
+    filters["sort_order"], filters["start"], filters["length"], ternary(not isEmptyString(filters["map_search"]),
+        filters["map_search"], nil), ternary(filters["host"] ~= "", filters["host"], nil), vlan, device_ip, inIfIdx, outIfIdx, ifIdx, status, host_locality, site_id, srv_port, l4proto, application)
+-- Formatting the data
+for _, data in pairs(aggregated_info or {}) do
+    local bytes_sent = data.bytes_sent or 0
+    local bytes_rcvd = data.bytes_rcvd or 0
+    local total_bytes = bytes_rcvd + bytes_sent
+    local add_app_proto = false
+    local add_server = false
+    local add_host = false
+    local add_client = false
+    local add_server_port = false
+    local client = nil
+    local server = nil
+    local host = nil
+    local info = nil
+    local application = nil
+    local srv_port = nil
+
+    local response = {}
+    if (criteria_type_id == 1) then
+        add_app_proto = true
+    elseif (criteria_type_id == 2) then
+        if (data.client_ip ~= nil) then
+            add_client = true
+        end
+    elseif (criteria_type_id == 3) then
+        if (data.server_ip ~= nil) then
+            add_server = true
+        end
+    elseif (criteria_type_id == 7) then
+        if (data.server_ip ~= nil) then
+            add_server = true
+        end
+        if (data.client_ip ~= nil) then
+            add_client = true
+        end
+        if (data.srv_port ~= nil) then
+            add_server_port = true
+        end
+    elseif (criteria_type_id == 8) then
+        if (data.server_ip ~= nil) then
+            add_server = true
+        end
+        if (data.client_ip ~= nil) then
+            add_client = true
+        end
+        if (data.srv_port ~= nil) then
+            add_server_port = true
+        end
+        add_app_proto = true
+    elseif (criteria_type_id == 11) then
+        if (data.ip ~= nil) then
+            add_host = true
+        end
+    elseif ntop.isEnterpriseM and ntop.isEnterpriseM() then
+        response = get_output_flags(criteria_type_id)
+    end
+
+    if (add_app_proto or response.add_app_proto) then
+        application = {
+            label = data.proto_name,
+            id = data.proto_id
+        }
+    end
+
+    if (add_server_port) then
+        srv_port = {
+            label = data.srv_port,
+            id = data.srv_port
+        }
+    end
+
+    if (data.num_entries == 0) then
+        goto continue
+    end
+
+    -- Format the client and server info
+    if (add_client or response.add_client) then
+        local host = interface.getHostInfo(data.client_ip, data.cli_vlan_id or data.vlan_id)
+        local in_memory = (host ~= nil)
+        local is_alerted = (in_memory) and (host["num_alerts"] ~= nil) and (host["num_alerts"] > 0)
+        -- Locality flag used by the sites dashboard to split aggregated live
+        -- flows into "local hosts" vs "remote hosts" (in addition to the
+        -- plain client/server role). in_memory hosts already carry it;
+        -- flows whose client isn't currently tracked in memory fall back to
+        -- a plain local-network membership check on the IP.
+        local is_local
+        if in_memory then
+            is_local = host["localhost"]
+        else
+            is_local = ntop.isLocalAddress(data.client_ip)
+        end
+
+        client = {
+            vlan_id = data.cli_vlan_id or data.vlan_id,
+            label = hostinfo2label({
+                ip = data.client_ip,
+                vlan = data.cli_vlan_id or data.vlan_id
+            }),
+            ip = data.client_ip,
+            is_alerted = is_alerted,
+            in_memory = in_memory,
+            is_local = is_local,
+            flags = host_flags(host)
+        }
+    end
+
+    if (add_server or response.add_server) then
+        local host = interface.getHostInfo(data.server_ip, data.srv_vlan_id or data.vlan_id)
+        local in_memory = (host ~= nil)
+        local is_alerted = (in_memory) and (host["num_alerts"] ~= nil) and (host["num_alerts"] > 0)
+        local is_local
+        if in_memory then
+            is_local = host["localhost"]
+        else
+            is_local = ntop.isLocalAddress(data.server_ip)
+        end
+
+        server = {
+            vlan_id = data.srv_vlan_id or data.vlan_id,
+            label = hostinfo2label({
+                ip = data.server_ip,
+                vlan = data.srv_vlan_id or data.vlan_id
+            }),
+            ip = data.server_ip,
+            is_alerted = is_alerted,
+            in_memory = in_memory,
+            is_local = is_local,
+            flags = host_flags(host)
+        }
+    end
+
+    if (add_host or response.add_host) then
+        local host_info = interface.getHostInfo(data.ip, data.vlan_id)
+        host = {
+            vlan_id = data.srv_vlan_id or data.vlan_id,
+            label = hostinfo2label({
+                ip = data.ip,
+                vlan = data.srv_vlan_id or data.vlan_id
+            }),
+            ip = data.ip,
+            in_memory = (host_info ~= nil),
+            flags = host_flags(host_info)
+        }
+    end
+
+    if (table.len(response) > 0 and response.add_info) then
+        info = {
+            label = data.info,
+            id = data.info
+        }
+    end
+
+    local src_as_info = nil
+    local dst_as_info = nil
+    local transit_as_info = nil
+
+    if (table.len(response) > 0 and (response.add_src_as or response.add_dst_as or response.add_transit_as)) then
+        if response.add_src_as and data.src_as then
+            src_as_info = {
+                label = format_utils.formatASN(data.src_as),
+                asn = data.src_as
+            }
+        end
+
+        if response.add_dst_as and data.dst_as then
+            dst_as_info = {
+                label = format_utils.formatASN(data.dst_as),
+                asn = data.dst_as
+            }
+        end
+
+        if response.add_transit_as and data.transit_as then
+            transit_as_info = {
+                label = format_utils.formatASN(data.transit_as),
+                asn = data.transit_as
+            }
+        end
+    end
+
+    -- TODO: remove this data from inside the for
+    num_entries = data.num_entries
+
+    local item = {
+        flows = format_high_num_value_for_tables(data, 'num_flows'),
+
+        breakdown = {
+            percentage_bytes_sent = (bytes_sent * 100) / total_bytes,
+            percentage_bytes_rcvd = (bytes_rcvd * 100) / total_bytes
+        },
+        bytes_rcvd = bytes_rcvd,
+        bytes_sent = bytes_sent,
+        tot_traffic = total_bytes,
+        tot_score = format_high_num_value_for_tables(data, 'total_score'),
+        num_servers = format_high_num_value_for_tables(data, 'num_servers'),
+        num_clients = format_high_num_value_for_tables(data, 'num_clients'),
+        client = client,
+        server = server,
+        host = host,
+        info = info,
+        srv_port = srv_port,
+        application = application,
+        src_as = src_as_info,
+        dst_as = dst_as_info,
+        transit_as = transit_as_info,
+        device_ip = data.device_ip,
+        vlan_id = {
+            id = nil,
+            label = nil
+        }
+    }
+
+    if data.vlan_id and data.vlan_id ~= 0 then
+        item.vlan_id = {
+            id = data.vlan_id,
+            label = getFullVlanName(data.vlan_id)
+        }
+    end
+    if criteria_type_id == 1 or criteria_type_id == 5 or criteria_type_id == 8 then
+        item.app_proto_is_not_guessed = data.is_not_guessed
+        -- -1 unknown, 0 guessed, 1 DPI (the page translates it)
+        item.confidence_id = ternary(application.id == "0", -1, ternary(data.is_not_guessed, 1, 0))
+        item.confidence = ternary(data.is_not_guessed, 1, 0)
+    end
+
+    if num_entries > 0 then
+        res[#res + 1] = item
+
+    end
+
+    ::continue::
+end
+
+local extra_rsp_data = {
+    ["draw"] = tonumber(_GET["draw"]),
+    ["recordsFiltered"] = tonumber(num_entries),
+    ["recordsTotal"] = tonumber(num_entries)
+}
+
+rest_utils.extended_answer(rc, res, extra_rsp_data)

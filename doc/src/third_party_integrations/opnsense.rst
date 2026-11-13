@@ -5,7 +5,7 @@ OPNsense
 
 ntopng can be installed on OPNsense as plugin using the Web interface (recommended)
 or using the command line. In both cases the ntop repository for FreeBSD should be
-configured as described at https://packages.ntop.org/FreeBSD/.
+configured as described at https://www.ntop.org/support/documentation/software-installation/.
 
 .. warning::
 
@@ -23,16 +23,12 @@ Log into the OPNsense Shell as administrator (select option 8).
 
   OPNsense Shell
 
-And install the repository using the command provided at https://packages.ntop.org/FreeBSD/
+And install the repository using the command provided at https://www.ntop.org/support/documentation/software-installation/
 (you can cut&paste the command below).
 
 .. code:: bash
 
-   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:13:amd64/latest/ntop-1.0.pkg
-
-.. note::
-
-   On older OPNsense versions the package prefix is .txz so the command will be  pkg add https://packages.ntop.org/FreeBSD/FreeBSD:12:amd64/latest/ntop-1.0.txz
+   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:15:amd64/latest/ntop-1.0.pkg
 
 The output should look like the below.
 
@@ -46,13 +42,23 @@ The output should look like the below.
 Plugin Installation
 ===================
 
+The ntopng plugin can be installed from Shell or through the OPNsense web GUI.
+
 .. note::
 
    Plugins installation in OPNsense requires you to log in as administrator.
 
-Point the browser to the OPNsense management page, go to the *System* > *Firmware* > *Plugins* page,
-and click on the *Check for updates*.
+Log into the OPNsense Shell as administrator (select option 8) and run:
 
+.. code:: bash
+
+   pkg update
+   pkg install os-ntopng-enterprise os-redis
+
+
+Alternatively you can point the browser to the OPNsense management page and install the
+plugins from the user interface. Go to the *System* > *Firmware* > *Plugins* page, 
+and click on the *Check for updates*.
 
 .. figure:: ../img/opnsense_check_for_updates.png
   :align: center
@@ -71,7 +77,7 @@ sure you remove it in case the latter is already installed).
 
   ntopng and Redis Plugins Installation
 
-Install plugin *os-ntopng-enterprise*, then install plugin *os-redis* (which is a requirement) by
+Install the *os-ntopng-enterprise* and the *os-redis* plugins (which is a requirement) by
 clicking on the *+* symbol.
 
 .. warning::
@@ -117,8 +123,7 @@ The link at the bottom of the page can be followed to generate the license key.
 The license can be installed through the same page by pasting it in the *License Key*
 box and saving the configuration. The service should be restarted in the *General* page.
 
-Please note that ntopng runs by default as Enterprise in demo mode. In order to run
-ntopng in Community mode please check the *Community Mode* flag, save the configuration
+In order to run ntopng in Community mode please check the *Community Mode* flag, save the configuration
 and restart the service through the *General* page.
 
 Service
@@ -148,7 +153,7 @@ Common Issues
 =============
 
 Failure Running ntopng
-~~~~~~~~~~~~~~~~~~~~~~
+----------------------
 
 A common issue on FreeBSD which is preventing ntopng from running and even 
 showing Version and License information under *Settings* > *License*, is a
@@ -157,17 +162,22 @@ remove the database files under /var/db/redis/*.rdb and restart the service
 (or reboot the machine).
 
 Failure Adding the Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-----------------------------
 
-Some users experienced issues adding the ntop repository in OPNsense as shown in
-the trace below. This seems to be due to an issue with the ACME plugin. Manually
-importing LE root and intermediate CA chain seems to fix this issue. Please read
-https://forum.opnsense.org/index.php?topic=25178.0 for more info.
+Some users experienced issues adding the ntop repository in OPNsense with a
+"Certificate verification failed" message. This seems to be due to an issue with the ACME
+plugin. Manually importing LE root and intermediate CA chain seems to fix this issue.
+Please read https://forum.opnsense.org/index.php?topic=25178.0 for more info.
 
-.. code:: bash
+libsodium.so.23 not found
+-------------------------
 
-   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:12:amd64/latest/ntop-1.0.txz
-   Certificate verification failed for /O=Digital Signature Trust Co./CN=DST Root CA X3
-   2275989975040:error:1416F086:SSL routines:tls_process_server_certificate:certificate verify failed:/usr/src/crypto/openssl/ssl/statem/statem_clnt.c:1915:
-   pkg: https://packages.ntop.org/FreeBSD/FreeBSD:12:amd64/latest/ntop-1.0.txz: Authentication error
+ntopng on FreeBSD depends on libsodium.so.23, however OPNsense 24.x provides
+libsodium.so.26, this leads to a failure when trying to run ntopng:
 
+"Shared object libsodium.so.23 not found, required by ntopng"
+
+As a workaround until the library version is aligned, this can be fixed by 
+manually creating a symlink:
+
+ln -s /usr/local/lib/libsodium.so.26 /usr/local/lib/libsodium.so.23

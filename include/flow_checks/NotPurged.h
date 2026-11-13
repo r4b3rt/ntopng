@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,19 +26,22 @@
 
 class NotPurged : public FlowCheck {
  private:
-  void checkNotPurged(Flow *f);
-  
+  void checkNotPurged(Flow* f);
+
  public:
- NotPurged() : FlowCheck(ntopng_edition_community,
-			    false /* All interfaces */, false /* Don't exclude for nEdge */, false /* NOT only for nEdge */,
-			    false /* has_protocol_detected */, true /* has_periodic_update */, true /* has_flow_end */) {};
+  NotPurged()
+      : FlowCheck(ntopng_edition_community, false /* All interfaces */,
+                  false /* Don't exclude for nEdge */,
+                  false /* NOT only for nEdge */,
+                  false /* has_protocol_detected */,
+                  true /* has_periodic_update */, true /* has_flow_end */) {};
   ~NotPurged() {};
 
-  void periodicUpdate(Flow *f);
-  void flowEnd(Flow *f);
-  FlowAlert *buildAlert(Flow *f);
-  
-  std::string getName()        const { return(std::string("not_purged")); }
+  void periodicUpdate(Flow* f);
+  void flowEnd(Flow* f);
+  FlowAlert* buildAlert(Flow* f);
+
+  std::string getName() const { return (std::string("not_purged")); }
 };
 
 #endif /* _NOT_PURGED_FLOW_H_ */

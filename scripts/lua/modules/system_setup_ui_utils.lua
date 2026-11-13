@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -11,7 +11,7 @@ local template = require "template_utils"
 local json = require "dkjson"
 local page_utils = require("page_utils")
 
-local is_nedge = ntop.isnEdge()
+local is_nedge = ntop.isnEdge and ntop.isnEdge()
 local is_appliance = ntop.isAppliance()
 local is_iot_bridge = ntop.isIoTBridge()
 
@@ -23,6 +23,7 @@ local subpages = {
    { name = "mode",               nedge = true,  appliance = true,                       url = "mode.lua",           label = i18n("nedge.setup_mode")                  },
    { name = "wifi",               nedge = false, appliance = true,                       url = "wifi.lua",           label = i18n("prefs.wifi")                        },
    { name = "network_interfaces", nedge = true,  appliance = true,                       url = "interfaces.lua",     label = i18n("prefs.network_interfaces")          },
+   { name = "vlan",               nedge = true,  appliance = false,                       url = "vlan.lua",           label = i18n("nedge.vlan_configuration")          },
    { name = "network_setup",      nedge = true,  appliance = true,                       url = "network.lua",        label = i18n("nedge.interfaces_configuration")    },
    { name = "dhcp",               nedge = true,  appliance = false, routing_only = true, url = "dhcp.lua",           label = i18n("nedge.dhcp_server")                 },
    { name = "dns",                nedge = true,  appliance = false, vlan_trunk = false,  url = "dns.lua",            label = i18n("nedge.dns_configuration")           },
@@ -55,7 +56,7 @@ function system_setup_ui_utils.print_page_before()
       return false
    end
 
-   page_utils.set_active_menu_entry(page_utils.menu_entries.system_setup)
+   page_utils.print_header_and_set_active_menu_entry(page_utils.menu_entries.system_setup)
    active_page = "admin"
    dofile(dirs.installdir .. "/scripts/lua/inc/menu.lua")
    page_utils.print_page_title(i18n("nedge.system_setup"))
@@ -85,13 +86,24 @@ function system_setup_ui_utils.printConfigChange(sys_config, warnings)
    if config_changed or first_start then
 
       if is_nedge then
-         local dhcp_config = sys_config:getDhcpServerConfig()
+        local lan_networks = sys_config:getLanNetworks()
+        local dhcp_config = sys_config:getDhcpServerConfig()
 
-         if dhcp_config.enabled then
-            if not sys_config:hasValidDhcpRange(dhcp_config.subnet.first_ip, dhcp_config.subnet.last_ip) then
-               warnings[#warnings + 1] = i18n("nedge.invalid_dhcp_range")
+          if dhcp_config.enabled then
+            local warn_dhcp_range = false
+            for _, lan_config in pairs(lan_networks) do
+              local lan_name = lan_config.iface
+              if (not lan_name) or (not dhcp_config["subnet"][lan_name]) then
+                goto continue
+              end
+
+              if not sys_config:hasValidDhcpRange(dhcp_config["subnet"][lan_name]["first_ip"], dhcp_config["subnet"][lan_name]["last_ip"]) and not warn_dhcp_range then
+                warnings[#warnings + 1] = i18n("nedge.invalid_dhcp_range")
+                warn_dhcp_range = true -- warn once in case of multiple interfaces
+              end
+              ::continue::
             end
-         end
+          end
       end
 
       print(
@@ -128,13 +140,13 @@ function system_setup_ui_utils.printConfigChange(sys_config, warnings)
       print[[<button style="visibility:hidden;">&nbsp;</button>]]
       print[[<div style="display: inline-block; float: right;">]]
 
-   if config_changed then
-     print[[<form name="modifyNedgeConfig" class="form-inline" style="display:inline;" method="POST">
+      if config_changed then
+        print[[<form name="modifyNedgeConfig" class="form-inline" style="display:inline;" method="POST">
     <input name="csrf" type="hidden" value="]] print(ntop.getRandomCSRFValue()) print [["/>
     <input type="hidden" name="nedge_config_action" value="discard">
     <button type="submit" class="btn btn-secondary">]] print(i18n("nedge.setup_discard")) print[[</button>
   </form>]]
-  end
+      end
 
       print[[
 <form id="applyNedgeConfig" name="modifyNedgeConfig" class="form-inline" style="display:inline;" method="POST">
@@ -243,30 +255,44 @@ function system_setup_ui_utils.printPageBody(sys_config, print_page_body_callbac
 end
 
 
-function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_key, netmask_key, value, showEnabled, extra)
+function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_key, netmask_key, value, netmask_value, showEnabled, extra)
   local field_id = ip_key .. "__id"
   local networks_presets = {
-    {prefix="192.168", netmask="255.255.255.0"},
+    {prefix="192.168", netmask="255.255.0.0"},
     {prefix="172.16", netmask="255.255.0.0"},
     {prefix="10.0", netmask="255.255.0.0"},
   }
   extra = extra or {}
   local initial_preset = ""
-  local initial_quad3 = ""
-  local initial_quad4 = ""
-  local netmask_value = "255.255.255.0"
 
-  if value ~= nil then
-    local parts = string.split(value, "%.")
-    local prefix = table.concat({parts[1], parts[2]}, ".")
+  if isEmptyString(netmask_value) then
+    netmask_value = "255.255.255.0"
+  end
+  local netmask_parts = string.split(netmask_value, "%.")
+
+  local value_parts = { "", "", "", ""}
+  if not isEmptyString(value) then
+    value_parts = string.split(value, "%.")
+
+    local prefix = table.concat({value_parts[1], value_parts[2]}, ".")
 
     for _, preset in pairs(networks_presets) do
       if preset.prefix == prefix then
         initial_preset = preset.prefix
-        initial_quad3 = parts[3]
-        initial_quad4 = parts[4]
+        netmask_value = preset.netmask
+        netmask_parts = string.split(netmask_value, "%.")
         break
       end
+    end
+
+    if isEmptyString(initial_preset) then
+      local masked_parts = {}
+      for _, xxx in ipairs(netmask_parts) do
+        if xxx == '255' then
+          masked_parts[_] = value_parts[_]
+        end
+      end
+      initial_preset = table.concat(masked_parts, ".")
     end
   end
 
@@ -277,25 +303,14 @@ function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_ke
   end
 
    print('<tr id="'..field_id..'" style="display: '..showEnabled..';"><td width=50%><strong>'..label..'</strong><p><small>'..comment..'</small></td>')
- print [[
+   print [[
     <td align=right>
-      <table class="form-group mb-3" style="margin-bottom: 0; min-width:22em;">
+      <table class="mb-3" style="margin-bottom: 0; min-width:22em;">
         <tr class='border-0'>
-          ]]
-
-      print[[
           <td class="local-ip-selector border-0 text-end" style="vertical-align:top; padding-left: 2em;">]]
-
-   -- Find initial netmask
-   for _, preset in pairs(networks_presets) do
-      if preset.prefix == initial_preset then
-         netmask_value = preset.netmask
-      end
-   end
 
    if extra.net_select ~= false then
       print[[<select name="]] print(field_id) print[[_net" class="form-select d-inline-block" style="width: 9.6rem">]]
-
       for _, preset in pairs(networks_presets) do
          print[[<option value="]] print(preset.prefix) print[["]]
          if preset.prefix == initial_preset then
@@ -308,27 +323,26 @@ function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_ke
       print[[</select> .]]
    else
       print[[<input type="hidden" name="]] print(field_id) print[[_net" value="]] print(initial_preset) print[[">]]
-      print([[<span>]] .. initial_preset .. [[</span>]])
-      print(ternary(extra.quad3_select == false, ".", " . "))
+
+      for _, xxx in ipairs(netmask_parts) do
+        if xxx == '255' then
+          print[[<input class="form-control d-inline-block" style="width: 4.8rem" type="number" min="0" max="255" name="]] print(field_id) print[[_quad_]] print(tostring(_)) print[[" value="]] print(value_parts[_]) print[[" disabled /> . ]]
+           
+        end
+      end
    end
 
-   local input_type = "number"
-   if extra.quad3_select == false then
-      input_type = "hidden"
-      print(initial_quad3)
+   for _, xxx in ipairs(netmask_parts) do
+      if xxx ~= '255' then
+         print[[<input class="form-control d-inline-block" style="width: 4.8rem" type="number" min="0" max="255" name="]] print(field_id) print[[_quad_]] print(tostring(_)) print[[" value="]] print(value_parts[_]) print[[" />]]
+         if _ ~= 4 then
+           print[[ . ]]
+         end
+      end
    end
 
-   print[[<input class="form-control d-inline-block" style="width: 4.8rem" type="]] print(input_type) print[[" min="0" max="255" name="]] print(field_id) print[[_quad_3" value="]] print(initial_quad3) print[[" />]]
-   print(ternary(extra.quad4_select == false, ".", " . "))
+   print[[<input type="hidden" name="]] print(ip_key) print[[">]]
 
-   local input_type = "number"
-   if extra.quad4_select == false then
-      input_type = "hidden"
-      print(initial_quad4)
-   end
-
-   print[[<input class="form-control d-inline-block" style="width: 4.8rem" type="]] print(input_type) print[[" min="1" max="254" name="]] print(field_id) print[[_quad_4" value="]] print(initial_quad4) print[[" />
-   <input type="hidden" name="]] print(ip_key) print[[">]]
    if netmask_key ~= nil then
       print[[<input type="hidden" name="]] print(netmask_key) print[[" value="]] print(netmask_value) print[[">]]
    end
@@ -357,12 +371,21 @@ function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_ke
             return false;
 
           var f_net = form.find('[name="]] print(field_id) print[[_net"]');
+          var f_quad1 = form.find('[name="]] print(field_id) print[[_quad_1"]');
+          var f_quad2 = form.find('[name="]] print(field_id) print[[_quad_2"]');
           var f_quad3 = form.find('[name="]] print(field_id) print[[_quad_3"]');
           var f_quad4 = form.find('[name="]] print(field_id) print[[_quad_4"]');
           var f_ip = form.find('[name="]] print(ip_key) print[["]');
+]]
+   if extra.net_select ~= false then
+      print[[
           f_ip.val([f_net.val(), f_quad3.val(), f_quad4.val()].join("."));
-
-          ]]
+      ]]
+   else   
+      print[[
+          f_ip.val([f_quad1.val(), f_quad2.val(), f_quad3.val(), f_quad4.val()].join("."));
+      ]]
+   end
 
    if netmask_key ~= nil then
       print[[
@@ -382,6 +405,8 @@ function system_setup_ui_utils.printPrivateAddressSelector(label, comment, ip_ke
    print[[
           // Clear the support fields
           f_net.removeAttr("name");
+          f_quad1.removeAttr("name");
+          f_quad2.removeAttr("name");
           f_quad3.removeAttr("name");
           f_quad4.removeAttr("name");
 
@@ -416,7 +441,7 @@ function system_setup_ui_utils.prefsDateTimeFieldPrefs(label, comment, key, defa
 
   print [[
     <td align=right>
-      <table class="form-group mb-3" style="margin-bottom: 0; min-width:22em;">
+      <table class="mb-3" style="margin-bottom: 0; min-width:22em;">
         <tr>
           <td width="100%;"></td>]]
 

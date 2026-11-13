@@ -37,6 +37,7 @@ if(new_password ~= confirm_new_password) then
 end
 
 if(ntop.resetUserPassword(_SESSION["user"], username, old_password, new_password)) then
+   -- Note: other sessions of the user are invalidated by resetUserPassword
    print ("{ \"result\" : 0, \"message\" : \"Password changed successfully\" }")
 else
    print ("{ \"result\" : -1, \"message\" : \"Unable to set the new user password: perhaps the old password was invalid ?\" }")

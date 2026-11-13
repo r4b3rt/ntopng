@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -29,6 +29,13 @@ if isEmptyString(ifid) then
     rest_utils.answer(rc)
     return
  end
+
+interface.select(ifid)
+-- interface.select() silently keeps the interface of the user when this one is not allowed
+if tostring(interface.getId()) ~= tostring(ifid) then
+   rest_utils.answer(rest_utils.consts.err.invalid_interface)
+   return
+end
 
 if(host_info["host"] ~= nil) then
    local breakdown = {}

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -8,7 +8,7 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 require "lua_utils"
 local json = require("dkjson")
 local datasources_utils = require("datasources_utils")
-local http_lint = require("http_lint")
+-- local http_lint = require("http_lint")
 
 local action = _POST["action"]
 

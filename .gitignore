@@ -2,14 +2,27 @@
 
 # Ignoring front end developement directories
 node_modules/
+httpdocs/ai_dashboards
+python/
+confdefs.h
+.code-workspace.code-workspace
 .history/
 package-lock.json
+.claude/
+.agents/
+python/setup.py
+python/__init__.py
+packages/OPNsense/package/+POST_INSTALL
+packages/OPNsense/package/+MANIFEST
+third-party/clickhouse-cpp
+httpdocs/dist
+third-party/clickhouse-cpp
+.playwright-mcp
 
 ntopng.sublime-*src/*.o
 src/*.obj
 third-party/json-c/config.h.in
 third-party/json-c/*
-third-party/rrdtool-*/*
 third-party/lua-*/src/*.o
 third-party/lua-*/src/liblua*
 third-party/lua-*/src/lua
@@ -50,6 +63,7 @@ httpdocs/geoip/*
 httpdocs/ssl/ntopng-cert.pem
 httpdocs/misc/ntopng-utils-manage-config
 httpdocs/misc/ntopng-utils-manage-updates
+httpdocs/css/custom-theme.css
 include/config.h.in
 autom4te.cache*
 *#
@@ -60,9 +74,12 @@ config.status
 configure
 configure.ac
 aclocal.m4
+.settings
+tags
+fuzzcampaign
 doc/doxygen.conf
 nDPI
-ntopng
+/ntopng
 packages/*.spec
 packages/etc/systemd/system/ntopng.service
 packages/etc/systemd/system/ntopng@.service
@@ -90,6 +107,8 @@ logobase.jpg
 logobase.png
 representations.aird
 third-party/libcrafter/
+third-party/clickhouse-cpp
+
 *.snap
 prime/
 stage/
@@ -111,6 +130,8 @@ src/*.o
 
 # Ignore config files and tests
 .vscode/
+compile_commands.json
+compile_commands_script.sh
 tests/e2e/rest/conflicts/*
 ntopng.pid
 packages/wizard/ntopng-config
@@ -118,3 +139,13 @@ tests/e2e/rest/data/*
 tools/tmp.csv
 tests/e2e/rest/logs/*
 httpdocs/img/custom_logo.png
+.dual-graph/
+
+# Playwright E2E
+tests/e2e/.auth/
+tests/e2e/results/
+tests/e2e/report/
+
+# cppcheck build cache
+.cppcheck-build/
+scripts/locales/*.luac

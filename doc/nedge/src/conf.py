@@ -21,6 +21,10 @@ extensions = [
     'sphinx.ext.intersphinx',
 ]
 
+# Workaround for platforms where swaggerdoc is not available
+if not os.environ.get("PYTHON_SKIP_SWAGGERDOC"):
+    extensions.append('sphinxcontrib.swaggerdoc')
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
@@ -37,7 +41,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'nEdge'
-copyright = u'2018, ntop'
+copyright = u'2025, ntop'
 author = u'ntop.org'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -54,7 +58,7 @@ release = u''
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = 'en'
 
 # There are two options for replacing |today|: either, you set today to some
 # non-false value, then it is used:
@@ -130,6 +134,10 @@ html_logo = "img/logo.png"
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+html_css_files = [
+    'css/custom.css',
+]
 
 # Add any extra paths that contain custom files (such as robots.txt or
 # .htaccess) here, relative to this directory. These files are copied
@@ -275,7 +283,14 @@ texinfo_documents = [
 # If true, do not generate a @detailmenu in the "Top" node's menu.
 #texinfo_no_detailmenu = False
 
-intersphinx_mapping = {'https://docs.python.org/': None}
+# sphinx 1.8
+#intersphinx_mapping = {'https://docs.python.org/': None}
+# sphinx 8.0
+intersphinx_mapping = {'python': ('https://docs.python.org/3', None)}
 
 def setup(app):
-    app.add_stylesheet('css/ntop.css')
+    # sphinx 1.8
+    #app.add_stylesheet('css/ntop.css')
+    # sphinx 8.0
+    app.add_css_file('css/ntop.css')
+

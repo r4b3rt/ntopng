@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -19,9 +21,17 @@ local alert_binary_application_transfer = classes.class(alert)
 
 alert_binary_application_transfer.meta = {
    alert_key = flow_alert_keys.flow_alert_binary_application_transfer,
-   i18n_title = "alerts_dashboard.binary_application_transfer",
+   i18n_title = "flow_risk.ndpi_binary_application_transfer",
    icon = "fas fa-fw fa-file-download",
 
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.execution,
+      mitre_technique = mitre.technique.user_execution,
+      mitre_sub_technique = mitre.sub_technique.malicious_link,
+      mitre_id = "T1204.001"
+   },
+ 
    has_victim = true,
    has_attacker = true,
 }
@@ -45,8 +55,8 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_binary_application_transfer.format(ifid, alert, alert_type_params)
-   local res = i18n("alerts_dashboard.binary_application_transfer")
-
+   local res
+   
    if (alert_type_params) and (alert_type_params.proto) and (alert_type_params.proto.http) and (alert_type_params.proto.http.last_url) then
       local url = alert_type_params.proto.http.last_url
       local href = format_external_link(url, url, false, interface.getnDPIProtoName(tonumber(alert["l7_master_proto"])))

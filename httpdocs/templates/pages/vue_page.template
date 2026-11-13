@@ -1,0 +1,95 @@
+{#
+  (C) 2023 - ntop.org
+  This template is used by the `Live Flows` page inside the `Host Details`.
+  Optional `vue_container_id`: DOM id of the mount container (default: vue_page_name).
+  It must be unique when the same component is rendered more than once in a page.
+#}
+
+<!--
+  Note: position: relative is used so that absolutely-positioned elements
+  inside the Vue component (dropdowns, overlays, tooltips, etc.) are positioned
+  relative to this container instead of the document body.
+-->
+<div id="{* vue_container_id or vue_page_name *}" style="position: relative">
+  <page-vue :context="context">
+  </page-vue>
+</div>
+  
+<script type="text/javascript">
+  function start_vue(id, component, context) {
+
+    // Global registry for mounted Vue apps (avoids conflicting double mounts)
+    // Using a registry ensures we can explicitly unmount and clean up apps
+    // when pages are dynamically updated or re-rendered.
+    if (!window.vueApps) {
+      window.vueApps = {}
+    }
+    if (!window.vueAppInstances) {
+      window.vueAppInstances = {}
+    }
+
+    // If an app is already mounted on this container, unmount it first.
+    // Vue 3 does not allow two apps to be mounted on the same element.
+    if (window.vueAppInstances[id]) {
+      window.vueAppInstances[id].unmount();
+      window.vueAppInstances[id] = null;
+      window.vueApps[id] = null;
+    }
+
+    // Create a new Vue application instance.
+    const app = ntopVue.Vue.createApp({
+      components: { 'page-vue': component },
+      data() {
+        return { context: context };
+      }
+    });
+
+    // Surface Vue runtime errors to the console (tagged [VUE_ERROR]) so E2E
+    // smoke tests can detect them without needing a full stack trace parser.
+    if (window.__installVueErrorHandler) {
+      window.__installVueErrorHandler(app);
+    }
+
+    // AppShell is the only app instance that owns the SPA router: it mounts
+    // once and stays alive across client side navigations. Per page apps are independent instances that only
+    // exist when the page was reached via a full server round-trip, so they
+    // must NOT install the router
+    if (id === "AppShell" && ntopVue.spaRouter) {
+      app.use(ntopVue.spaRouter);
+    }
+
+    // Mount the Vue app on the target DOM element identified by id.
+    window.vueAppInstances[id] = app;
+    window.vueApps[id] = app.mount(`#${id}`);
+
+    // Return the mounted app instance (useful for future interop or cleanup).
+    return window.vueApps[id];
+  }
+
+  /* ******************************************************* */
+
+  // Initialize the Vue app when the DOM is loaded
+  // Note: third-party.js and ntopng.js are ES modules (type="module"), which are deferred
+  // they execute after HTML parsing but before DOMContentLoaded. Using native
+  // DOMContentLoaded avoids a dependency on $ being available synchronously.
+  function _mount_vue_page() {
+    const _pageId = "{* vue_container_id or vue_page_name *}";
+    const _component = "{* vue_page_name *}";
+    const _ctx = {* page_context *};
+    /* Seed the date_format cache from server context so JS never needs date_format.lua */
+    if (_ctx.date_format && ntopVue.ntopng_utility) {
+      ntopVue.ntopng_utility.set_cached_date_format(_ctx.date_format);
+    }
+    start_vue(_pageId, ntopVue[_component], _ctx);
+  }
+
+  // When this markup is injected after the initial page load (e.g. via
+  // innerHTML/v-html, as done by the live-flow-details Vue card),
+  // DOMContentLoaded has already fired and will never fire again, so the
+  // listener below would silently never run. Mount immediately in that case.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _mount_vue_page);
+  } else {
+    _mount_vue_page();
+  }
+</script>

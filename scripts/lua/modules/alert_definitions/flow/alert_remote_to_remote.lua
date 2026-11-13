@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -12,6 +12,8 @@ local json = require("dkjson")
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -21,8 +23,16 @@ local alert_remote_to_remote = classes.class(alert)
 
 alert_remote_to_remote.meta = {
    alert_key = flow_alert_keys.flow_alert_remote_to_remote,
-   i18n_title = "alerts_dashboard.remote_to_remote",
+   i18n_title = "flow_checks_config.remote_to_remote",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.lateral_movement,
+      mitre_technique = mitre.technique.session_hijacking,
+      mitre_sub_technique = mitre.sub_technique.rdp_hijacking,
+      mitre_id = "T1563.002"
+   },
 }
 
 -- ##############################################

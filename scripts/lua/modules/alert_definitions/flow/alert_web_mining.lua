@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -18,8 +20,16 @@ local alert_web_mining = classes.class(alert)
 
 alert_web_mining.meta = {
    alert_key = flow_alert_keys.flow_alert_web_mining,
+   issue_resolve_policy = "manual", -- Indicator of compromise: the issue is resolved by the user only
    i18n_title = "alerts_dashboard.web_mining",
    icon = "fab fa-bitcoin",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.impact,
+      mitre_technique = mitre.technique.resource_hijacking,
+      mitre_id = "T1496"
+   },
 }
 
 -- ##############################################

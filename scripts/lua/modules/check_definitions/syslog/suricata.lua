@@ -1,13 +1,13 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
-require "lua_utils"
+
+require "ntop_utils"
 require "flow_utils"
 local json = require ("dkjson")
-local alert_severities = require "alert_severities"
 local checks = require("checks")
 
 local syslog_module = {
@@ -17,6 +17,7 @@ local syslog_module = {
   nedge_exclude = true,
 
   key = "suricata",
+   not_periodic_check = true,
 
   -- See below
   hooks = {},
@@ -82,6 +83,28 @@ end
 
 -- #################################################################
 
+local function parsenDPIMetadata(event_ndpi, flow)
+
+   -- Read nDPI metadata coming from the ndpi plugin in Suricata
+
+   if event_ndpi.proto_id then
+      local parts = string.split(event_ndpi.proto_id, "%.")
+      if parts and #parts > 1 then
+         flow.master_protocol = tonumber(parts[1])
+         flow.app_protocol = tonumber(parts[2])
+      else
+         flow.app_protocol = tonumber(event_ndpi.proto_id)
+      end
+      if event_ndpi.confidence then
+         for id, label in pairs(event_ndpi.confidence) do
+            flow.confidence = tonumber(id)
+         end
+      end
+   end
+end
+
+-- #################################################################
+
 local function parseNetflowMetadata(event_flow, flow)
    flow.first_switched_iso8601 = event_flow.start
    flow.last_switched_iso8601 = event_flow['end']
@@ -122,23 +145,33 @@ end
 
 local function parseDNSMetadata(event_dns, flow)
 
+   -- Backward compatibility
    if event_dns.type == "query" then
       flow.dns_query = event_dns.rrname
       flow.dns_query_type = get_dns_type(event_dns.rrtype)
+      flow.dns_query_id = event_dns.id
    end
 
-   -- Additional fields
-   flow.DNS_QUERY_ID = event_dns.id
-   flow.DNS_TX_ID = event_dns.tx_id
+   if event_dns.query 
+      and type(event_dns.query) == "table"
+      and table.len(event_dns.query) > 0 then
+
+      local query = event_dns.query[1]
+
+      if query.type == "query" then
+         flow.dns_query = query.rrname
+         flow.dns_query_type = get_dns_type(query.rrtype)
+      end
+
+      flow.dns_query_id = query.id
+   end
+
 end
 
 -- #################################################################
 
 local function parseTLSMetadata(event_tls, flow)
    flow.tls_server_name = event_tls.sni
-
-   if event_tls.ja3  ~= nil then flow.ja3c_hash = event_tls.ja3.hash  end
-   if event_tls.ja3s ~= nil then flow.ja3s_hash = event_tls.ja3s.hash end
 
    -- Additional fields
    flow.TLS_VERSION = event_tls.version
@@ -153,22 +186,24 @@ end
 -- #################################################################
 
 local function parseStats(event_stats)
-   local external_stats = {}
-
-   external_stats.capture_packets = (event_stats.capture.kernel_packets - event_stats.capture.kernel_drops)
-   external_stats.capture_drops = event_stats.capture.kernel_drops
-
-   external_stats.signatures_loaded = 0
-   external_stats.signatures_failed = 0
-   for _, engine in ipairs(event_stats.detect.engines) do
-     external_stats.signatures_loaded = external_stats.signatures_loaded + engine.rules_loaded
-     external_stats.signatures_failed = external_stats.signatures_failed + engine.rules_failed
+   if((event_stats.capture.kernel_packets ~= nil) and (event_stats.capture.kernel_drops ~= nil)) then
+      local external_stats = {}
+      
+      external_stats.capture_packets = (event_stats.capture.kernel_packets - event_stats.capture.kernel_drops)
+      external_stats.capture_drops = event_stats.capture.kernel_drops
+      
+      external_stats.signatures_loaded = 0
+      external_stats.signatures_failed = 0
+      for _, engine in ipairs(event_stats.detect.engines) do
+	 external_stats.signatures_loaded = external_stats.signatures_loaded + engine.rules_loaded
+	 external_stats.signatures_failed = external_stats.signatures_failed + engine.rules_failed
+      end
+      
+      external_stats.i18n_title = "suricata_collector.statistics"
+      
+      local external_json_stats = json.encode(external_stats)
+      ntop.setCache(external_stats_key, external_json_stats)
    end
-
-   external_stats.i18n_title = "suricata_collector.statistics"
-
-   local external_json_stats = json.encode(external_stats)
-   ntop.setCache(external_stats_key, external_json_stats)
 end
 
 -- #################################################################
@@ -195,6 +230,10 @@ function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
    flow.SURICATA_APP_PROTO = event.app_proto
    flow.COMMUNITY_ID = event.community_id
 
+   if event.ndpi then
+      parsenDPIMetadata(event.ndpi, flow)
+   end
+
    if event.event_type == "alert" then
 
       if event.flow ~= nil then
@@ -202,10 +241,20 @@ function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
          if event.alert ~= nil then
             parseAlertMetadata(event.alert, flow)
             num_alerts = num_alerts + 1
+
+            if event.http ~= nil then
+               parseHTTPMetadata(event.http, flow)
+            elseif event.dns ~= nil then
+               parseDNSMetadata(event.dns, flow) 
+            elseif event.tls ~= nil then
+               parseTLSMetadata(event.tls, flow) 
+            end
+
          else
             num_unhandled = num_unhandled + 1
             flow = nil
          end
+
       else
          num_unhandled = num_unhandled + 1
          flow = nil
@@ -215,15 +264,17 @@ function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
       parseNetflowMetadata(event.netflow, flow)
       num_collected_flows = num_collected_flows + 1
 
+      if event.http ~= nil then
+         parseHTTPMetadata(event.http, flow)
+      elseif event.dns ~= nil then
+         parseDNSMetadata(event.dns, flow) 
+      elseif event.tls ~= nil then
+         parseTLSMetadata(event.tls, flow) 
+      end
+
+   --[[
    elseif event.event_type == "http" and event.http ~= nil then
       parseHTTPMetadata(event.http, flow)
-      num_collected_flows = num_collected_flows + 1
-
-   elseif event.event_type == "fileinfo" then
-      if event.app_proto == "http" and event.http ~= nil then
-         parseHTTPMetadata(event.http, flow)
-      end
-      parseFileInfoMetadata(event.fileinfo, flow)
       num_collected_flows = num_collected_flows + 1
 
    elseif event.event_type == "dns" and event.dns ~= nil then
@@ -233,11 +284,18 @@ function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
    elseif event.event_type == "tls" and event.tls ~= nil then
       parseTLSMetadata(event.tls, flow) 
       num_collected_flows = num_collected_flows + 1
+   --]]
+
+   elseif event.event_type == "fileinfo" and event.fileinfo ~= nil then
+      if event.app_proto == "http" and event.http ~= nil then
+         parseHTTPMetadata(event.http, flow)
+      end
+      parseFileInfoMetadata(event.fileinfo, flow)
+      num_collected_flows = num_collected_flows + 1
 
    elseif event.event_type == "stats" and event.stats ~= nil then
       parseStats(event.stats)
       flow = nil
-
    else
       -- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Unsupported Suricata event '"..event.event_type.."'")
       num_unhandled = num_unhandled + 1
@@ -257,7 +315,14 @@ function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
       interface.processFlow(flow)
    end
 
-   interface.incSyslogStats(1, 0, num_unhandled, num_alerts, 0, num_collected_flows)
+   interface.incSyslogStats(
+      1, -- num_received_events
+      0, -- num_malformed
+      num_unhandled, -- num_unhandled
+      num_alerts, -- num_alerts
+      0, -- num_host_correlations
+      num_collected_flows -- num_collected_flows
+   )
 end 
 
 -- #################################################################

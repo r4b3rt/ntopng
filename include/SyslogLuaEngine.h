@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,11 +30,11 @@ class SyslogLuaEngine : public LuaEngine {
   bool pcall(int num_args, int num_results);
 
  public:
-  SyslogLuaEngine(NetworkInterface *iface);
+  SyslogLuaEngine(NetworkInterface* iface);
   virtual ~SyslogLuaEngine();
 
-  void handleEvent(const char *producer, const char *message,
-    const char *host, int priority);
+  void handleEvent(const char* producer, const char* message, const char* host,
+                   int priority);
 };
 
 #endif

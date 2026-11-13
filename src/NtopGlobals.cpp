@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,14 +24,24 @@
 /* **************************************** */
 
 NtopGlobals::NtopGlobals() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
   start_time = time(NULL);
   file_id = 0;
-  trace = new (std::nothrow) Trace();  
-  is_shutdown = shutdown_requested = false, do_decode_tunnels = true;
+  trace = new (std::nothrow) Trace();
+  is_initialized = is_shutdown = shutdown_requested = false,
+  do_decode_tunnels = true;
 };
 
 /* **************************************** */
 
 NtopGlobals::~NtopGlobals() {
-  if(trace) { delete trace; trace = NULL; }
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+
+  if (trace) {
+    delete trace;
+    trace = NULL;
+  }
 };

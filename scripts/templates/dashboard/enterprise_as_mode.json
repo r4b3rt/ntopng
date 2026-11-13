@@ -1,0 +1,251 @@
+{
+	"name" : "Default ASN Enterprise Dashboard",
+	"readonly" : true,
+	"components" : [
+		{
+			"component" : "badge",
+			"id" : "critical_alert_count",
+			"i18n_name" : "",
+			"color" : "danger",
+			"inactive_color" : "secondary",
+			"width" : 4,
+			"height" : 2,
+			"requires" : {
+				"modules" : [ "!issues" ]
+			},
+			"params" : {
+				"url" : "/lua/rest/v2/get/interface/data.lua",
+				"url_params" : {
+					"type" : "summary"
+				},
+				"icon" : "fas fa-exclamation-triangle",
+				"i18n_name" : "show_alerts.engaged_alerts",
+				"link" : {
+					"url" : "/lua/alert_stats.lua",
+					"url_params" : {
+						"status" : "engaged"
+					}
+				},
+				"counter_path" : "engaged_alerts",
+				"counter_formatter" : "number"
+			}
+		},
+		{
+			"component" : "badge",
+			"id" : "active_host_count",
+			"i18n_name" : "",
+			"color" : "success",
+			"inactive_color" : "secondary",
+			"width" : 4,
+			"height" : 2,
+			"params" : {
+				"url" : "/lua/rest/v2/get/interface/data.lua",
+				"url_params" : {
+					"type" : "summary"
+				},
+				"icon" : "fas fa-laptop",
+				"i18n_name" : "graphs.active_local_hosts",
+				"link" : {
+					"url" : "/lua/hosts_stats.lua",
+					"url_params" : {
+						"mode" : "local"
+					}
+				},
+				"counter_path" : "num_local_hosts",
+				"counter_formatter" : "number"
+			}
+		},
+		{
+			"component" : "badge",
+			"id" : "active_flow_count",
+			"i18n_name" : "",
+			"color" : "info",
+			"inactive_color" : "secondary",
+			"width" : 4,
+			"height" : 2,
+			"params" : {
+				"url" : "/lua/rest/v2/get/interface/data.lua",
+				"url_params" : {
+					"type" : "summary"
+				},
+				"icon" : "fas fa-stream",
+				"i18n_name" : "live_flows",
+				"link" : {
+					"url" : "/lua/flows_stats.lua",
+					"url_params" : {}
+				},
+				"counter_path" : "num_flows",
+				"counter_formatter" : "number"
+			}
+		},
+		{
+			"component" : "issues-badge",
+			"id" : "open_problems",
+			"datasource_id" : "issue_counters",
+			"i18n_name" : "",
+			"inactive_color" : "secondary",
+			"width" : 4,
+			"height" : 2,
+			"requires" : {
+				"modules" : [ "issues" ]
+			},
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/issue/counters.lua",
+				"url_params" : {},
+				"icon" : "fas fa-fire-alt",
+				"i18n_name" : "issues.view.problems",
+				"link" : {
+					"url" : "/lua/pro/issues.lua",
+					"url_params" : {
+						"view" : "problems"
+					}
+				},
+				"severities" : [
+					{ "id" : 8, "i18n_name" : "alerts_dashboard.emergency", "color" : "danger" },
+					{ "id" : 6, "i18n_name" : "alerts_dashboard.critical", "color" : "danger" },
+					{ "id" : 5, "i18n_name" : "alerts_dashboard.error", "color" : "orange" },
+					{ "id" : 4, "i18n_name" : "alerts_dashboard.warning", "color" : "warning" }
+				]
+			}
+		},
+		{
+			"component" : "pie",
+			"id" : "top_l7_proto",
+			"time_reference" : "live",
+			"metric" : "flows",
+			"i18n_name" : "top_l7_proto",
+			"width" : 4,
+			"height" : 4,
+			"requires" : {
+				"modules" : [ "l7_timeseries" ]
+			},
+			"params" : {
+				"url" : "/lua/rest/v2/get/interface/l7/stats.lua",
+				"url_params" : {
+					"breed" : "true",
+					"ndpistats_mode" : "count"
+				},
+				"unit": "number",
+				"label": "flows"
+			}
+		},
+		{
+			"component" : "pie",
+			"id" : "traffic_classification",
+			"time_reference" : "since_startup",
+			"metric" : "volume",
+			"i18n_name" : "dashboard.classification",
+			"width" : 4,
+			"height" : 4,
+			"requires" : {
+				"modules" : [ "l7_timeseries" ]
+			},
+			"params" : {
+				"url" : "/lua/rest/v2/get/interface/l7/stats.lua",
+				"url_params" : {
+					"breed" : "true",
+					"ndpistats_mode" : "sinceStartup"
+				},
+				"unit": "bytes"
+			}
+		},
+
+		{
+			"component": "pie",
+			"id": "traffic_role_distribution",
+			"time_reference": "since_startup",
+			"metric": "volume",
+			"i18n_name": "if_stats_overview.traffic_role_distribution",
+			"width": 4,
+			"height": 4,
+			"params": {
+				"url": "/lua/rest/v2/get/interface/iface_role_distribution.lua",
+				"url_params": {},
+				"source_type": "interface"
+			}
+		},
+
+        {
+			"component" : "top-timeseries",
+			"id" : "top_active_asn",
+			"time_reference" : "time_window",
+			"metric" : "throughput",
+			"i18n_name" : "graphs.top_customer_asn",
+            "time_window" : "day",
+		    "time_offset" : "",
+			"width" : 12,
+			"height" : 4,
+			"params" : {
+				"url" : "/lua/rest/v2/get/asn/get_top_asn.lua",
+				"url_params" : { 
+                    "show_as":"all"
+                },
+				"post_params" : {
+					"limit" : 180,
+					"version" : 4,
+                    "ts_requests": {
+						"$CURRENT_IFID$" : {
+							"ts_query": "ifid:$IFID$",
+							"ts_schema": "top:asn:traffic"
+						}
+					}
+				},
+				"source_type" : "interface"
+			}
+		},
+		{
+			"component" : "pie",
+			"id" : "top_ix_exporters_interfaces",
+			"time_reference" : "since_startup",
+			"metric" : "volume",
+			"i18n_name" : "dashboard.asn_dashboard.top_ix_exporter_interfaces",
+			"width" : 4,
+			"height" : 4,
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/flowdevices/get_top_exporters_interfaces.lua",
+				"url_params" : {
+                    "interface_role":"ix"
+                },
+				"unit" : "bytes",
+				"label_key" : "interface_name",
+				"value_key" : "total_bytes"
+			}
+		},
+        {
+			"component" : "pie",
+			"id" : "top_peering_exporters_interfaces",
+			"time_reference" : "since_startup",
+			"metric" : "volume",
+			"i18n_name" : "dashboard.asn_dashboard.top_peering_exporter_interfaces",
+			"width" : 4,
+			"height" : 4,
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/flowdevices/get_top_exporters_interfaces.lua",
+				"url_params" : {
+                    "interface_role":"peering"
+                },
+				"unit" : "bytes",
+				"label_key" : "interface_name",
+				"value_key" : "total_bytes"
+			}
+		},
+        {
+			"component" : "pie",
+			"id" : "top_transit_exporters_interfaces",
+			"time_reference" : "since_startup",
+			"metric" : "volume",
+			"i18n_name" : "dashboard.asn_dashboard.top_transit_exporter_interfaces",
+			"width" : 4,
+			"height" : 4,
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/flowdevices/get_top_exporters_interfaces.lua",
+				"url_params" : {
+                    "interface_role":"transit"
+                },
+				"unit" : "bytes",
+				"label_key" : "interface_name",
+				"value_key" : "total_bytes"
+			}
+		}
+	]
+}

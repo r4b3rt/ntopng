@@ -1,0 +1,77 @@
+@PRO_MAKEFILE_INC@
+
+FUZZ_TARGETS := fuzz/fuzz_dissect_packet fuzz/fuzz_zmq_flow fuzz/fuzz_snmp_response fuzz/fuzz_syslog_parse fuzz/fuzz_dissect_mdns
+FUZZ_CORPUS := $(addsuffix _seed_corpus.zip,$(FUZZ_TARGETS))
+
+FUZZ_LOCAL_TEST := @FUZZ_LOCAL_TEST@
+HAS_FUZZLDFLAGS := @HAS_FUZZLDFLAGS@
+LIB_FUZZING_ENGINE := @LIB_FUZZING_ENGINE@
+FUZZ_OBJECTS := @FUZZ_OBJECTS@
+FUZZ_WITH_PROTOBUF := @FUZZ_WITH_PROTOBUF@
+
+NDPI_HOME := @NDPI_HOME@
+
+STUB_FILTER_OUT := $(FUZZ_OBJECTS:fuzz/stub/%Stub.o=src/%.o)
+OBJECTS_FOR_FUZZ := $(filter-out src/main.o $(STUB_FILTER_OUT),$(OBJECTS))
+
+# Protobuf dependencies
+fuzz_dissect_packet_proto_sources := fuzz/proto/pcap.pb.o
+
+ifneq ($(HAS_FUZZLDFLAGS),1)
+	CPPFLAGS := $(CPPFLAGS) -DINCLUDE_ONEFILE
+else ifeq ($(FUZZ_LOCAL_TEST),1)
+	CPPFLAGS := $(CPPFLAGS) -DINCLUDE_ONEFILE
+endif
+
+LUA_HOME=${PWD}/third-party/lua-5.4.6
+LUA_INC=-I$(LUA_HOME)/src
+LUA_LIB=$(LUA_HOME)/src/liblua.a
+
+ifeq ($(FUZZ_WITH_PROTOBUF),1)
+	LIBS := $(LIBS) $(LUA_LIB) @LIBPROTOBUF_MUTATOR_LIBS@ @PROTOBUF_LIBS@
+	CXXFLAGS := $(CXXFLAGS) @LIBPROTOBUF_MUTATOR_CFLAGS@ @PROTOBUF_CFLAGS@
+	CPPFLAGS := $(CPPFLAGS) -DFUZZ_WITH_PROTOBUF
+else
+	fuzz_dissect_packet_proto_sources :=
+endif
+
+fuzz/proto/%.pb.o: fuzz/%.proto
+	mkdir fuzz/proto
+	cd fuzz && protoc --cpp_out=proto/ $*.proto
+	$(CXX) -c fuzz/proto/$*.pb.cc -o $@
+
+fuzz/%.o: fuzz/%.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+fuzz/fuzz_dissect_packet: fuzz/fuzz_dissect_packet.o $(fuzz_dissect_packet_proto_sources) $(FUZZ_OBJECTS) $(OBJECTS_FOR_FUZZ)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_FUZZING_ENGINE) $^ $(LIBS) -o $@
+
+fuzz/%: fuzz/%.o $(FUZZ_OBJECTS) $(OBJECTS_FOR_FUZZ)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_FUZZING_ENGINE) $^ $(LIBS) -o $@
+
+fuzz_corpus: $(FUZZ_CORPUS)
+
+$(FUZZ_TARGETS) : $(LIB_TARGETS)
+
+fuzz_all: @PRO_DEP@ $(FUZZ_TARGETS) fuzz_corpus
+
+# fuzz_all: $(LIB_TARGETS) $(FUZZ_TARGETS) fuzz_corpus
+
+.SECONDEXPANSION:
+
+# Add traces from nDPI to the corpus
+fuzz/fuzz_dissect_packet_seed_corpus.zip: $$(wildcard $(NDPI_HOME)/tests/pcap/*.pcap* fuzz/corpus/fuzz_dissect_packet/*)
+	zip -j $@ $^
+
+fuzz/fuzz_zmq_flow_seed_corpus.zip: $$(wildcard fuzz/corpus/fuzz_zmq_flow/*)
+	zip -j $@ $^
+
+fuzz/fuzz_snmp_response_seed_corpus.zip: $$(wildcard fuzz/corpus/fuzz_snmp_response/*)
+	zip -j $@ $^
+
+fuzz/fuzz_syslog_parse_seed_corpus.zip: $$(wildcard fuzz/corpus/fuzz_syslog_parse/*)
+	zip -j $@ $^
+
+fuzz/fuzz_dissect_mdns_seed_corpus.zip: $$(wildcard fuzz/corpus/fuzz_dissect_mdns/*)
+	zip -j $@ $^
+

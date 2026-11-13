@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,13 +24,21 @@
 /* *************************************** */
 
 ParsedFlowCore::ParsedFlowCore() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
   src_ip.reset(), dst_ip.reset();
   memset(&src_mac, 0, sizeof(src_mac));
   memset(&dst_mac, 0, sizeof(dst_mac));
-  memset(&device_ipv6, 0, sizeof(device_ipv6));
+  memset(&exporter_device_ip, 0, sizeof(exporter_device_ip));
+  memset(&mapped_exporter_device_ip, 0, sizeof(mapped_exporter_device_ip));
+  memset(&next_hop, 0, sizeof(next_hop));
+  memset(&mapped_next_hop, 0, sizeof(mapped_next_hop));
   src_tos = dst_tos = 0;
   version = 0;
-  device_ip = 0;
+  memset(&nprobe_ip, 0, sizeof(nprobe_ip));
+  unique_source_id = 0;
+  nprobe_source_id = 0;
   src_port = dst_port = 0;
   inIndex = outIndex = 0;
   observationPointId = 0;
@@ -43,19 +51,26 @@ ParsedFlowCore::ParsedFlowCore() {
   absolute_packet_octet_counters = 0;
   memset(&tcp, 0, sizeof(tcp));
   first_switched = last_switched = 0;
-  direction = source_id = 0;
+  direction = 0;
   src_as = dst_as = prev_adjacent_as = next_adjacent_as = 0;
 }
 
 /* *************************************** */
 
-ParsedFlowCore::ParsedFlowCore(const ParsedFlowCore &pfc) {
+ParsedFlowCore::ParsedFlowCore(const ParsedFlowCore& pfc) {
   src_ip.set(&pfc.src_ip), dst_ip.set(&pfc.dst_ip);
   memcpy(&src_mac, &pfc.src_mac, sizeof(src_mac));
   memcpy(&dst_mac, &pfc.dst_mac, sizeof(dst_mac));
-  memcpy(&device_ipv6, &pfc.device_ipv6, sizeof(device_ipv6));
+  memcpy(&exporter_device_ip, &pfc.exporter_device_ip,
+         sizeof(exporter_device_ip));
+  memcpy(&mapped_exporter_device_ip, &pfc.mapped_exporter_device_ip,
+         sizeof(mapped_exporter_device_ip));
+  memcpy(&next_hop, &pfc.next_hop, sizeof(next_hop));
+  memcpy(&mapped_next_hop, &pfc.mapped_next_hop, sizeof(mapped_next_hop));
   version = pfc.version;
-  device_ip = pfc.device_ip;
+  memcpy(&nprobe_ip, &pfc.nprobe_ip, sizeof(struct ndpi_in6_addr));
+  unique_source_id = pfc.unique_source_id;
+  nprobe_source_id = pfc.nprobe_source_id;
   src_port = pfc.src_port, dst_port = pfc.dst_port;
   inIndex = pfc.inIndex, outIndex = pfc.outIndex;
   observationPointId = pfc.observationPointId;
@@ -70,22 +85,22 @@ ParsedFlowCore::ParsedFlowCore(const ParsedFlowCore &pfc) {
   memcpy(&tcp, &pfc.tcp, sizeof(tcp));
   first_switched = pfc.first_switched, last_switched = pfc.last_switched;
   direction = pfc.direction;
-  source_id = pfc.source_id;
   src_as = pfc.src_as, dst_as = pfc.dst_as;
-  prev_adjacent_as = pfc.prev_adjacent_as, next_adjacent_as = pfc.next_adjacent_as;
+  prev_adjacent_as = pfc.prev_adjacent_as,
+  next_adjacent_as = pfc.next_adjacent_as;
 }
 
 /* *************************************** */
 
-ParsedFlowCore::~ParsedFlowCore() {
-}
+ParsedFlowCore::~ParsedFlowCore() {}
 
 /* *************************************** */
 
 void ParsedFlowCore::swap() {
   u_int8_t tmp_mac[6];
   IpAddress tmp_ip;
-  u_int16_t tmp_port, tmp_index;
+  u_int16_t tmp_port;
+  u_int32_t tmp_index;
   u_int32_t tmp_bytes, tmp_pkts;
   u_int32_t tmp_fragments;
   u_int8_t tmp_tcp_flags;
@@ -93,14 +108,15 @@ void ParsedFlowCore::swap() {
   struct timeval tmp_nw_latency;
   u_int32_t tmp_src_as, tmp_prev_adjacent_as;
   u_int16_t tmp_window;
-  
+
   memcpy(&tmp_mac, &src_mac, sizeof(tmp_mac));
   tmp_ip.set(&src_ip);
   tmp_port = src_port, tmp_index = inIndex;
   tmp_bytes = in_bytes, tmp_pkts = in_pkts;
   tmp_fragments = in_fragments;
   tmp_tcp_flags = tcp.client_tcp_flags;
-  tmp_ooo_pkts = tcp.ooo_in_pkts, tmp_retr_pkts = tcp.retr_in_pkts, tmp_lost_pkts = tcp.lost_in_pkts;
+  tmp_ooo_pkts = tcp.ooo_in_pkts, tmp_retr_pkts = tcp.retr_in_pkts,
+  tmp_lost_pkts = tcp.lost_in_pkts;
   memcpy(&tmp_nw_latency, &tcp.clientNwLatency, sizeof(tcp.clientNwLatency));
   tmp_window = tcp.in_window;
   tmp_src_as = src_as, tmp_prev_adjacent_as = prev_adjacent_as;
@@ -111,8 +127,10 @@ void ParsedFlowCore::swap() {
   in_bytes = out_bytes, in_pkts = out_pkts;
   in_fragments = out_fragments;
   tcp.client_tcp_flags = tcp.server_tcp_flags;
-  tcp.ooo_in_pkts = tcp.ooo_out_pkts, tcp.retr_in_pkts = tcp.retr_out_pkts, tcp.lost_in_pkts = tcp.lost_out_pkts;
-  memcpy(&tcp.clientNwLatency, &tcp.serverNwLatency, sizeof(tcp.clientNwLatency));
+  tcp.ooo_in_pkts = tcp.ooo_out_pkts, tcp.retr_in_pkts = tcp.retr_out_pkts,
+  tcp.lost_in_pkts = tcp.lost_out_pkts;
+  memcpy(&tcp.clientNwLatency, &tcp.serverNwLatency,
+         sizeof(tcp.clientNwLatency));
   tcp.in_window = tcp.out_window;
   src_as = dst_as, prev_adjacent_as = next_adjacent_as;
 
@@ -122,22 +140,9 @@ void ParsedFlowCore::swap() {
   out_bytes = tmp_bytes, out_pkts = tmp_pkts;
   out_fragments = tmp_fragments;
   tcp.server_tcp_flags = tmp_tcp_flags;
-  tcp.ooo_out_pkts = tmp_ooo_pkts, tcp.retr_out_pkts = tmp_retr_pkts, tcp.lost_out_pkts = tmp_lost_pkts;
+  tcp.ooo_out_pkts = tmp_ooo_pkts, tcp.retr_out_pkts = tmp_retr_pkts,
+  tcp.lost_out_pkts = tmp_lost_pkts;
   memcpy(&tcp.serverNwLatency, &tmp_nw_latency, sizeof(tcp.serverNwLatency));
   tcp.out_window = tmp_window;
   dst_as = tmp_src_as, next_adjacent_as = tmp_prev_adjacent_as;
 }
-
-/* *************************************** */
-
-void ParsedFlowCore::print() {
-  char buf1[32], buf2[32];
-
-  src_ip.print(buf1, sizeof(buf1));
-  dst_ip.print(buf2, sizeof(buf2));
-
-  ntop->getTrace()->traceEvent(TRACE_NORMAL, "[src: %s][dst: %s][src_port: %u][dst_port: %u]",
-  			       src_ip.print(buf1, sizeof(buf1)),
-  			       dst_ip.print(buf2, sizeof(buf2)),
-  			       ntohs(src_port), ntohs(dst_port));
- }

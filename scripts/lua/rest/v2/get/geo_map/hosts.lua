@@ -1,186 +1,125 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
-
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
-require "lua_utils"
-local json = require("dkjson")
-local callback_utils = require "callback_utils"
+require "ntop_utils"
+require "http_lint"
+require "label_utils"
 local rest_utils = require("rest_utils")
+local country_code = require "country_keys"
 
 local ifid = _GET["ifid"]
 
 if isEmptyString(ifid) then
-   rc = rest_utils.consts.err.invalid_interface
-   rest_utils.answer(rc)
-   return
+    rest_utils.answer(rest_utils.consts.err.invalid_interface)
+    return
 end
 
-interface.select(ifid)
+-- interface.select silently falls back to an allowed interface: check it
+interface.select(tostring(ifid))
+if tostring(interface.getId()) ~= tostring(ifid) then
+    rest_utils.answer(rest_utils.consts.err.invalid_interface)
+    return
+end
 
-
-local response = {}
-local host_key = _GET["host"] or ""
-local host_info = url2hostinfo(_GET)
-
+local rsp = {}
+local data = {}
+local host_key = _GET["host"]
+local hosts_category = tonumber(_GET["hosts_category"] or 0)
 local MAX_HOSTS = 512
-
-local pref_prefix = "ntopng.prefs."
-
-local bytes_sent = "bytes.sent"
-local bytes_rcvd = "bytes.rcvd"
-
--- Extra info, enabled by the preferences (Settings->Preferences->Geo Map),
--- that are going to add more info to the host detailed view into the Geo Map
-local extra_info = {
-	score  						= { pref = ntop.getPref(pref_prefix .. "is_geo_map_score_enabled") },
-	asname					   = { pref = ntop.getPref(pref_prefix .. "is_geo_map_asname_enabled") },
-	active_alerted_flows 	= { pref = ntop.getPref(pref_prefix .. "is_geo_map_alerted_flows_enabled") },
-	num_blacklisted_flows	= { pref = ntop.getPref(pref_prefix .. "is_geo_map_blacklisted_flows_enabled"), values = { "tot_as_server", "tot_as_client" } },
-	name 							= { pref = ntop.getPref(pref_prefix .. "is_geo_map_host_name_enabled") },
-	total_flows 				= { pref = ntop.getPref(pref_prefix .. "is_geo_map_num_flows_enabled"), values = { "as_client", "as_server" } },
-}
-
--- Adding bytes here because they have the '.' inside the name and cannot added therefore above
-extra_info[bytes_sent] = { pref = ntop.getPref(pref_prefix .. "is_geo_map_rxtx_data_enabled") }
-extra_info[bytes_rcvd] = { pref = ntop.getPref(pref_prefix .. "is_geo_map_rxtx_data_enabled") }
-
--- ############################################################
-
-local function is_localizable(host)
-   return host and host["ip"] and not host["privatehost"] and not host["is_multicast"] and not host["is_broadcast"] and not isBroadMulticast(host["ip"])
-end
-
-local function get_max_bytes_from_peers(peers)
-   local max = 0
-   for key, value in pairs(peers) do
-      if (value["bytes"] > max) then
-	 max = value["bytes"]
-      end
-   end
-
-   return max
-end
-
--- ############################################################
-
-local function add_extra_info(host_values, host_info)
-	for k, v in pairs(extra_info) do
-		-- Checking the setting
-		if v["pref"] == "1" then
-			if not v["values"] then
-			-- Only a value, that's the key
-				host_info[k] = host_values[k]
-			else
-			-- Multiple values (e.g. client and server)
-				if host_values[k] then
-					host_info[k] = 0
-
-					-- Adding all the values into the host_info used by the geo map
-					for _, value_subname in pairs(v["values"]) do
-						host_info[k] = host_info[k] + host_values[k][value_subname]
-					end
-				end
-			end
-		end
-	end
-
-	return host_info
-end
-
--- ############################################################
-
-local function handlePeer(prefix, host_key, value)
-   if((value[prefix..".latitude"] ~= 0) or (value[prefix..".longitude"] ~= 0)) then
-      -- set up the host informations
-      local host = {
-	 lat = value[prefix..".latitude"],
-	 lng = value[prefix..".longitude"],
-	 -- isDrawable = not(value[prefix..".private"]),
-	 isRoot = (value[prefix..".ip"] == host_key),
-	 html = getFlag(value[prefix..".country"]),
-	 ip = hostinfo2hostkey(value, prefix)
-      }
-
-      host = add_extra_info(value, host)
-
-      if not isEmptyString(value[prefix..".city"]) then
-	 host["city"] = value[prefix..".city"]
-      end
-
-      return(host)
-   end
-
-   return(nil)
-end
 
 -- ##############
 
-local function show_hosts(hosts_count, host_key)
-   local hosts = {}
-   local num_hosts = 0
-
-   if((host_key == nil) or (host_key == "")) then
-      callback_utils.foreachHost(
-	 tostring(interface.getId()),
-	 function(address, value)
-	    if value["latitude"] ~= 0 or value["longitude"] ~= 0 then
-	       -- set up the host informations
-	       local host = {
-		  lat = value["latitude"],
-		  lng = value["longitude"],
-		  isRoot = false,
-		  html = getFlag(value["country"]),
-		  ip = address,
-		  isAlert = value["num_alerts"] + value["active_alerted_flows"] > 0
-	       }
-
-	       if not isEmptyString(value["city"]) then
-		  host["city"] = value["city"]
-	       end
-
-        	 host = add_extra_info(value, host)
-
-	       table.insert(hosts, host)
-	       num_hosts = num_hosts + 1
-
-	       if num_hosts >= MAX_HOSTS then
-		  -- Stop the iteration
-		  return false
-	       end
-	    end
-
-	    -- Still room, continue the iteration
-	    return true
-	 end
-      )
-
-   else
-      local what = getTopFlowPeers(hostinfo2hostkey(host_info), MAX_HOSTS - hosts_count, nil, {detailsLevel="max"})
-      local keys = {}
-
-      for key, value in pairs(what) do
-	 if(keys[value["cli.ip"]] == nil) then
-	    local h = handlePeer("cli", host_key, value)
-
-	    keys[value["cli.ip"]] = true
-	    if(h ~= nil) then table.insert(hosts, h) end
-	 end
-
-	 if(keys[value["srv.ip"]] == nil) then
-	    local h = handlePeer("srv", host_key, value)
-
-	    keys[value["srv.ip"]] = true
-	    if(h ~= nil) then table.insert(hosts, h) end
-	 end
-      end
-   end
-
-   return(hosts)
+-- Active hosts
+if (hosts_category == 0) then
+    data =
+        interface.getHostsInfo(false, "column_traffic", MAX_HOSTS, nil, false --[[ Desc order ]] )
+    -- Alerted hosts
+elseif (hosts_category == 1) then
+    data =
+        interface.getHostsInfo(false, "column_score", MAX_HOSTS, nil, false --[[ Desc order ]] ,
+                               nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+                               nil, nil, nil, nil, nil, nil, nil, true) -- Get alerted hosts
+    -- Local hosts
+elseif (hosts_category == 2) then
+    data = interface.getLocalHostsInfo(false, "column_traffic", MAX_HOSTS, nil,
+                                       false --[[ Desc order ]] )
+    -- Remote hosts
+elseif (hosts_category == 3) then
+    data = interface.getRemoteHostsInfo(false, "column_traffic", MAX_HOSTS, nil,
+                                        false --[[ Desc order ]] )
+else
+    rest_utils.answer(rest_utils.consts.err.invalid_args)
+    return
 end
 
-local rsp = show_hosts(table.len(response["hosts"]), host_key)
+-- Get single host data (host_key is the requested IP)
+if host_key then
+    data.hosts = {}
+
+    local flowstats = interface.getActiveFlowsStats(host_key, nil, false, nil,
+                                                    nil, nil, nil)
+
+    -- now only print the IPs inside "talking_with"
+    if flowstats and flowstats["talking_with"] then
+        for ip, count in pairs(flowstats["talking_with"]) do
+
+            local host_info = interface.getHostMinInfo(ip)
+            data.hosts[#data.hosts + 1] = host_info
+        end
+    end
+end
+
+
+if (data) and (data["hosts"]) then
+    for address, value in pairs(data["hosts"]) do
+        if value["latitude"] ~= 0 or value["longitude"] ~= 0 then
+            local country = value["country"]
+            local country_info = country_code.get_country_info(country)
+
+            if (country_info) then
+                local iso3_country = country_info[1]
+                local country_id = country_info[2]
+
+                if (hosts_category == 1) and (value.score == 0) then
+                    traceError(TRACE_ERROR, TRACE_CONSOLE,
+                               "Requested alerted hosts, but got Host with no score [Host: " ..
+                                   address .. "][Score: " .. value.score .. "]")
+                    goto skip_host
+                end
+
+                local host = {
+                    lat = value["latitude"],
+                    lng = value["longitude"],
+                    isRoot = false,
+                    country = iso3_country,
+                    country_id = country_id,
+                    ip = value["ip"],
+                    name = value["name"],
+                    vlan = {
+                        id = value["vlan"],
+                        name = getFullVlanName(value["vlan"], true, false)   
+                    },
+                    scoreClient = value["score.as_client"] or 0,
+                    scoreServer = value["score.as_server"] or 0,
+                    numAlerts = value["active_alerted_flows"] or 0,
+                    country_code = country,
+                    isAlert = (value.score or 0) > 0
+                }
+
+                if not isEmptyString(value["city"]) then
+                    host["city"] = value["city"]
+                end
+
+                rsp[#rsp + 1] = host
+
+                ::skip_host::
+            end
+        end
+    end
+
+end
 
 rest_utils.answer(rest_utils.consts.success.ok, rsp)

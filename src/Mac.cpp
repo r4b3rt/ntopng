@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,113 +23,122 @@
 
 /* *************************************** */
 
-Mac::Mac(NetworkInterface *_iface, u_int8_t _mac[6]) : GenericHashEntry(_iface) {
+Mac::Mac(NetworkInterface* _iface, u_int8_t _mac[6])
+    : GenericHashEntry(_iface) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
   memcpy(mac, _mac, 6);
-
+  is_router = false;
   broadcast_mac = Utils::isBroadcastMac(mac);
   special_mac = Utils::isSpecialMac(mac);
-  source_mac = false, fingerprint = NULL;
+  empty_mac = Utils::isEmptyMac(mac);
+  source_mac = false;
+  num_remote_hosts = 0;
   bridge_seen_iface_id = 0, lockDeviceTypeChanges = false;
   memset(&names, 0, sizeof(names));
-  device_type = device_unknown;
+  device_type = device_unknown, asset_map_updated = true;
   host_pool_id = NO_HOST_POOL_ID;
+  device_os = ndpi_os_unknown;
 #ifdef NTOPNG_PRO
   captive_portal_notified = 0;
 #endif
-  model = NULL, ssid = NULL;
+  model = NULL, ssid = NULL, dhcpv4_fingerprint = NULL;
   stats_reset_requested = data_delete_requested = false;
   stats = new (std::nothrow) MacStats(_iface);
   stats_shadow = NULL;
-  last_stats_reset = ntop->getLastStatsReset(); /* assume fresh stats, may be changed by deserialize */
+  last_stats_reset = ntop->getLastStatsReset(); /* assume fresh stats, may be
+                                                   changed by deserialize */
+#ifdef HAVE_NEDGE
+  last_counter_reset = 0;
+#endif
 
-  char redis_key[64], buf1[64], rsp[8];
-  char *mac_ptr = Utils::formatMac(mac, buf1, sizeof(buf1));
-
-  if(ntop->getMacManufacturers()) {
+  if (ntop->getMacManufacturers()) {
     manuf = ntop->getMacManufacturers()->getManufacturer(mac);
-    if(manuf) checkDeviceTypeFromManufacturer();
+    if (manuf) checkDeviceTypeFromManufacturer();
   } else
     manuf = NULL;
 
 #ifdef MANUF_DEBUG
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Assigned manufacturer [mac: %02x:%02x:%02x:%02x:%02x:%02x] [manufacturer: %s]",
-			       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-			       manuf ? manuf : "- not available -");
+  ntop->getTrace()->traceEvent(
+      TRACE_NORMAL,
+      "Assigned manufacturer [mac: %02x:%02x:%02x:%02x:%02x:%02x] "
+      "[manufacturer: %s]",
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+      manuf ? manuf : "- not available -");
 #endif
 
 #ifdef DEBUG
   char buf[32];
 
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Created %s [total %u]",
-			       Utils::formatMac(mac, buf, sizeof(buf)),
-			       iface->getNumL2Devices());
+                               Utils::formatMac(mac, buf, sizeof(buf)),
+                               iface->getNumL2Devices());
 #endif
 
-  if(!special_mac && ntop->getPrefs()->is_idle_local_host_cache_enabled()) {
-    deserializeFromRedis();
+  updateHostPool(true /* inline with packet processing */,
+                 true /* first inc */);
 
-    // Load the user defined device type, if available
-    snprintf(redis_key, sizeof(redis_key), MAC_CUSTOM_DEVICE_TYPE, mac_ptr);
-    if((ntop->getRedis()->get(redis_key, rsp, sizeof(rsp)) == 0) && rsp[0])
-      forceDeviceType((DeviceType)atoi(rsp));
+  readDHCPCache();
 
-    readDHCPCache();
-  }
+  if (device_type == device_unknown) guessDeviceType();
 
-  updateHostPool(true /* inline with packet processing */, true /* first inc */);
+#ifdef NTOPNG_PRO
+  dumpMacInfo(false /* Do not add last seen */);
+#endif
 }
 
 /* *************************************** */
 
 Mac::~Mac() {
-  if(model) free(model);
-  if(ssid) free(ssid);
-  if(fingerprint) free(fingerprint);
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+
+#ifdef NTOPNG_PRO
+  dumpMacInfo(true /* Add last seen */);
+#endif
+
+  if (model) free(model);
+  if (ssid) free(ssid);
+  if (dhcpv4_fingerprint) free(dhcpv4_fingerprint);
   freeMacData();
-  if(stats) delete(stats);
-  if(stats_shadow) delete(stats_shadow);
+  if (stats) delete (stats);
+  if (stats_shadow) delete (stats_shadow);
 
 #ifdef DEBUG
   ntop->getTrace()->traceEvent(TRACE_NORMAL, "Deleted %s [total %u][%s]",
-			       Utils::formatMac(mac, buf, sizeof(buf)),
-			       iface->getNumL2Devices(),
-			       source_mac ? "Host" : "Special");
+                               Utils::formatMac(mac, buf, sizeof(buf)),
+                               iface->getNumL2Devices(),
+                               source_mac ? "Host" : "Special");
 #endif
 }
 
 /* *************************************** */
 
 void Mac::set_hash_entry_state_idle() {
-  if(source_mac)
-    iface->decNumL2Devices();
-
-  if(!special_mac) {
-    if(data_delete_requested)
-      deleteRedisSerialization();
-    else if(ntop->getPrefs()->is_idle_local_host_cache_enabled())
-      serializeToRedis();
-  }
+  if (source_mac) iface->decNumL2Devices();
 
   /* Pool counters are updated both in and outside the datapath.
      So decPoolNumHosts must stay in the destructor to preserve counters
-     consistency (no thread outside the datapath will change the last pool id) */
+     consistency (no thread outside the datapath will change the last pool id)
+   */
 #ifdef HOST_POOLS_DEBUG
   char buf[32];
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Going to decrease the number of pool l2 devices for %s "
-			       "[num pool l2 devices: %u]...",
-			       Utils::formatMac(mac, buf, sizeof(buf)),
-			       iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
+  ntop->getTrace()->traceEvent(
+      TRACE_NORMAL,
+      "Going to decrease the number of pool l2 devices for %s "
+      "[num pool l2 devices: %u]...",
+      Utils::formatMac(mac, buf, sizeof(buf)),
+      iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
 #endif
 
   iface->decPoolNumL2Devices(get_host_pool(), true /* Mac is deleted inline */);
 
 #ifdef HOST_POOLS_DEBUG
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Number of pool l2 devices decreased."
-			       "[num pool l2 devices: %u]",
-			       iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
+  ntop->getTrace()->traceEvent(
+      TRACE_NORMAL,
+      "Number of pool l2 devices decreased."
+      "[num pool l2 devices: %u]",
+      iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
 #endif
 
   GenericHashEntry::set_hash_entry_state_idle();
@@ -137,46 +146,74 @@ void Mac::set_hash_entry_state_idle() {
 
 /* *************************************** */
 
+#ifdef HAVE_NEDGE
 static const char* location2str(MacLocation location) {
-  switch(location) {
-    case located_on_lan_interface: return "lan";
-    case located_on_wan_interface: return "wan";
-    default: return "unknown";
+  switch (location) {
+    case located_on_lan_interface:
+      return "lan";
+    case located_on_wan_interface:
+      return "wan";
+    default:
+      return "unknown";
   }
 }
+#endif
 
 /* *************************************** */
 
 void Mac::lua(lua_State* vm, bool show_details, bool asListElement) {
-  char buf[32], *m;
+  char buf[32], *m, fingerprint[64];
 
   lua_newtable(vm);
 
-  lua_push_str_table_entry(vm, "mac", m = Utils::formatMac(mac, buf, sizeof(buf)));
+  lua_push_str_table_entry(vm, "mac",
+                           m = Utils::formatMac(mac, buf, sizeof(buf)));
   lua_push_uint64_table_entry(vm, "bridge_seen_iface_id", bridge_seen_iface_id);
 
-  if(show_details) {
-    if(manuf)
-      lua_push_str_table_entry(vm, "manufacturer", (char*)manuf);
+  if (show_details) {
+    if (manuf) lua_push_str_table_entry(vm, "manufacturer", (char*)manuf);
 
     lua_push_bool_table_entry(vm, "source_mac", source_mac);
     lua_push_bool_table_entry(vm, "special_mac", special_mac);
-    lua_push_str_table_entry(vm, "location", (char *) location2str(locate()));
+#ifdef HAVE_NEDGE
+    lua_push_str_table_entry(vm, "location", (char*)location2str(locate()));
+#endif
     lua_push_uint64_table_entry(vm, "devtype", device_type);
-    if(model) lua_push_str_table_entry(vm, "model", (char*)model);
-    if(ssid) lua_push_str_table_entry(vm, "ssid", (char*)ssid);
+    if (model) lua_push_str_table_entry(vm, "model", (char*)model);
+    if (ssid) lua_push_str_table_entry(vm, "ssid", (char*)ssid);
   }
 
-  stats->lua(vm, show_details);
+  if (stats) stats->lua(vm, show_details);
 
-  lua_push_str_table_entry(vm,    "fingerprint", fingerprint ? fingerprint : (char*)"");
+  if (getDHCPfingerprint(fingerprint, sizeof(fingerprint)))
+    lua_push_str_table_entry(vm, "dhcp_fingerprint", fingerprint);
+
   lua_push_uint64_table_entry(vm, "seen.first", first_seen);
   lua_push_uint64_table_entry(vm, "seen.last", last_seen);
   lua_push_uint64_table_entry(vm, "duration", get_duration());
   lua_push_uint64_table_entry(vm, "num_hosts", getNumHosts());
   lua_push_uint64_table_entry(vm, "pool", get_host_pool());
+#ifdef HAVE_NEDGE
+  lua_push_uint32_table_entry(vm, "last_counter_reset", last_counter_reset);
 
-  if(asListElement) {
+  if (events.size() > 0) {
+    u_int i = 1;
+
+    lua_newtable(vm);
+
+    for (std::vector<std::string>::iterator it = events.begin();
+         it != events.end(); ++it, i++) {
+      lua_pushstring(vm, it->c_str());
+      lua_rawseti(vm, -2, i);
+    }
+
+    lua_pushstring(vm, "events");
+    lua_insert(vm, -2);
+    lua_settable(vm, -3);
+  }
+#endif
+
+  if (asListElement) {
     lua_pushstring(vm, m);
     lua_insert(vm, -2);
     lua_settable(vm, -3);
@@ -185,136 +222,100 @@ void Mac::lua(lua_State* vm, bool show_details, bool asListElement) {
 /* *************************************** */
 
 bool Mac::isNull() const {
-  u_int8_t zero_mac[3] = { 0 };
+  u_int8_t zero_mac[6] = {0};
 
-  /*
-    We need to compare only the manufacturer (3 byets instead of 6)
-    as there might be variations of 00:00:00:00:00:00
-    such as 00:00:00:00:01:01 that are basically alike
-  */
-  return(!memcmp(mac, zero_mac, sizeof(zero_mac)));
+  return (memcmp(mac, zero_mac, sizeof(zero_mac)) == 0 ? true : false);
 }
 
 /* *************************************** */
 
 bool Mac::equal(const u_int8_t _mac[6]) {
-  if(!_mac)
-    return(false);
-  if(memcmp(mac, _mac, 6) == 0)
-    return(true);
+  if (!_mac) return (false);
+  if (memcmp(mac, _mac, 6) == 0)
+    return (true);
   else
-    return(false);
+    return (false);
 }
 
 /* *************************************** */
 
-char* Mac::getSerializationKey(char *buf, uint bufsize) {
+char* Mac::getSerializationKey(char* buf, u_int bufsize, bool short_format) {
   char buf1[32];
-  char *mac_ptr = Utils::formatMac(mac, buf1, sizeof(buf1));
+  char* mac_ptr = Utils::formatMac(mac, buf1, sizeof(buf1));
 
-  snprintf(buf, bufsize, MAC_SERIALIZED_KEY, iface->get_id(), mac_ptr);
-  return(buf);
-}
-
-/* *************************************** */
-
-void Mac::deserialize(json_object *o) {
-  json_object *obj;
-
-  if(json_object_object_get_ex(o, "seen.first", &obj))  first_seen = json_object_get_int64(obj);
-  if(json_object_object_get_ex(o, "seen.last", &obj))   last_seen = json_object_get_int64(obj);
-  if(json_object_object_get_ex(o, "last_stats_reset", &obj)) last_stats_reset = json_object_get_int64(obj);
-  if(json_object_object_get_ex(o, "devtype", &obj))     device_type = (DeviceType)json_object_get_int(obj);
-  if(json_object_object_get_ex(o, "model", &obj))       inlineSetModel((char*)json_object_get_string(obj));
-  if(json_object_object_get_ex(o, "ssid", &obj))        inlineSetSSID((char*)json_object_get_string(obj));
-  if(json_object_object_get_ex(o, "fingerprint", &obj)) inlineSetFingerprint((char*)json_object_get_string(obj));
-
-  stats->deserialize(o);
-
-  checkStatsReset();
+  snprintf(buf, bufsize,
+           short_format ? MAC_SERIALIZED_SHORT_KEY : MAC_SERIALIZED_KEY,
+           iface->get_id(), mac_ptr);
+  return (buf);
 }
 
 /* *************************************** */
 
 bool Mac::statsResetRequested() {
-  return(stats_reset_requested || (last_stats_reset < ntop->getLastStatsReset()));
+  return (stats_reset_requested ||
+          (last_stats_reset < ntop->getLastStatsReset()));
 }
 
 /* *************************************** */
 
-void Mac::serialize(json_object *my_object, DetailsLevel details_level) {
-  char buf[32];
-
-  json_object_object_add(my_object, "mac", json_object_new_string(Utils::formatMac(get_mac(), buf, sizeof(buf))));
-  json_object_object_add(my_object, "seen.first", json_object_new_int64(first_seen));
-  json_object_object_add(my_object, "seen.last",  json_object_new_int64(last_seen));
-  json_object_object_add(my_object, "last_stats_reset",  json_object_new_int64(last_stats_reset));
-  json_object_object_add(my_object, "devtype", json_object_new_int(device_type));
-  if(model) json_object_object_add(my_object, "model", json_object_new_string(model));
-  if(ssid) json_object_object_add(my_object, "ssid", json_object_new_string(ssid));
-  if(fingerprint) json_object_object_add(my_object, "fingerprint", json_object_new_string(fingerprint));
-
-  if(!statsResetRequested())
-    stats->getJSONObject(my_object);
-}
-
-/* *************************************** */
-
+#ifdef HAVE_NEDGE
 MacLocation Mac::locate() {
-  if(iface->is_bridge_interface()) {
-    if(bridge_seen_iface_id == iface->getBridgeLanInterfaceId())
-      return(located_on_lan_interface);
-    else if(bridge_seen_iface_id == iface->getBridgeWanInterfaceId())
-      return(located_on_wan_interface);
+  if (iface->is_bridge_interface()) {
+    InterfaceLocation location =
+        iface->getInterfaceLocation(bridge_seen_iface_id);
+    if (location == lan_interface)
+      return (located_on_lan_interface);
+    else if (location == wan_interface)
+      return (located_on_wan_interface);
   } else {
-    if(bridge_seen_iface_id == DUMMY_BRIDGE_INTERFACE_ID)
-      return(located_on_lan_interface);
+    if (bridge_seen_iface_id == DUMMY_BRIDGE_INTERFACE_ID)
+      return (located_on_lan_interface);
   }
 
-  return(located_on_unknown_interface);
+  return (located_on_unknown_interface);
 }
+#endif
 
 /* *************************************** */
 
 void Mac::updateHostPool(bool isInlineCall, bool firstUpdate) {
-  if(!iface)
-    return;
+  if (!iface) return;
 
 #ifdef HOST_POOLS_DEBUG
   char buf[24];
   u_int16_t cur_pool_id = get_host_pool();
 
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Going to refresh pool for %s "
-			       "[pool id: %u]"
-			       "[pool num devices: %u]...",
-			       Utils::formatMac(get_mac(), buf, sizeof(buf)),
-			       cur_pool_id,
-			       iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
+  ntop->getTrace()->traceEvent(
+      TRACE_NORMAL,
+      "Going to refresh pool for %s "
+      "[pool id: %u]"
+      "[pool num devices: %u]...",
+      Utils::formatMac(get_mac(), buf, sizeof(buf)), cur_pool_id,
+      iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
 #endif
 
-  if(!firstUpdate) iface->decPoolNumL2Devices(get_host_pool(), isInlineCall);
+  if (!firstUpdate) iface->decPoolNumL2Devices(get_host_pool(), isInlineCall);
   host_pool_id = iface->getHostPool(this);
   iface->incPoolNumL2Devices(get_host_pool(), isInlineCall);
 
 #ifdef HOST_POOLS_DEBUG
-  ntop->getTrace()->traceEvent(TRACE_NORMAL,
-			       "Refresh done. "
-			       "[old pool id: %u]"
-			       "[new pool id: %u]"
-			       "[old pool num devices: %u]"
-			       "[new pool num devices: %u]",
-			       cur_pool_id,
-			       get_host_pool(),
-			       iface->getHostPools()->getNumPoolL2Devices(cur_pool_id),
-			       iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
+  ntop->getTrace()->traceEvent(
+      TRACE_NORMAL,
+      "Refresh done. "
+      "[old pool id: %u]"
+      "[new pool id: %u]"
+      "[old pool num devices: %u]"
+      "[new pool num devices: %u]",
+      cur_pool_id, get_host_pool(),
+      iface->getHostPools()->getNumPoolL2Devices(cur_pool_id),
+      iface->getHostPools()->getNumPoolL2Devices(get_host_pool()));
 #endif
 }
 
 /* *************************************** */
 
-char * Mac::getDHCPName(char * const buf, ssize_t buf_size) {
-  if(buf && buf_size) {
+char* Mac::getDHCPName(char* const buf, ssize_t buf_size) {
+  if (buf && buf_size) {
     m.lock(__FILE__, __LINE__);
     snprintf(buf, buf_size, "%s", names.dhcp ? names.dhcp : "");
     m.unlock(__FILE__, __LINE__);
@@ -325,80 +326,79 @@ char * Mac::getDHCPName(char * const buf, ssize_t buf_size) {
 
 /* *************************************** */
 
-void Mac::checkDeviceTypeFromManufacturer() {
-  if(isNull())
-    return;
+char* Mac::getDHCPNameNotLowerCase(char* const buf, ssize_t buf_size) {
+  if (buf && buf_size) {
+    m.lock(__FILE__, __LINE__);
+    snprintf(buf, buf_size, "%s", names.dhcp ? names.dhcp : "");
+    m.unlock(__FILE__, __LINE__);
+  }
 
-  if(strstr(manuf, "Networks") /* Arista, Juniper... */
-     || strstr(manuf, "Brocade")
-     || strstr(manuf, "Routerboard")
-     || strstr(manuf, "Alcatel-Lucent")
-     || strstr(manuf, "AVM")
-     )
+  return ((char*)buf);
+}
+
+/* *************************************** */
+
+void Mac::checkDeviceTypeFromManufacturer() {
+  if (isNull()) return;
+
+  if (strstr(manuf, "Networks") /* Arista, Juniper... */
+      || strstr(manuf, "Brocade") || strstr(manuf, "Routerboard") ||
+      strstr(manuf, "Alcatel-Lucent") || strstr(manuf, "AVM"))
     setDeviceType(device_networking);
-  else if(strstr(manuf, "Xerox")
-	   )
+  else if (strstr(manuf, "Xerox"))
     setDeviceType(device_printer);
-  else if(strstr(manuf, "Raspberry Pi")
-	  || strstr(manuf, "PCS Computer Systems") /* VirtualBox */
-	  )
+  else if (strstr(manuf, "Raspberry Pi") ||
+           strstr(manuf, "PCS Computer Systems") /* VirtualBox */
+  )
     setDeviceType(device_workstation);
   else {
-    /* https://www.techrepublic.com/blog/data-center/mac-address-scorecard-for-common-virtual-machine-platforms/ */
+    /* https://www.techrepublic.com/blog/data-center/mac-address-scorecard-for-common-virtual-machine-platforms/
+     */
 
-    if((!memcmp(mac, "\x00\x50\x56", 3))
-       || (!memcmp(mac, "\x00\x0C\x29", 3))
-       || (!memcmp(mac, "\x00\x05\x69", 3))
-       || (!memcmp(mac, "\x00\x03\xFF", 3))
-       || (!memcmp(mac, "\x00\x1C\x42", 3))
-       || (!memcmp(mac, "\x00\x0F\x4B", 3))
-       || (!memcmp(mac, "\x00\x16\x3E", 3))
-       || (!memcmp(mac, "\x08\x00\x27", 3))
-       )
+    if ((!memcmp(mac, "\x00\x50\x56", 3)) ||
+        (!memcmp(mac, "\x00\x0C\x29", 3)) ||
+        (!memcmp(mac, "\x00\x05\x69", 3)) ||
+        (!memcmp(mac, "\x00\x03\xFF", 3)) ||
+        (!memcmp(mac, "\x00\x1C\x42", 3)) ||
+        (!memcmp(mac, "\x00\x0F\x4B", 3)) ||
+        (!memcmp(mac, "\x00\x16\x3E", 3)) || (!memcmp(mac, "\x08\x00\x27", 3)))
       setDeviceType(device_workstation); /* VM */
   }
 }
 
 /* *************************************** */
 
-void Mac::inlineSetModel(const char * the_model) {
-  if(!model && the_model && (model = strdup(the_model))) {
-    if(strstr(model, "AppleTV") != NULL) setDeviceType(device_multimedia);
-    else if(strstr(model, "MacBook") != NULL) setDeviceType(device_laptop);
-    else if(strstr(model, "AirPort") != NULL) setDeviceType(device_wifi);
-    else if(strstr(model, "Mac")     != NULL) setDeviceType(device_workstation);
-    else if(strstr(model, "TimeCapsule") != NULL) setDeviceType(device_nas);
+void Mac::inlineSetModel(const char* the_model) {
+  if (!model && the_model && (model = strdup(the_model))) {
+    if (strstr(model, "AppleTV") != NULL)
+      setDeviceType(device_multimedia);
+    else if (strstr(model, "MacBook") != NULL)
+      setDeviceType(device_laptop);
+    else if (strstr(model, "AirPort") != NULL)
+      setDeviceType(device_wifi);
+    else if (strstr(model, "Mac") != NULL)
+      setDeviceType(device_workstation);
+    else if (strstr(model, "TimeCapsule") != NULL)
+      setDeviceType(device_nas);
   }
 }
 /* *************************************** */
 
-bool Mac::inlineSetFingerprint(const char * f) {
-  if(!fingerprint && f) {
-    fingerprint = strdup(f);
-    return(true);
-  }
-
-  return(false);
+void Mac::inlineSetSSID(const char* s) {
+  if (!ssid && s && (ssid = strdup(s))) setDeviceType(device_wifi);
 }
 
 /* *************************************** */
 
-void Mac::inlineSetSSID(const char * s) {
-  if(!ssid && s && (ssid = strdup(s)))
-    setDeviceType(device_wifi);
-}
-
-/* *************************************** */
-
-void Mac::inlineSetDHCPName(const char * dhcp_name) {
-  if(!names.dhcp && dhcp_name && (names.dhcp = Utils::toLowerResolvedNames(dhcp_name)))
-    ;
+void Mac::inlineSetDHCPName(const char* dhcp_name) {
+  if (!names.dhcp && dhcp_name && (names.dhcp = strdup(dhcp_name)))
+    asset_map_updated = true;
 }
 
 /* *************************************** */
 
 void Mac::checkDataReset() {
-  if(data_delete_requested) {
+  if (data_delete_requested) {
     deleteMacData();
     data_delete_requested = false;
   }
@@ -407,21 +407,30 @@ void Mac::checkDataReset() {
 /* *************************************** */
 
 void Mac::checkStatsReset() {
-  if(statsResetRequested()) {
-    MacStats *new_stats = new (std::nothrow) MacStats(iface);
+  if (statsResetRequested()) {
+    MacStats* new_stats = new (std::nothrow) MacStats(iface);
+
     stats_shadow = stats;
     stats = new_stats;
     last_stats_reset = ntop->getLastStatsReset();
     stats_reset_requested = false;
+
+#ifdef HAVE_NEDGE
+    char buf[32];
+
+    ntop->getTrace()->traceEvent(TRACE_INFO, "Reset stats for MAC %s",
+                                 print(buf, sizeof(buf)));
+    last_counter_reset = time(NULL);
+#endif
   }
 }
 
 /* *************************************** */
 
-void Mac::periodic_stats_update(const struct timeval *tv) {
+void Mac::periodic_stats_update(const struct timeval* tv, bool force_update) {
   checkDataReset();
   checkStatsReset();
-  stats->updateStats(tv);
+  if (stats) stats->updateStats(tv);
 }
 
 /* *************************************** */
@@ -430,12 +439,12 @@ void Mac::readDHCPCache() {
   /* Check DHCP cache */
   char mac_str[24], buf[64], key[CONST_MAX_LEN_REDIS_KEY];
 
-  if(!names.dhcp && !isNull()) {
+  if (!names.dhcp && !isNull()) {
     Utils::formatMac(get_mac(), mac_str, sizeof(mac_str));
 
     snprintf(key, sizeof(key), DHCP_CACHE, iface->get_id(), mac_str);
 
-    if(ntop->getRedis()->get(key, buf, sizeof(buf)) == 0) {
+    if (ntop->getRedis()->get(key, buf, sizeof(buf)) == 0) {
       names.dhcp = strdup(buf);
     }
   }
@@ -445,7 +454,10 @@ void Mac::readDHCPCache() {
 
 void Mac::freeMacData() {
   // TODO: allow fingerprint, ssid, and model to be resettable
-  if(names.dhcp) { free(names.dhcp); names.dhcp = NULL; }
+  if (names.dhcp) {
+    free(names.dhcp);
+    names.dhcp = NULL;
+  }
 }
 
 /* *************************************** */
@@ -464,14 +476,121 @@ void Mac::deleteMacData() {
 
 /* *************************************** */
 
-u_int64_t Mac::to64(u_int8_t mac[6]) {
-  u_int64_t m = 0;
-  memcpy(&m, mac, 6);
-  return(m);
+u_int64_t Mac::get_mac64() { return Utils::encodeMacTo64(mac); }
+
+/* *************************************** */
+
+bool Mac::is_hash_entry_state_idle_transition_ready() {
+  /*  ntop->getTrace()->traceEvent(TRACE_NORMAL,
+        "Is idle, current time, last seen, configured expiration: "
+        "[ %s | %d | %d | %d ]",
+        is_active_entry_now_idle(ntop->getPrefs()->macAddressCacheDuration())
+            ? "true"
+            : "false",
+        time(NULL), last_seen, ntop->getPrefs()->macAddressCacheDuration());
+  */
+  return ((getUses() == 0) && is_active_entry_now_idle(
+                                  ntop->getPrefs()->macAddressCacheDuration()));
 }
 
 /* *************************************** */
 
-u_int64_t Mac::get_mac64() {
-  return Mac::to64(mac);
+void Mac::setDHCPFingerprint(const char* f) {
+  char *new_fingerprint, *old_fingerprint;
+
+  if ((f == NULL) || (f[0] == '\0')) return;
+
+  if ((new_fingerprint = strdup(f)) == NULL) return;
+
+  m.lock(__FILE__, __LINE__);
+  old_fingerprint = dhcpv4_fingerprint;
+  dhcpv4_fingerprint = new_fingerprint;
+  m.unlock(__FILE__, __LINE__);
+
+  if (old_fingerprint) free(old_fingerprint);
+
+#ifdef NTOPNG_PRO
+  analyzeDevice(f);
+#endif
 }
+
+/* *************************************** */
+
+/* Returns a copy (NULL if not set): dhcpv4_fingerprint can be replaced (and
+ * freed) by another thread at any time */
+char* Mac::getDHCPfingerprint(char* const buf, ssize_t buf_size) {
+  bool found = false;
+
+  if (buf && buf_size) {
+    if (dhcpv4_fingerprint) {
+      m.lock(__FILE__, __LINE__);
+      if (dhcpv4_fingerprint) {
+        snprintf(buf, buf_size, "%s", dhcpv4_fingerprint);
+        found = true;
+      }
+      m.unlock(__FILE__, __LINE__);
+    }
+  }
+
+  return (found ? buf : NULL);
+}
+
+/* *************************************** */
+
+void Mac::guessDeviceType() {
+  if (manuf == NULL) return;
+
+  /* ntop->getTrace()->traceEvent(TRACE_ERROR, "*** %s", manuf); */
+
+  if (strncasecmp(manuf, "Sonos", 5) == 0)
+    device_type = device_wifi;
+  else if ((strncasecmp(manuf, "Tp-Link", 7) == 0) ||
+           (strncasecmp(manuf, "Technicolor", 11) == 0))
+    device_type = device_networking;
+  else if (strncasecmp(manuf, "ASUSTek", 7) == 0)
+    device_type = device_workstation;
+}
+
+/* *************************************** */
+
+void Mac::setDeviceType(DeviceType devtype) {
+  if (isNull() || (device_type == devtype)) return;
+
+  /* Called by ntopng when it can guess a device type during normal packet
+   * processing */
+  if (!lockDeviceTypeChanges) {
+    device_type = devtype;
+    asset_map_updated = true;
+    ntop->trackAssetChange("MAC", "setDeviceType", this, NULL, NULL, NULL,
+                           (char*)Utils::deviceType2str(devtype));
+  }
+}
+
+/* *************************************** */
+
+void Mac::setDeviceOS(ndpi_os _os) {
+  if (device_os == _os) return;
+
+  device_os = _os, asset_map_updated = true;
+  ntop->trackAssetChange("MAC", "setDeviceOS", this, NULL, NULL, NULL,
+                         (char*)Utils::OS2Str(_os));
+}
+
+/* *************************************** */
+
+#ifdef HAVE_NEDGE
+void Mac::logMacEvent(char* msg) {
+  char buf[512], theDate[32];
+  time_t theTime = time(NULL);
+  struct tm result;
+
+  strftime(theDate, sizeof(theDate), "%d/%b/%Y %H:%M:%S",
+           localtime_r(&theTime, &result));
+  snprintf(buf, sizeof(buf), "%s %s", theDate, msg);
+
+  events.insert(events.begin(), buf); /* Asdds a message at the beginning */
+
+  if (events.size() > 25 /* max number of events */)
+    events.pop_back(); /* Deletes last element */
+}
+#endif

@@ -14,10 +14,19 @@ Enabling Traffic Recording
 
 *ntopng*, since version 3.7, includes support for continuous traffic recording 
 leveraging on *n2disk*, an optimized traffic recording application part of the 
-*ntop* suite available on Linux systems. For this reason, in order to be able to 
-enable this feature, both *ntopng* and *n2disk* need to be installed from packages
-according to your Linux distribution (we assume that you already configured the 
-`ntop repository <http://packages.ntop.org>`_ and have *ntopng* installed).
+*ntop* suite available on Linux systems. 
+
+In order to be able to enable this feature:
+
+1. both *ntopng* and *n2disk* need to be installed from packages on the same host. This is supported on physical hosts or VM. Containers are not yet supported.
+
+2. *n2disk* should be licensed according to the required dump speed. There is an ntopng Bundle license that allows you to license both with a single, convenient license.
+
+3. *ntopng* and *n2disk* should be installed and running on the same host to get a copy of the same traffic and be able to interact (access the same file system).
+
+In order to install n2disk (we assume that you already configured the 
+`ntop repository <https://packages.ntop.org>`_ and have *ntopng* installed)
+run the below commands according to your Linux distribution:
 
 *apt*
 
@@ -32,11 +41,11 @@ according to your Linux distribution (we assume that you already configured the
    yum install n2disk
 
 Please make sure that *ntopng* is running using the *ntopng* user, which
-is the default since version 3.7, as reported in `this notice <https://www.ntop.org/support/faq/migrate-the-data-directory-in-ntopng/>`_.
+is the default since version 3.7, as reported in `this notice <https://www.ntop.org/faq/migrate-the-data-directory-in-ntopng/>`_.
 
 In order to use *n2disk* a license is also required, you can get one at
-`e-shop <http://shop.ntop.org>`_ or, if you are no-profit, research or an 
-education institution please read `this <https://www.ntop.org/support/faq/do-you-charge-universities-no-profit-and-research/>`_.
+`e-shop <https://shop.ntop.org>`_ or, if you are no-profit, research or an 
+education institution please read `this <https://www.ntop.org/faq/do-you-charge-universities-no-profit-and-research/>`_.
 The *n2disk* license can be installed directly from *ntopng* through the
 *Preferences*, *Traffic Recording* menu. The same page also provides
 the installed *n2disk* version and SystemID, both required to generate
@@ -65,16 +74,32 @@ to the *ntopng* configuration file.
 
   For Continuous Traffic Recording with ZC or FPGA adapters please read the `ZC/FPGA Support`_ section.
 
-In order to actually start recording traffic, you need to select an interface from 
-the *Interfaces* menu, click on the disk icon, and configure the recording instance:
+In order to actually start recording traffic, you need to select an interface from
+the *Interfaces* menu, open its *Recording* tab, choose *Settings* and configure the
+recording instance:
 
-1. Select "Continuous Traffic Recording"
-2. Configure the desired "Max Disk Space" value. This lets you control the maximum 
+1. Toggle "Continuous Traffic Recording"
+2. Configure the desired "Max Disk Space" value (GB, the suggested maximum is said under
+   the field). This lets you control the maximum
    disk space to be used for pcap files, which also affects the data retention time
    (when the maximum disk space is exceeded, the oldest pcap file is overwritten).
    Please note that the data retention time also depends on the traffic throughput 
    of the networks being monitored.
-3. Press the "Save Settings" button to actually start recording.
+   Optionally set a "Capture Filter" (nBPF) and, under *Advanced Settings*, the
+   "Packet Capture Length" and the "Max PCAP File Size" (empty: computed from the
+   interface link speed).
+3. Press "Save changes" in the bar that appears after a change to actually start
+   recording (or to stop it, when the recording is turned off).
+
+The *Storage Utilization* bar shows how the volume of the pcap directory is used: by
+the system, by the packet dumps of the interface, by the extracted packets and free.
+On a ZMQ collector interface the same page also lets you choose the *External Interface*
+recorded by n2disk and enable the *Flow Export* of its traffic to ntopng.
+
+The *Recording* tab has three views: *Status*, *Settings* and *Jobs* (the extraction
+jobs, Enterprise M). *Status* and *Jobs* are available once the recording is enabled,
+and *Status* opens by default then. When n2disk is run by an external provider (see
+below) there are no settings: only the status and the jobs.
 
 .. figure:: ../img/web_gui_interfaces_recording.png
   :align: center
@@ -93,8 +118,11 @@ the badge is red, it means that there is a failure.
   The Traffic Recording Badge in the Footer
 
 It is possible to get more information about the *n2disk* service status by 
-clicking on the badge. The status page provides information including the uptime
-of the recording service, statistics about processed traffic, the log trace.
+clicking on the badge, which opens the *Status* view of the *Recording* tab. It shows
+whether n2disk is recording (or failed: a *Restart the service* button restarts it),
+the dump window (the time range available on disk), since when it is active, the
+recorded traffic, the dropped packets, the smart recording window and the last lines
+of the n2disk log (most recent first). The refresh button in its header reads them again.
 
 .. figure:: ../img/web_gui_interfaces_recording_status.png
   :align: center
@@ -102,15 +130,74 @@ of the recording service, statistics about processed traffic, the log trace.
 
   The Traffic Recording Status Page
 
+Smart Recording
+---------------
+
+.. note::   
+  Smart Recording is available with ntopng Enterprise XL only.
+
+ntopng, since version 5.7, includes support for Smart Recording. 
+
+As described in the previous section, continuous Traffic Recording provides a 
+window into network history, that allows you to retrieve and analyse *all* the 
+raw traffic in that period of time. Data retention (the size of the window) 
+depends on the storage size (the configured “Max Disk Space”).
+However at high traffic rate the available disk space may not satisfy the desired 
+data retention, overwriting data too early, to make room for new data. In those
+cases it is helpful to prioritize selected traffic which is matching Network events
+(e.g. security alerts), which is more important then the rest of the traffic.
+
+The Smart Recording support creates a second-level storage implementing the Smart 
+Data Retention, which means archiving traffic matching Network events to have a 
+longer data retention for that data (which is usually a small subset of the full 
+raw data).
+
+.. figure:: ../img/smart_recording_architecture.png
+  :align: center
+  :alt: Smart Recording Architecture
+
+  The Smart Recording Architecture
+
+For further information please also read the `Smart Recording blog post`_ and
+watch the `Smart Recording video tutorial`_.
+
+.. _`Smart Recording blog post`: https://www.ntop.org/announce/introducing-smart-recording-in-n2disk-combining-cybersecurity-with-packet-to-disk/
+.. _`Smart Recording video tutorial`: https://www.youtube.com/watch?v=R_prNIY5aIg
+
+In order to enable the Smart Recording, continuous Traffic Recording should be
+enabled as described in the previous page, and in the same page it is required to:
+
+1. Toggle "Smart Traffic Recording"
+2. Configure the desired "Max Smart Disk Space" to control the maximum disk space 
+   to be used for pcap files in the second level storage (events traffic only).
+3. Press "Save changes" to actually enable it.
+
+.. figure:: ../img/web_gui_interfaces_smart_recording.png
+  :align: center
+  :alt: Smart Traffic Recording
+
+  The Smart Recording Settings
+
+Once Smart Recording has been enabled, when traffic extraction is requested (from
+one of the charts by selecting a time interval, or when downloading the pcap traffic
+for an alert or for a flow), traffic is extracted from the first-level storage if
+it falls inside the first-level storage window, or from the second-level storage
+otherwise (only traffic matching network events will be available in the latter case).
+
 External Traffic Recording Providers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-One can manage n2disk services manually using the command line. In
-this case, one can configure ntopng to bind to an external traffic
-recording provider. Traffic recording providers are configured from
-the interface settings page. A dropdown menu with the list of
-available recording providers is shown.
+Recording traffic at high rates (10/40/100 Gbit and above) usually requires ad-hoc/manual
+configurations, as in that case accelerated capture technologies like PF_RING ZC with 
+Intel, Mellanox or FPGA adapters are required, and n2disk needs to be properly configured
+and tuned to take fully advantage of the hardware architecture (CPU affinity, storage, etc).
 
+In order to support custom n2disk configurations, ntopng can also attach to external
+n2disk instances/services which have been configured manually using systemd, as opposite
+to using ntopng for automatically configure and start the recording using the GUI.
+In fact, ntopng can bind to an external traffic recording provider by selecting it from
+the interface settings page. A dropdown menu with the list of available recording providers
+is shown there.
 
 .. figure:: ../img/web_gui_interfaces_recording_external_providers.png
   :align: center
@@ -124,6 +211,41 @@ available recording providers is shown.
    files, ntopng will not show a settings tab nor it will allow any
    configuration change. However, extractions will still be possible
    as described in the following section.
+
+Please also note that ZC and FPGA adapters are based on kernel bypass technologies,
+which provides the best capture acceleration, with the drawback that they do not (usually)
+allow multiple applications to capture the same data stream at the same time (with some
+exceptions like Silicom/Fiberblaze adapters and Mellanox, depending on the configuration).
+This means that ntopng and n2disk cannot capture and process the same traffic at the same
+time. For this reason, in order to overcome this limitation, n2disk is able to export 
+flow metadata to ntopng over ZMQ, similar to what nProbe does (as explained in the 
+Using ntopng with nProbe section). In this configuration n2disk can be configured to 
+capture raw packets, dump PCAP data to disk, and export flow metadata in JSON or TLV 
+format through ZMQ to ntopng for visibility.
+
+In order to process flow metadata through ZMQ in ntopng, the collector interface needs
+to be added in the ntopng configuration file (/etc/ntopng/ntopng.conf):
+
+.. code:: bash
+
+   -i=tcp://*:5556c
+
+The same endpoint needs to be added to the n2disk configuration file (e.g. /etc/n2disk/n2disk-eth0.conf):
+
+.. code:: bash
+
+   [...]
+   --zmq=tcp://127.0.0.1:5556
+   --zmq-probe-mode
+   --zmq-export-flows
+   -u=ntopng
+
+Please note that it is a good practice to run n2disk using the ntopng user (see -u)
+in order to make sure that ntopng is able to access the PCAP data recorded by n2disk
+and run traffic extractions.
+
+Please check the n2disk User’s Guide for a full example of n2disk configuration and
+further information about other options.
 
 Traffic Extraction
 ------------------
@@ -142,11 +264,6 @@ traffic appears at the top right corner of the *Historical Traffic Statistics* p
 
   The Extract Pcap Button in the Interface Historical Traffic Statistics page
 
-.. figure:: ../img/web_gui_hosts_extract_pcap.png
-  :align: center
-  :alt: Extract pcap button
-
-  The Extract Pcap Button in the Host Historical Traffic Statistics Page
 
 By clicking on the button, a dialog box will let you run an extraction to retrieve the 
 traffic matching the time interval selected on the chart. It is possible to download the
@@ -170,29 +287,25 @@ The filter format is described at `Packet Filtering <https://www.ntop.org/guides
   :alt: Extract pcap dialog filter
 
   The Extract Pcap Dialog Filter
-
-The extraction button is also available in several other places while browsing the
-historical data, an example is the list of the *Top Receivers* or *Top Senders* available 
-at the bottom of the *Interface Historical Traffic Statistics* page. In this case, a button
-on the right side of the row lets you download the traffic matching a specific host in the
-selected time interval.
-
-.. figure:: ../img/web_gui_interfaces_extract_pcap_from_list.png
-  :align: center
-  :alt: Extract pcap button
-
-  The Extract Pcap Button in the Top Receivers in the Interface Historical Traffic Statistics Page
+  
 
 When an extraction job is scheduled for background processing by selecting the *Queue as Job* option, 
 ntopng extracts the traffic and creates new *pcap* files with the traffic. This usually requires a few 
 seconds, depending on a few factors, including: the time interval, the amount of recorded data, the 
 extraction filter. 
 
-A reference for the extraction job (a link to the *Traffic Extraction Jobs* page with the list of 
-scheduled extractions, and the extraction *ID*) is provided after starting the extraction, in order 
-to control the status and download the pcap file(s) as soon as the extraction is completed.
-Extraction jobs can be stopped anytime using the *Stop* button, in case of extractions taking too 
-long, or removed using the *Delete* button (this will also delete the corresponding pcap files).
+A reference for the extraction job (a link to the *Jobs* view of the interface *Recording* tab, with
+the list of scheduled extractions, and the extraction *ID*) is provided after starting the extraction,
+in order to control the status and download the pcap file(s) as soon as the extraction is completed.
+The list, newest first and refreshed every 10 seconds (auto refresh switch), shows for each job its
+ID, creation time, status (failed jobs also say why), the extracted time range, the filter and the
+extracted packets and bytes. The action button of each row downloads the pcap file (a job split in
+several files opens a dialog with one link each); its menu opens the chart the job was scheduled
+from, stops a running job (in case of extractions taking too long) or deletes it (this also deletes
+the corresponding pcap files). Unavailable actions stay in the menu, disabled with the reason.
+*Delete All Jobs*, below the list, deletes every job of the interface (the running ones are stopped).
+On a view interface the *Recording* tab shows only the jobs, extracted from its viewed interfaces
+that record traffic.
 
 .. figure:: ../img/web_gui_interfaces_extraction_jobs.png
   :align: center
@@ -240,8 +353,8 @@ ZC/FPGA Support
 ---------------
 
 If you need to process traffic at high rate at 10/40Gbit and above, you are probably looking for
-capture technologies like `PF_RING ZC <http://www.ntop.org/guides/pf_ring/zc.html>`_ for Intel
-or `FPGA <http://www.ntop.org/guides/pf_ring/modules/index.html>`_ adapters.
+capture technologies like `PF_RING ZC <https://www.ntop.org/guides/pf_ring/zc.html>`_ for Intel
+or `FPGA <https://www.ntop.org/guides/pf_ring/modules/index.html>`_ adapters.
 
 As both PF_RING ZC and FPGA adapters are based on kernel bypass, the drawback is that they do not 
 allow you to capture the same stream from multiple applications at the same time. This means that
@@ -249,7 +362,7 @@ you cannot run ntopng for traffic analysis and n2disk for raw traffic recording 
 on the same interface.
 
 In order to overcome this, n2disk is able to export flow metadata to ntopng over ZMQ, similar to
-what nProbe does as explained in the `Using ntopng with nProbe <http://www.ntop.org/guides/ntopng/using_with_nprobe.html>`_ section. 
+what nProbe does as explained in the `Using ntopng with nProbe <https://www.ntop.org/guides/ntopng/using_with_nprobe.html>`_ section. 
 As depicted below, in this configuration n2disk can be configured to capture raw packets, dump PCAP 
 data to disk, and export flow metadata in JSON format through ZMQ to ntopng at the same time. 
 
@@ -282,9 +395,9 @@ metadata in addition to traffic statistics) are also required.
 It is a good practice to run n2disk using the *ntopng* user (see :code:`-u`) in order to make sure that
 ntopng is able to access the PCAP data recorded by n2disk and run traffic extractions.
 
-Please see the `n2disk User's Guide <http://www.ntop.org/guides/n2disk/index.html>`_ for further information
+Please see the `n2disk User's Guide <https://www.ntop.org/guides/n2disk/index.html>`_ for further information
 about the other options. Please note that in the example below n2disk is aggregating traffic in hardware
-from 2 ports of a Napatech adapter, please see the `Napatech configuration <http://www.ntop.org/guides/n2disk/napatech.html>`_
+from 2 ports of a Napatech adapter, please see the `Napatech configuration <https://www.ntop.org/guides/n2disk/napatech.html>`_
 for configuring the adapter.
 
 .. code:: bash

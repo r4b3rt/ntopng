@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local checks = require("checks")
@@ -10,6 +10,7 @@ local script = {
   -- Script category
   category = checks.check_categories.internals,
 
+  severity = alert_consts.get_printable_severities().error,
 
   -- See below
   hooks = {},
@@ -24,6 +25,10 @@ local script = {
 
 local function dropped_alerts_check(params)
    local dropped_alerts = interface.getStats()["num_dropped_alerts"]
+   -- This is the default value
+   if not dropped_alerts then
+      dropped_alerts = ""
+   end
 
    -- Compute the delta with the previous value for drops
    local delta_drops = alerts_api.interface_delta_val(script.key, params.granularity, dropped_alerts, true --[[ skip first --]])
@@ -33,9 +38,8 @@ local function dropped_alerts_check(params)
       delta_drops
       )
 
-   alert:set_score_error()
+   alert:set_info(params)
    alert:set_subtype(getInterfaceName(interface.getId()))
-   alert:set_granularity(params.granularity)
 
    if(delta_drops > 0) then
       alert:trigger(params.alert_entity, nil, params.cur_alerts)

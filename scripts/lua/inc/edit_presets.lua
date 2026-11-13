@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 dirs = ntop.getDirs()
@@ -29,7 +29,7 @@ local policy_filter = _GET["policy_filter"] or ""
 local proto_filter = _GET["l7proto"] or ""
 local device_type = _GET["device_type"] or "0" -- unknown by default
 local category = _GET["category"] or ""
-local is_nedge = ntop.isnEdge()
+local is_nedge = ntop.isnEdge and ntop.isnEdge()
 
 interface.select(ifname)
 
@@ -274,7 +274,7 @@ local function printDeviceProtocolsPage()
 
     $("#]] print(table_id) print[[").datatable({
       url: url_update ,
-      class: "table table-striped table-bordered table-sm",
+      class: "table table-bordered table-sm",
 ]]
 
    -- Table preferences
@@ -286,7 +286,7 @@ local function printDeviceProtocolsPage()
       tableCallback: function(opts) {
         if (! legend_appended) {
           legend_appended = true;
-          $("#]] print(table_id) print[[ .dt-toolbar-container").append("]]
+          $("#]] print(table_id) print[[ #dt-bottom-details").append("]]
 
    -- Legenda
    printDevicePolicyLegenda()
@@ -368,7 +368,7 @@ local function printDeviceProtocolsPage()
                   verticalAlign: 'middle',
               }
             },{
-              title: "]] print(i18n("users.client_policy")) print[[",
+              title: "]] print(js_str(i18n("users.client_policy"))) print[[",
               field: "column_client_policy",
               sortable: false,
                 css: {
@@ -378,7 +378,7 @@ local function printDeviceProtocolsPage()
               }
             },
             {
-              title: "]] print(i18n("users.server_policy")) print[[",
+              title: "]] print(js_str(i18n("users.server_policy"))) print[[",
               field: "column_server_policy",
               sortable: false,
                 css: {

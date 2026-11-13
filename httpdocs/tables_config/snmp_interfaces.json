@@ -1,0 +1,242 @@
+{
+	"id": "snmp_interfaces",
+	"data_url": "lua/pro/rest/v2/get/snmp/metric/interfaces.lua",
+	"filters_url": "lua/pro/rest/v2/get/snmp/metric/interfaces_filters.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": true,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.snmp_interfaces",
+	"default_sort": {
+		"column_id": "device",
+		"sort": 0
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "interface_configuration",
+					"icon": "fas fa-cog",
+					"title_i18n": "flow_checks.callback_config",
+					"event_id": "click_button_configuration"
+				}
+			]
+		},
+		{
+			"title_i18n": "snmp.snmp_device",
+			"data_field": "device_name",
+			"sortable": true,
+			"min-width" : "145px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.ifName",
+			"data_field": "interface_name",
+			"min-width" : "155px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.interface_alias",
+			"data_field": "alias",
+			"min-width" : "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.interface_ip",
+			"data_field": "ip_addr",
+			"min-width" : "145px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "snmp.interface_role",
+			"data_field": "role",
+			"min-width" : "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.in_bytes",
+			"data_field": "in_bytes",
+			"min-width" : "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "snmp.out_bytes",
+			"data_field": "out_bytes",
+			"min-width" : "110px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "throughput",
+			"min-width" : "125px",
+			"data_field": "throughput",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "vlan",
+			"data_field": "vlan",
+			"min-width" : "80px",
+			"sortable": true,
+			"class": [
+			    "text-nowrap",
+     		            "text-center"
+			]
+		},
+		{
+			"title_i18n": "admin_status_short",
+			"data_field": "admin_status",
+			"min-width" : "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "interface_status_short",
+			"data_field": "status",
+			"min-width" : "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "duplexstatus",
+			"data_field": "duplex_status",
+			"min-width" : "145px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "snmp.port_macs_short",
+			"data_field": "num_macs",
+			"min-width" : "80px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "snmp.in_discards",
+			"data_field": "in_discards",
+			"min-width" : "120px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "snmp.in_errors",
+			"min-width" : "100px",
+			"data_field": "in_errors",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "snmp.out_errors",
+			"min-width" : "100px",
+			"data_field": "out_errors",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "interface_uplink_speed",
+			"data_field": "uplink_speed",
+			"min-width" : "135px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "interface_downlink_speed",
+			"data_field": "downlink_speed",
+			"min-width" : "160px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "downlink_usage",
+			"data_field": "last_in_usage",
+			"min-width" : "135px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "uplink_usage",
+			"min-width" : "140px",
+			"data_field": "last_out_usage",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "snmp.last_change",
+			"data_field": "last_change",
+			"sortable": true,
+			"min-width" : "125px",
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		}
+	]
+}

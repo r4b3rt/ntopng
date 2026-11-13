@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -21,6 +23,13 @@ alert_known_proto_on_non_std_port.meta = {
    alert_key = flow_alert_keys.flow_alert_known_proto_on_non_std_port,
    i18n_title = "alerts_dashboard.known_proto_on_non_std_port",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.c_and_c,
+      mitre_technique = mitre.technique.nont_std_port,
+      mitre_id = "T1571"
+   },
 
    has_attacker = true,
 }
@@ -43,7 +52,7 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_known_proto_on_non_std_port.format(ifid, alert, alert_type_params)
-   return
+   return i18n('flow_risk.ndpi_known_proto_on_non_stand_port_descr')
 end
 
 -- #######################################################

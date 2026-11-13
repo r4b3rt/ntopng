@@ -2,15 +2,20 @@
 -- (C) 2021 - ntop.org
 --
 
+local dirs = ntop.getDirs()
+
 package.path = dirs.installdir .. "/scripts/lua/modules/alert_store/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/alert_keys/?.lua;" .. package.path
 
 require "lua_utils"
 local json = require "dkjson"
 local alerts_api = require "alerts_api"
 local alert_consts = require "alert_consts"
+local other_alert_keys = require "other_alert_keys"
+local alert_entities = require "alert_entities"
 
 local alert_store_db = {
-   name = "Alert Store DB",
+   name = "DataBase",
    builtin = true, -- Whether this endpoint can be configured from the UI. Disabled for the builtin alert store
 
    endpoint_params = {
@@ -41,6 +46,7 @@ local function recipient2sendMessageSettings(recipient)
    return settings
 end
 
+local debugme = false
 
 -- ##############################################
 
@@ -64,9 +70,39 @@ end
 
 -- ##############################################
 
+-- Issue manager (Enterprise XXL+): groups the alerts into issues, nil if not available.
+-- Used only while the issues are enabled (preference, ntop.issuesIsEnabled)
+local issue_manager = nil
+local last_issue_error = 0
+
+if ntop.isEnterpriseXXL and ntop.isEnterpriseXXL() then
+   package.path = dirs.installdir .. "/pro/scripts/lua/modules/issues/?.lua;" .. package.path
+   issue_manager = require "issue_manager"
+end
+
+-- @brief Call an issue manager function: errors must not prevent alerts from being stored
+local function call_issue_manager(fn, ...)
+   local ok, err = pcall(fn, ...)
+
+   if not ok and (os.time() - last_issue_error >= 60) then
+      traceError(TRACE_ERROR, TRACE_CONSOLE, "Issue manager error: " .. tostring(err))
+      last_issue_error = os.time()
+   end
+end
+
+-- ##############################################
+
 function alert_store_db.dequeueRecipientAlerts(recipient, budget)
    local more_available = true
    local budget_used = 0
+
+   local success = true
+   local error_message = nil
+   local delivered = 0
+   local discarded = 0
+   local failures = 0
+   -- Issues preference (read once per call: changes apply at the next one)
+   local issues_on = (issue_manager ~= nil) and ntop.issuesIsEnabled()
 
    -- Now also check for alerts pushed by checks from Lua
    -- Dequeue alerts up to budget
@@ -76,10 +112,13 @@ function alert_store_db.dequeueRecipientAlerts(recipient, budget)
 
       for i=1, budget do
          local notification = ntop.recipient_dequeue(recipient.recipient_id)
+
+         if(debugme) then tprint(notification) end
+         
          if notification then
-	    notifications[#notifications + 1] = notification.alert
+            notifications[#notifications + 1] = notification.alert
          else
-	    break
+            break
          end
       end
 
@@ -90,20 +129,38 @@ function alert_store_db.dequeueRecipientAlerts(recipient, budget)
 
       for _, json_message in ipairs(notifications) do
          local alert = json.decode(json_message)
+         if alert then
+            local alert_store = get_alert_store(alert.entity_id)
+            if alert_store then
 
-         if alert.action ~= "engage" then
-	    -- Do not store alerts engaged - they're are handled only in-memory
+               interface.select(string.format("%d", alert.ifid or 0))
 
-	    if(alert) then
-	       interface.select(string.format("%d", alert.ifid))
-
-               local alert_store = get_alert_store(alert.entity_id)
-
-               if alert_store then
-                  alert_store:insert(alert)
+               if issues_on then
+                  -- Sets alert.issue_id, stored with the alert
+                  call_issue_manager(issue_manager.process, alert, json_message)
                end
-	    end
-   
+
+               if alert.action == "engage" then
+                  -- Add to the in-memory table (in addition to the C++ data structures)
+                  alert_store:insert_engaged(alert)
+
+               else -- alert.action == "release"
+                  -- Remove from the in-memory table if previously engaged
+                  if alert.alert_id ~= 4 then -- Not alert_entity_flow (historical only)
+                     alert_store:delete_engaged(alert)
+                  end
+
+                  -- Add to the historical table
+                  alert_store:insert(alert)
+
+                  if(debugme) then io.write("Stored alert in alert.entity_id "..alert.entity_id) end
+               end
+
+               delivered = delivered + #notifications
+
+            else
+               if(debugme) then io.write("Unable to find alert.entity_id "..alert.entity_id) end
+            end
          end
       end
 
@@ -111,13 +168,50 @@ function alert_store_db.dequeueRecipientAlerts(recipient, budget)
       budget_used = budget_used + #notifications
    end
 
-   return {success = true, more_available = more_available}
+ ::done::
+   if issues_on then
+      call_issue_manager(issue_manager.flush)
+   elseif issue_manager and ntop.issuesIsLoaded() then
+      -- Issues just disabled: write the pending changes and free the memory
+      call_issue_manager(issue_manager.unload)
+   end
+
+   return {
+      success = success,
+      error_message = error_message,
+      delivered = delivered,
+      discarded = discarded,
+      failures  = failures,
+      more_available = more_available,
+  }
 end
 
 -- ##############################################
 
 function alert_store_db.runTest(recipient)
-  return false, "Not implemented"
+  local alert_store = get_alert_store(alert_entities.system.entity_id)
+
+  local dummy_alert = {
+    alert_id = other_alert_keys.alert_test,
+    tstamp = os.time(),
+    tstamp_end = os.time(),
+    score = 100,
+    entity_val = "",
+    granularity = 0,
+    json = "{}",
+    require_attention = true
+  }
+
+  local success = alert_store:insert(dummy_alert)
+
+  local msg
+  if success then
+    msg = i18n("alert_messages.database_test_success")
+  else
+    msg = i18n("alert_messages.database_test_failure")
+  end
+
+  return success, msg
 end
 
 -- ##############################################

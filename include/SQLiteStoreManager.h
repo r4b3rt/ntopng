@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,26 +24,27 @@
 
 #include "ntop_includes.h"
 
-class SQLiteStoreManager {
- private:
+class SQLiteStoreManager : public DB {
  protected:
-  int ifid;
-  NetworkInterface *iface;
   Mutex m;
-  sqlite3 *db;
+  sqlite3* db;
 
-  int init(const char *db_file_full_path);
-  int exec_query(const char * db_query,
-		 int (*callback)(void *, int, char **, char **),
-		 void *payload);
-  int exec_statement(sqlite3_stmt *stmt);
+  int init(const char* db_file_full_path);
+  int exec_statement(sqlite3_stmt* stmt);
 
  public:
-  SQLiteStoreManager(int interface_id);
+  SQLiteStoreManager(NetworkInterface* iface);
   virtual ~SQLiteStoreManager();
 
-  NetworkInterface* getNetworkInterface(); 
   int optimizeStore();
+
+  int execFile(const char* path);
+  int exec_query(const char* db_query,
+                 int (*callback)(void*, int, char**, char**), void* payload);
+
+  int execSQLQuery(lua_State* vm, const char* sql, bool limitRows,
+                   bool wait_for_db_created) override;
+  int execSQLWrite(const char* sql) override;
 };
 
 #endif /* _SQLITE_STORE_MANAGER_H_ */

@@ -1,0 +1,78 @@
+{
+	"name" : "Top Domains By Destination",
+	"data_source" : "flows",
+	"show_in_page" : "overview",
+	"hourly": false,
+	"visualization_type" : "table",
+	"select" : {
+		"items" : [
+			{
+				"name" : "IPV4_DST_ADDR"
+			},
+			{
+				"name" : "IPV6_DST_ADDR"
+			},
+			{
+				"name" : "DST_LABEL"
+			},
+			{
+				"name" : "DOMAIN_NAME"
+			},
+			{
+				"name" : "count",
+				"func" : "COUNT",
+				"param" : "*",
+				"value_type" : "number"
+			}
+		]
+	},
+	"filters" : {
+		"items" : [
+			{
+				"name": "DOMAIN_NAME",
+				"op": "neq",
+				"value": "",
+				"value_type": "string",
+				"input": "fixed"
+			},
+			{
+				"name": "L7_PROTO",
+				"op": "neq",
+				"value": "5",
+				"value_type": "number",
+				"input": "fixed"
+			},
+			{
+				"name": "L7_PROTO_MASTER",
+				"op": "neq",
+				"value": "5",
+				"value_type": "number",
+				"input": "fixed"
+			}
+		]
+	},
+	"groupby" : {
+		"items" : [
+			{
+				"name" : "IPV4_DST_ADDR"
+			},
+			{
+				"name" : "IPV6_DST_ADDR"
+			},
+			{
+				"name" : "DST_LABEL"
+			},
+			{
+				"name" : "DOMAIN_NAME"
+			}
+		]
+	},
+	"sortby" : {
+		"items" : [
+			{
+				"name" : "count",
+				"order" : "DESC"
+			}
+		]
+	}
+}

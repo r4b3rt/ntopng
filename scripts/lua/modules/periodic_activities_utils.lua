@@ -1,10 +1,12 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 -- This file contains the check constats used to put alerts and red triangles when periodic activities are slow
 -- NOTE: this file needs some rework as the scripts have been modified in the latest release (TODO)
 
 local periodic_activities_utils = {}
+
+local clock_start = os.clock()
 
 -- ###########################################
 
@@ -89,5 +91,9 @@ function periodic_activities_utils.have_degraded_performance()
 end
 
 -- ###########################################
+
+if(trace_script_duration ~= nil) then
+   io.write(debug.getinfo(1,'S').source .." executed in ".. (os.clock()-clock_start)*1000 .. " ms\n")
+end
 
 return periodic_activities_utils

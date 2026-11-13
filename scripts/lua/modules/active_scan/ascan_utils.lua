@@ -1,0 +1,2681 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+
+--
+-- This file implements some utility functions used by the REST API
+-- in the Active Scan pages.
+--
+-- Scans are performed with nmap: see scripts/lua/modules/active_scan/modules
+-- for the available scan engines.
+--
+
+-- **********************************************************
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/pro/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/recipients/?.lua;" .. package.path
+
+require "lua_utils" -- used by tprint (debug)
+
+-- redis key with info found with scans
+local host_to_scan_key                    = "ntopng.vs.hosts.scanned_values"
+-- redis key with the current configuration
+local prefs_host_values_key               = "ntopng.prefs.vs.hosts_conf"
+
+-- redis key for periodic scan in progress
+local periodic_scan_key                   = "ntopng.vs.periodic_scan"
+local periodic_scan_type_key              = "ntopng.vs.periodic_scan_type"
+
+-- redis key for scann all in progress
+local ondemand_scan_key                   = "ntopng.vs.scan_all"
+-- redis key for single scan in progress 
+local single_scan_key                     = "ntopng.vs.single_scan"
+
+-- redis keys to handle scan in progress or scheduled
+local scanned_hosts_count_key             = "ntopng.prefs.host_to_scan.count_scanned"
+local scanned_hosts_changes_queue_key     = "ntopng.alerts.scanned_hosts_changes"
+local host_in_scanning_hash_key           = "ntopng.vs.hosts.in_scanning"
+local host_scan_queue_key                 = "ntopng.vs.scan_queue"
+
+-- redis key for last scan report dates
+local hosts_scan_last_report_dates        = "ntopng.vs.report_dates"
+
+-- redis keys for periodic scan info
+local periodic_scan_host_info_key         = "ntopng.vs.periodic_scan.info"
+
+-- redis keys for scan all info
+local ondemand_scan_host_info_key         = "ntopng.vs.scan_all.info"
+
+-- redis key for single scan info
+local single_scan_info_key                = "ntopng.vs.single_scan.info"
+
+-- imports
+local json = require("dkjson")
+local format_utils = require("format_utils")
+local recipients = require("recipients")
+local ascan_db_utils = require("ascan_db_utils")
+local ascan_rest_utils = require("ascan_rest_utils")
+local ascan_status_utils = require("ascan_status_utils")
+
+-- Enable debug with:
+-- redis-cli set "ntopng.prefs.vs.debug_enabled" "1"
+-- systemctl restart ntopng
+local debug_me = ntop.getCache("ntopng.prefs.vs.debug_enabled") == "1"
+local verbose = false
+
+local ascan_utils = {}
+
+local use_slow_scan;
+
+-- **********************************************************
+-- Scan types removed from ntopng (their engines used to live in
+-- modules/active_scan/modules and are now in attic/). Leftover Redis
+-- configurations are purged by ascan_utils.migrate_keys() at startup.
+local obsolete_scan_types = {
+   ["cve"] = true,
+   ["vulners"] = true,
+   ["openvas"] = true,
+}
+
+-- **********************************************************
+-- Function to retrieve host hash key used on redis
+
+function ascan_utils.get_host_hash_key(host, scan_type)
+   return string.format("%s-%s", host, scan_type)
+end
+
+-- **********************************************************
+
+-- Scan status
+ascan_utils.scan_status = ascan_status_utils.scan_status
+
+-- Scan execution type
+ascan_utils.scan_in_exec_type = {
+   single_scan = 1,
+   scan_all = 2,
+   periodic_scan = 3
+}
+
+-- **********************************************************
+-- Function to retrieve nmap path on OS
+function ascan_utils.get_nmap_path()
+   local p = ascan_status_utils.get_nmap_binary()
+
+   if p then
+      return(p..use_slow_scan)
+   end
+
+   return(nil)
+end
+
+-- **********************************************************
+-- Function to check if nmap is installed
+-- NOTE: no scan engine needs the vulscan NSE scripts anymore,
+-- the nmap binary is all that is required
+function ascan_utils.is_nmap_installed()
+   return(ascan_utils.get_nmap_path() ~= nil)
+end
+
+-- **********************************************************
+-- Function to get old report path (now the reports are
+-- saved on the DB)
+local function get_report_path(scan_type, ip, all)
+   local base_dir
+   local ret = ""
+
+   -- NOTE: the directory name is kept as-is on purpose: renaming it would
+   -- orphan the scan results saved by previous versions on non-ClickHouse setups
+   base_dir = dirs.workingdir .. "/" .. getSystemInterfaceId() .. "/vulnerability_scan"
+   ntop.mkdir(base_dir)
+
+   if (not all or all == nil) then
+      ret = base_dir .. "/"..ip.."_"..scan_type..".txt"
+   else
+      ret = base_dir .. "/*.txt"
+   end
+
+   return(ret)
+end
+
+-- ##############################################
+-- Function to split string on \n
+local function lines(str)
+   local result = {}
+
+   for line in str:gmatch '[^\n]+' do
+      result[#result + 1] = line
+   end
+   return result
+end
+
+
+-- ##############################################
+-- Function to concatenate string item list into
+-- comma separated list
+local function format_port_list_to_string(ports)
+   local scan_ports = ""
+
+   if (ports ~= nil and #ports > 0) then
+      for index,port in ipairs(ports) do
+         if (index == 1) then
+            scan_ports = ""..port
+         else
+            scan_ports = scan_ports .. ","..port
+         end
+      end
+   end
+
+   return scan_ports
+end
+
+-- ##############################################
+-- Function to search for an item in a list
+local function find_port(port, port_list)
+   local found = false
+
+   for _,item in ipairs(port_list) do
+      if (item == port) then
+         found = true
+         break
+      end
+   end
+   return found
+end
+
+-- ##############################################
+-- Function to check ports differences between two
+-- different scans on same host
+local function check_ports_diffences(num_old_ports, old_ports, num_new_ports, new_ports)
+   -- num_old_ports: number of old open ports (on the host before the last scan)
+   -- old_ports: list of old ports
+   -- num_new_ports: number of new open ports found (with the last host scan)
+   -- new_ports: list of new open ports
+   local rsp = {
+      trigger = true
+   }
+   if (num_old_ports == 0 and num_new_ports ~= 0) then
+      -- new ports found no old ports closed
+      rsp.open_ports = new_ports
+      rsp.open_ports_num = num_new_ports
+      rsp.closed_ports_num = 0
+      rsp.case = 'new_ports'
+   elseif(num_old_ports ~= 0 and num_new_ports == 0) then
+      -- no new ports found but old ports closed found
+      rsp.open_ports_num = 0
+      rsp.closed_ports_num = num_old_ports
+      rsp.closed_ports = old_ports
+      rsp.case = 'ports_closed'
+   elseif(num_old_ports ~= 0 and num_new_ports ~= 0) then
+      -- case new ports and old ports closed found
+      local closed_ports = {}
+      local open_ports = {}
+
+      local diff = false
+      for _, item in ipairs(old_ports) do
+         local is_open = find_port(item, new_ports)
+         if (not is_open) then
+            closed_ports[#closed_ports+1] = item
+            diff = true
+         end
+      end
+
+      for _, item in ipairs(new_ports) do
+         local is_open = find_port(item, old_ports)
+         if (not is_open) then
+            open_ports[#open_ports+1] = item
+            diff = true
+         end
+      end
+
+
+      if((not diff) and (num_old_ports == num_new_ports)) then
+         -- case no differences and the old ports num is equals to
+         -- new ports open 
+         rsp.trigger = false
+      else
+         rsp.open_ports = open_ports
+         rsp.open_ports_num = #open_ports
+         rsp.closed_ports = closed_ports
+         rsp.closed_ports_num = #closed_ports
+
+         if (#open_ports ~= 0 and #closed_ports == 0) then
+            rsp.case = 'new_ports'
+         elseif (#open_ports == 0 and #closed_ports ~= 0) then
+            rsp.case = 'ports_closed'
+         else
+            rsp.case = 'ports_open_and_closed'
+         end
+      end
+   else
+      rsp.trigger = false
+   end
+   return rsp
+end
+
+-- ##############################################
+-- Function to split ports string comma separated
+-- list into array
+local function split_port_list(data, is_tcp)
+
+   if (is_tcp) then
+      if (data.tcp_ports and data.tcp_ports.num_ports ~= 0) then
+         return split(data.tcp_ports.ports,",")
+      end
+   else
+      if(data.udp_ports and data.udp_ports.num_ports ~= 0) then
+         return split(data.udp_ports.ports, ",")
+      end
+   end
+
+   return {}
+end
+
+-- ##############################################
+-- Function to save last scan result
+-- in the old case it saves on the FS now with CH
+-- it saves on DB
+local function save_last_result(scan_result, scan_type, host, epoch, last_port_scanned_label)
+
+   if(scan_result ~= nil and not ntop.isClickHouseEnabled()) then
+      local handle = io.open(get_report_path(scan_type, host), "a")
+      local result = handle:write("\n\n"..i18n("hosts_stats.page_scan_hosts.inconsistency_state", {port = last_port_scanned_label}).."\n"..scan_result)
+      handle:close()
+   end
+
+   if (scan_result ~= nil and ntop.isClickHouseEnabled()) then
+      ascan_db_utils.update_last_result(scan_result, scan_type, host, epoch, last_port_scanned_label)
+   end
+
+end
+
+-- ##############################################
+-- Function to verify if a port is open or is a 
+-- false positive
+local function verify_status_ports(possible_changed_ports, host, scan_type, open_ports_case, epoch)
+   local real_ports = {}
+   local scan_module = ascan_utils.load_module(scan_type)
+
+   for _,possible_changed_port in ipairs(possible_changed_ports) do
+      local now,result,duration,scan_result,num_open_ports, udp_ports, tcp_ports = scan_module:scan_host(host, possible_changed_port)
+
+      local scan_type_label = ternary(scan_type == "tcp_portscan", "tcp", "udp")
+      local port_label_for_vs_result = string.format("%u/%s",possible_changed_port,scan_type_label)
+      save_last_result(result, scan_type, host, epoch, port_label_for_vs_result)
+      if debug_me then
+         tprint("SCANNED AGAIN HOST: "..host.." ON PORT: "..possible_changed_port)
+      end
+      if (open_ports_case and num_open_ports > 0) then
+         -- case open port and num_open_ports is > 0 so is a real open port
+         real_ports[#real_ports+1] = possible_changed_port
+         if debug_me then
+            tprint("IS A REAL OPEN")
+         end
+      elseif (open_ports_case == false and num_open_ports == 0) then
+         -- case closed port and num_open_ports is 0 so is a real closed port
+         real_ports[#real_ports+1] = possible_changed_port
+         if debug_me then
+            tprint("IS A REAL CLOSED")
+         end
+      end
+   end
+   return real_ports
+end
+
+-- ##############################################
+-- Function to analyze ports differences and build
+-- an object with the info for the alert
+local function analyze_ports_diff(ports_difference, host, scan_type, epoch)
+   local rsp = {}
+   local need_to_trigger_alert_after_changes_verification = ports_difference.trigger
+   if (ports_difference.trigger) then
+      if (debug_me) then
+         tprint("found ports differences")
+         tprint(ports_difference)
+      end
+      local open_ports_case =  true
+
+      local real_open_ports = verify_status_ports(ports_difference.open_ports or {}, host, scan_type, open_ports_case, epoch )
+      local real_open_port_num = ternary(real_open_ports ~= nil and next(real_open_ports), #real_open_ports, 0)
+      rsp["open_ports"] = {
+         num = real_open_port_num,
+         ports = format_port_list_to_string(real_open_ports)
+      }
+      open_ports_case = false
+      local real_closed_ports = verify_status_ports(ports_difference.closed_ports or {}, host, scan_type, open_ports_case, epoch)
+      local real_closed_ports_num = ternary(real_closed_ports ~= nil and next(real_closed_ports), #real_closed_ports, 0)
+
+      rsp["closed_ports"] =  {
+         num = real_closed_ports_num,
+         ports = format_port_list_to_string(real_closed_ports)
+      }
+      rsp["ports_case"] = ports_difference.case
+
+      if ((real_closed_ports_num == ports_difference.closed_ports_num) and (real_open_port_num == ports_difference.open_ports_num)) then
+
+         -- case ok we can trigger alert
+      else
+         -- false positive detected
+         if (debug_me) then
+            tprint("IT'S A FALSE POSITIVE!!!")
+         end
+
+         need_to_trigger_alert_after_changes_verification = false
+      end
+      if (debug_me) then
+         tprint(ports_difference.case)
+      end
+   elseif (debug_me) then
+      tprint("IS IT TRIGGERED: ")
+      tprint(ports_difference.trigger)
+   end
+
+   rsp["triggered"] = need_to_trigger_alert_after_changes_verification
+
+   return rsp
+end
+
+-- ##############################################
+-- Function to get ports changes
+local function get_ports_changes(host, scan_type, old_data, new_data)
+
+   local is_tcp = false
+   local scan_type_log_label = "UDP"
+
+   local rsp = {}
+
+   if(scan_type == 'tcp_portscan' or scan_type == 'tcp_openports') then
+      is_tcp = true
+      scan_type_log_label = "TCP"
+   end
+
+   local old_ports = split_port_list(old_data, is_tcp)
+   local new_ports = split_port_list(new_data, is_tcp)
+
+   if (debug_me) then
+      tprint(scan_type_log_label.." OLD PORTS: ")
+      tprint(old_ports)
+      tprint(scan_type_log_label.." NEW PORTS: ")
+      tprint(new_ports)
+   end
+
+   local ports_differences = check_ports_diffences(#old_ports, old_ports,
+						   #new_ports, new_ports)
+   local rsp_diff = analyze_ports_diff(ports_differences, host, scan_type, new_data.last_scan_time)
+   if (rsp_diff.triggered) then
+      rsp["open_ports"] = rsp_diff.open_ports
+      rsp["closed_ports"] = rsp_diff.closed_ports
+      rsp["ports_case"] = rsp_diff.ports_case
+
+   end
+   rsp["triggered"] = rsp_diff.triggered
+
+   rsp["measurement"] = "ports_changes_detected"
+
+   return rsp
+end
+
+-- ##############################################
+
+-- This function checks the differences between an old and a new host scan
+-- and return a table containing those differences
+local function check_differences(host, host_name, scan_type, old_data, new_data)
+   local rsp = {}
+
+   -- security checks
+   if host == nil or scan_type == nil then
+      return nil
+   end
+
+   -- retrocompatibility check
+   if (scan_type == 'tcp_openports') then
+      scan_type = 'tcp_portscan'
+   end
+
+   -- ***************************************************************
+
+   -- Checking differences beetwen old and new open ports and old and new closed ports
+   local differences = get_ports_changes(host, scan_type, old_data, new_data)
+   rsp["triggered"] = differences.triggered
+   rsp["measurement"] = "ports_changes_detected"
+   local prefix_key = "udp_"
+   if (scan_type == "tcp_portscan") then
+      prefix_key = "tcp_"
+   end
+   if (differences.triggered) then
+      rsp[prefix_key.."open_ports"] = differences.open_ports
+      rsp[prefix_key.."closed_ports"] = differences.closed_ports
+      rsp[prefix_key.."ports_case"] = differences.ports_case
+   end
+
+
+   if table.empty(rsp) or rsp.triggered == false  then
+      rsp = nil
+   else
+      rsp["host"] = host
+      rsp["host_name"] = host_name
+      rsp["scan_type"] = scan_type
+
+      if (new_data.last_scan_time) then
+         local date_string = format_utils.formatPastEpochShort(new_data.last_scan_time)
+         date_string = string.gsub(date_string," ","_")
+         rsp["date"] = date_string
+         rsp["epoch"] = new_data.last_scan_time
+      end
+   end
+
+   return rsp
+end
+
+-- ##############################################
+-- Function to obtain the port from the scan result
+-- line
+function ascan_utils.cleanup_port(is_tcp, line)
+   local splitted_line = {}
+
+   local regex =  "([^/udp]+)"
+
+   if (is_tcp) then
+      regex =  "([^/tcp]+)"
+   end
+   for str in string.gmatch(line, regex) do
+      splitted_line[#splitted_line + 1] = str
+   end
+
+   return splitted_line[1]
+
+end
+
+-- ##############################################
+-- Function to cleanup and get info from the scan
+-- result.
+-- Remove the first/last few lines that contain nmap information that change at each scan
+function ascan_utils.cleanup_nmap_result(scan_result)
+   if(scan_result ~= nil) then
+      scan_result = scan_result:gsub("|", "")
+      scan_result = scan_result:gsub("_", "")
+
+      scan_result = lines(scan_result)
+
+      for i=1,4 do
+         table.remove(scan_result, 1)
+      end
+
+      table.remove(scan_result, #scan_result)
+
+      local num_open_ports = 0
+      local scan_out = {}
+      local tcp_ports = {}
+      local udp_ports = {}
+
+      for _,l in pairs(scan_result) do
+         -- Ignore "open|filtered" ports
+         if((string.find(l, "open") ~= nil) and (string.find(l, "filtered") == nil)) then
+            local t = string.find(l, "/tcp ") or 0
+            local u = string.find(l, "/udp ") or 0
+
+            if (t > 0) then
+               num_open_ports = num_open_ports + 1
+               tcp_ports[#tcp_ports+1] = ascan_utils.cleanup_port(true, l)
+            end
+
+            if(u > 0) then
+               num_open_ports = num_open_ports + 1
+               udp_ports[#udp_ports+1] = ascan_utils.cleanup_port(false, l)
+            end
+         end
+
+         -- Escape XML/HTML code that might be present in the output
+         l = l:gsub("<", "&lt;")
+         l = l:gsub(">", "&gt;")
+
+         if (string.find(l, "filtered") == nil) then
+            scan_out[#scan_out + 1] = l
+         end
+      end
+
+      scan_result = table.concat(scan_out, "\n")
+      return scan_result, num_open_ports, udp_ports, tcp_ports
+   else
+      return "", 0, {}, {}
+   end
+end
+
+-- ##############################################
+-- Remove the first/last few lines that contain nmap information that change at each scan
+function ascan_utils.cleanup_nmap_check_host_result(scan_result)
+   if(scan_result ~= nil) then
+
+      if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Result: "..scan_result.."\n") end
+
+      scan_result = scan_result:gsub("|", "")
+      scan_result = scan_result:gsub("_", "")
+
+      scan_result = lines(scan_result)
+
+      -- remove the first line and the last one
+      table.remove(scan_result, 1)
+      table.remove(scan_result, #scan_result)
+
+      local is_up_and_run = false
+      for _,l in pairs(scan_result) do
+         -- searching for "Host is up" nmap string
+         if (string.find(l, "Host is up") ~= nil) then
+            is_up_and_run = true
+            goto continue
+         end
+      end
+
+      ::continue::
+      return is_up_and_run
+   else
+      return false
+   end
+end
+
+-- **********************************************************
+
+-- Function to save host configuration
+local function isAlreadyPresent(item)
+   local host_hash_key = ascan_utils.get_host_hash_key(item.host, item.scan_type)
+   local hash_prefs_string = ntop.getHashCache(prefs_host_values_key,host_hash_key)
+
+   if (not isEmptyString(hash_prefs_string)) then
+      local host_pref_value = json.decode(hash_prefs_string) 
+      -- the value must not be empty
+      if (host_pref_value and host_pref_value.host == item.host and host_pref_value.scan_type == host_pref_value.scan_type) then
+         return true
+      end
+   end
+   return false
+end
+
+-- Function to remove scanning host
+local function remove_scanning_host(host_info)
+   local host_to_scan_hash_key = ascan_utils.get_host_hash_key(host_info.host, host_info.scan_type)
+   ntop.delHashCache(host_in_scanning_hash_key,host_to_scan_hash_key)
+end
+
+-- **********************************************************
+
+-- Function to set the actual scanning host on a redis key
+local function save_scanning_host(scan_info)
+   local host_to_scan_hash_key = ascan_utils.get_host_hash_key(scan_info.host, scan_info.scan_type)
+   ntop.setHashCache(host_in_scanning_hash_key, host_to_scan_hash_key, json.encode(scan_info))
+end
+
+-- **********************************************************
+
+-- Function to select correctly redis keys on periodic or scan all
+local function get_counter_periodic_all_scan_keys(exec_type)
+   if (exec_type == ascan_utils.scan_in_exec_type.periodic_scan) then
+      return periodic_scan_host_info_key
+   elseif (exec_type == ascan_utils.scan_in_exec_type.scan_all) then
+      return ondemand_scan_host_info_key
+   elseif(exec_type == ascan_utils.scan_in_exec_type.single_scan) then
+      return single_scan_info_key
+   end
+end
+
+-- **********************************************************
+-- Function to get host id
+local function get_host_id(host_details)
+   local host_id =  ternary(isEmptyString(host_details.host_name),host_details.host, string.format("%s (%s)",host_details.host_name,host_details.host))
+   return host_id
+end
+
+-- **********************************************************
+
+-- Function to update counters of periodically scan or scan all
+-- @param is_periodic (true -> is a periodic scan, false -> is a scan all)
+local function update_scan_info_for_report(type_of_scan_execution, new_item, host_hash_key, discrepancies, was_down)
+   -- select correctly redis keys
+   local redis_info_key = get_counter_periodic_all_scan_keys(type_of_scan_execution)
+   local info_string = ntop.getCache(redis_info_key)
+   local info_json = nil
+
+   if (info_string ~= nil) then
+      info_json = json.decode(info_string)
+   end
+
+   if (info_json == nil) then
+      info_json = {}
+   end
+
+   local host_id = get_host_id(new_item)
+   -- handle hosts down list for email
+   if (new_item.is_down) then
+      local host_down = i18n("hosts_stats.page_scan_hosts.email.host_down_item", { host_id = host_id  })
+
+      if (info_json) then
+	 if(info_json.hosts_down_list == nil) then
+	    info_json.hosts_down_list = {}
+	 end
+
+         info_json.hosts_down_list[host_down] = true
+	 info_json.not_scanned_hosts = table.len(info_json.hosts_down_list)
+      end
+
+      goto continue
+   end
+
+   if (was_down) then
+
+      local host_was_down = i18n("hosts_stats.page_scan_hosts.email.host_down_item", { host_id = host_id  })
+
+      if (info_json) then
+         if(info_json.hosts_was_down_list == nil) then
+            info_json.hosts_was_down_list = {}
+         end
+     
+         info_json.hosts_was_down_list[host_was_down] = true
+         info_json.no_longer_down_now = table.len(info_json.hosts_was_down_list)
+      end
+   end
+
+   if (new_item.discovered_hosts ~= nil and new_item.scan_type == 'ipv4_netscan') then
+
+      if (info_json) then
+         if (info_json.net_scanned == nil) then
+            info_json.net_scanned = {}
+         end
+
+         if (info_json.net_scanned_no_hosts_found == nil) then
+            info_json.net_scanned_no_hosts_found = {}
+         end 
+
+         if (new_item.discovered_hosts_num == 0) then
+            info_json.net_scanned_no_hosts_found[new_item.host] = true
+         else
+            info_json.net_scanned[new_item.host] = new_item.discovered_hosts
+         end
+      end
+   end
+
+   -- **********************************************************
+
+   if (new_item.udp_ports ~= nil) then
+
+      if (info_json ~= {} and info_json.udp_ports ~= nil) then
+         info_json.udp_ports = tonumber(info_json.udp_ports) + new_item.udp_ports
+      else
+         info_json.udp_ports = 0
+      end
+
+   end
+
+   if (new_item.tcp_ports ~= nil) then
+      if (info_json ~= {} and info_json.tcp_ports ~= nil) then
+         info_json.tcp_ports = tonumber(info_json.tcp_ports) + new_item.tcp_ports
+      else
+         info_json.tcp_ports = 0
+      end
+   end
+
+   if (new_item.is_ok_last_scan == ascan_utils.scan_status.ok) then
+      if (info_json ~= {} and info_json.scanned_hosts ~= nil) then
+	 -- count just in success case
+	 info_json.scanned_hosts = tonumber(info_json.scanned_hosts) + 1
+      else
+         info_json.scanned_hosts = 1
+      end
+   end
+
+   if (info_json ~= {} and info_json.begin_epoch == nil) then
+      info_json.begin_epoch = os.time()
+   end
+
+   if discrepancies then
+      local host_discrepancies_details = ""
+      local port_type = "TCP"
+      local prefix_key = "tcp_"
+      if (new_item.scan_type == 'udp_portscan' and info_json ~= {}) then
+         port_type = "UDP"
+         prefix_key = "udp_"
+      end
+
+
+      if (info_json ~= {}) then
+         -- DISCREPANCY PORTS CASES
+         info_json.discrepancy_case = 'ports'
+
+         if (tonumber(discrepancies[prefix_key.."open_ports"].num or 0) > 0) then
+            -- take only open ports not the closed ports
+            info_json.new_open_ports = tonumber(info_json.new_open_ports or 0) + tonumber(discrepancies[prefix_key.."open_ports"].num or 0)
+            host_discrepancies_details = i18n("hosts_stats.page_scan_hosts.email.host_port_discrepancy_description", {
+						 host_id = host_id,
+						 port_type = port_type,
+						 ports = discrepancies[prefix_key.."open_ports"].ports
+            })
+
+            if (isEmptyString(info_json.hosts_discrepancies_details)) then
+               info_json.hosts_discrepancies_details = host_discrepancies_details
+            else
+               info_json.hosts_discrepancies_details = info_json.hosts_discrepancies_details .. host_discrepancies_details
+            end
+         end
+      end
+
+      if (debug_me) then
+         if (info_json) then
+            tprint(info_json.hosts_discrepancies_details)
+         end
+      end
+
+   end
+
+   ::continue::
+   ntop.setCache(redis_info_key, json.encode(info_json))
+end
+
+-- **********************************************************
+
+-- Function to restore scanning host
+function ascan_utils.restore_host_to_scan()
+   local hash_keys = ntop.getHashKeysCache(host_in_scanning_hash_key)
+
+   if hash_keys then
+      for k in pairs(hash_keys) do
+         local hash_value_string = ntop.getHashCache(host_in_scanning_hash_key, k)
+
+         if (not isEmptyString(hash_value_string)) then
+            local host_info_to_restore = json.decode(hash_value_string)
+
+            if (host_info_to_restore) then
+               -- enqueue to scan
+               ntop.lpushCache(host_scan_queue_key, hash_value_string)
+
+               -- set status to scheduled
+               ascan_utils.set_status_scan(host_info_to_restore.scan_type, host_info_to_restore.host, host_info_to_restore.ports,
+                                        host_info_to_restore.id, host_info_to_restore.is_periodicity, host_info_to_restore.is_all, host_info_to_restore.is_single_scan,
+                                        ascan_utils.scan_status.scheduled)
+            end
+         end
+      end
+   end
+end
+
+-- **********************************************************
+
+-- Function to restore backup config
+function ascan_utils.restore_config_backup(vs_backup)
+   -- remove old hash entries
+   ntop.delCache(host_to_scan_key)
+   ntop.delCache(prefs_host_values_key)
+
+   for _,item in ipairs(vs_backup) do
+      -- restoring hash entries with status not scanned
+      local host_hash_key = ascan_utils.get_host_hash_key(item.host, item.scan_type)
+
+      local item_to_restore = item
+      ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(item_to_restore))
+      ntop.setHashCache(prefs_host_values_key, host_hash_key, json.encode(item_to_restore))
+
+   end
+end
+
+-- *********************************************************
+
+-- Function to retrieve hosts keys for backups
+function ascan_utils.retrieve_hosts_backup()
+   local hash_keys = ntop.getHashKeysCache(prefs_host_values_key)
+   local rsp = {}
+   if hash_keys then
+      for k in pairs(hash_keys) do
+         local hash_value_string = ntop.getHashCache(prefs_host_values_key, k)
+         if (not isEmptyString(hash_value_string)) then
+            local hash_value = json.decode(hash_value_string)
+            rsp[#rsp+1] = hash_value
+         end
+      end
+   end
+
+   return rsp
+end
+
+-- **********************************************************
+-- Function to save host on configuration
+function ascan_utils.add_host_pref(scan_type, host, ports, scan_frequency, discovered_host_scan_type, cidr)
+
+   local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+
+   local new_item = {
+      host = host,
+      host_name = host_name,
+      scan_type = scan_type,
+      ports = ports,
+      cidr = cidr,
+      discovered_host_scan_type = discovered_host_scan_type
+   }
+   if not isEmptyString(scan_frequency) then
+      new_item.scan_frequency = scan_frequency
+   end
+
+   local result = 1 -- success
+   if (debug_me) then
+      tprint("SAVING HOST: "..new_item.host)
+   end
+
+   --saved_hosts[#saved_hosts+1] = new_item
+   ntop.setHashCache(prefs_host_values_key, host_hash_key, json.encode(new_item))
+
+   return result
+end
+
+-- *********************************************************
+-- Function to edit host on configuration
+function ascan_utils.edit_host_pref(scan_type, host, ports, scan_frequency, discovered_host_scan_type)
+   local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+   local old_item_string = ntop.getHashCache(prefs_host_values_key,host_hash_key)
+   if (not isEmptyString(old_item_string)) then
+      local old_item = json.decode(old_item_string)
+      old_item.ports = ports
+      old_item.scan_frequency = scan_frequency
+      old_item.discovered_host_scan_type = discovered_host_scan_type
+
+      ntop.setHashCache(prefs_host_values_key, host_hash_key, json.encode(old_item))
+      return 1 --ok
+   end
+   return 2 -- not found
+end
+
+-- **********************************************************
+-- Function to trigger alert when an host is now down
+local function trigger_alert_host_down(host,host_name, epoch)
+   local host_info_to_cache = {
+      host = host,
+      host_name =  host_name,
+      epoch = epoch,
+      is_up_check_case = true,
+   }
+   ntop.rpushCache(scanned_hosts_changes_queue_key, json.encode(host_info_to_cache))
+
+end
+
+-- **********************************************************
+-- Function to trigger alert when an host is not configured
+local function trigger_alert_host_not_configured(host,scan_type)
+   local host_info_to_cache = {
+      host = host,
+      sub_scan_type = scan_type,
+      is_host_not_configured = true,
+   }
+   ntop.rpushCache(scanned_hosts_changes_queue_key, json.encode(host_info_to_cache))
+
+end
+
+-- **********************************************************
+-- Function to update host scan values
+function ascan_utils.save_host_to_scan(scan_type, host, scan_result, last_scan_time, last_duration,
+                                    is_ok_last_scan, ports, scan_frequency, num_open_ports,
+                                    id, is_edit, udp_ports, tcp_ports, discovered_hosts)
+   local checks = require "checks"
+   local trigger_alert = checks.isCheckEnabled("active_monitoring", "active_scan")
+      or checks.isCheckEnabled("system", "active_scan")
+   local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+   local old_data_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+   local old_data = json.decode(old_data_string)
+
+   -- Getting the hostname, the only way is to scan all the interfaces and retrieve it
+   local host_name = ntop.resolveName(host)
+   if host_name == host then
+      host_name = ""
+   end
+   -- In case the alert needs to be triggered, save the differences in order to lessen
+   -- the info dropped on redis
+   -- if is_ok_last_scan is nil then no prior scan was done, so do not trigger the alert
+
+
+   local epoch_id = 0
+   if isEmptyString(id) then
+      local key = "ntopng.prefs.last_host_id"
+      local res = ntop.incrCache(key)
+      epoch_id = res
+   else
+      epoch_id = id
+   end
+   local is_down = false
+   if (isEmptyString(is_ok_last_scan)) then
+      -- first time saved without scan
+      -- check if possible
+      is_ok_last_scan = ascan_utils.scan_status.not_scanned
+   elseif (is_ok_last_scan == ascan_utils.scan_status.failed and trigger_alert) then
+      -- case host is not up and running, possible just in TCP/UDP portscan
+
+      trigger_alert_host_down(host,host_name,last_scan_time)
+
+      is_down = true
+   end
+
+   local new_item = {
+      num_open_ports = num_open_ports,
+      is_ok_last_scan = is_ok_last_scan,
+      host_name = host_name
+   }
+
+   
+   new_item.is_down = is_down
+   -- on a specific entry the bool was_down is enabled when
+   -- old_data is_down true -> (previous scan the host was down)
+   -- new_data is_down false -> (actual scan the host is reachable)
+   -- otherwise was_down is not configured selecting nil value
+   local was_down = ((old_data and toboolean(old_data.is_down) == true and (not new_item.is_down))) or nil
+
+   new_item.was_down = was_down
+
+   local discovered_hosts_comma_list_string = ""
+   if (discovered_hosts ~= nil) then
+      discovered_hosts_comma_list_string = table.concat(discovered_hosts,",")
+   end
+   new_item.discovered_hosts = discovered_hosts_comma_list_string
+   new_item.discovered_hosts_num = table.len(discovered_hosts) or 0
+
+   if tcp_ports ~= nil then
+      new_item.tcp_ports = tcp_ports.num_ports
+      new_item.tcp_ports_list = tcp_ports.ports
+   end
+
+   if udp_ports ~= nil then
+      new_item.udp_ports = udp_ports.num_ports
+      new_item.udp_ports_list = udp_ports.ports
+   end
+
+   if (udp_ports == nil and tcp_ports == nil) then
+      new_item.tcp_ports = num_open_ports
+   end
+
+   if last_scan_time or last_duration then
+      --local time_formatted = format_utils.formatEpoch(last_scan_time)
+      if (last_duration == nil) or (last_duration <= 0) then
+         last_duration = 1
+      end
+
+      last_duration = secondsToTime(last_duration)
+      new_item.last_scan = {
+         epoch = last_scan_time,
+         --time  = time_formatted,
+         duration = last_duration,
+         duration_epoch = last_duration
+      }
+
+      if is_ok_last_scan == ascan_utils.scan_status.ok then
+         new_item.is_ok_last_scan = ascan_utils.scan_status.ok
+      end
+   end
+
+   if not isEmptyString(scan_frequency) then
+      new_item.scan_frequency = scan_frequency
+   elseif old_data and not isEmptyString(old_data.scan_frequency) then
+      new_item.scan_frequency = old_data.scan_frequency
+   end
+
+   -- the is_periodicity, is_all and is_single_scan params are set outside the save_host_to_scan into the set_status method
+   if (old_data and old_data.is_periodicity ~= nil) then
+      new_item.is_periodicity = old_data.is_periodicity
+   end
+
+   if (old_data and old_data.is_all ~= nil) then
+      new_item.is_all = old_data.is_all
+   end
+
+   if (old_data and old_data.is_single_scan ~= nil) then
+      new_item.is_single_scan = old_data.is_single_scan
+   end
+
+   if(scan_result ~= nil and not ntop.isClickHouseEnabled()) then
+      local handle = io.open(get_report_path(scan_type, host), "w")
+      local result = handle:write(scan_result)
+      handle:close()
+   end
+
+   local result = 1 -- success
+
+   if (debug_me) then
+      -- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Updating host " .. host)
+   end
+
+   -- add ports statistics comparing the ntopng passive monitoring info
+   if (scan_type == "tcp_portscan" or scan_type == "tcp_openports" or scan_type == "udp_portscan") then
+      local compare_info = ascan_rest_utils.compare_scan_info_ntopng_info(host, scan_type, new_item.tcp_ports_list, new_item.udp_ports_list)
+
+      new_item.host_in_mem = compare_info.host_in_mem
+      local prefix_key = "udp_"
+      if (scan_type == "tcp_portscan" or scan_type == "tcp_openports") then
+         prefix_key = "tcp_"
+      end
+
+      new_item[prefix_key.."ports_unused"] = compare_info[prefix_key.."ports_unused"]
+      new_item[prefix_key.."ports_filtered"] = compare_info[prefix_key.."ports_filtered"]
+      new_item[prefix_key.."ports_case"] = compare_info[prefix_key.."ports_case"]
+
+   end
+   ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(new_item))
+   local counts = ascan_utils.update_ts_counters()
+
+   local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+   local hash_prefs_string = ntop.getHashCache(prefs_host_values_key,host_hash_key)
+   -- hash value found
+   local hash_pref_value = json.decode(hash_prefs_string)
+   if (hash_pref_value ~= nil) then
+      -- is necessary this check to avoid to save entries not presents in the config and to save all data of the entry.
+      for key,value in pairs(hash_pref_value) do
+         if (key ~= 'is_ok_last_scan') then
+            new_item[key] = value
+         end
+      end
+
+      ascan_db_utils.save_scan_result(scan_type, host, new_item.last_scan.epoch, json.encode(new_item), scan_result)
+   end
+
+   local host_info_differences
+
+   if trigger_alert and old_data and (not is_edit)  and
+      -- old scan and new scan must be successfully to perform discrepancies check
+      -- check only on host up
+      (old_data.is_down == false and new_item.is_down == false)
+   then
+      local already_scanned = (old_data.last_scan and old_data.last_scan.epoch)
+
+      if already_scanned then
+
+         if debug_me then
+            -- traceError(TRACE_NORMAL,TRACE_CONSOLE, "Active Scan: checking for changes in host")
+         end
+
+         local host_info_to_cache = check_differences(host, host_name,
+                                                      scan_type,
+                                                      {
+                                                         ports = old_data.num_open_ports,
+                                                         tcp_ports = {num_ports = old_data.tcp_ports, ports = old_data.tcp_ports_list },
+                                                         udp_ports = {num_ports = old_data.udp_ports, ports = old_data.udp_ports_list},
+                                                         old_epoch = old_data.last_scan.epoch
+                                                      },
+                                                      {
+                                                         ports = num_open_ports,
+                                                         tcp_ports = tcp_ports,
+                                                         udp_ports = udp_ports,
+                                                         last_scan_time = last_scan_time
+	 })
+         if host_info_to_cache then
+            host_info_differences = host_info_to_cache
+
+            if debug_me then
+               traceError(TRACE_NORMAL,TRACE_CONSOLE, "Active Scan detected change: enqueueing event to active_scan check\n")
+            end
+
+            ntop.rpushCache(scanned_hosts_changes_queue_key, json.encode(host_info_to_cache))
+         end
+      end
+   end
+   
+   if (new_item.is_periodicity) then
+      update_scan_info_for_report(ascan_utils.scan_in_exec_type.periodic_scan, new_item, host_hash_key, host_info_differences, was_down)
+   end
+
+   if (new_item.is_all) then
+      update_scan_info_for_report(ascan_utils.scan_in_exec_type.scan_all, new_item, host_hash_key, host_info_differences, was_down)
+   end
+
+   remove_scanning_host({host=host, scan_type=scan_type, ports=ports})
+
+   return result, new_item.id
+end
+
+-- **********************************************************
+-- Function to update timeseries data
+function ascan_utils.update_ts_counters()
+   local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+   local hosts_scanned
+   local open_ports_count  = 0
+   local hosts_count       = 0
+
+   for _,item in ipairs(hosts_details) do
+
+      hosts_count = hosts_count + 1
+
+      if item.num_open_ports ~= nil then
+         open_ports_count = open_ports_count + item.num_open_ports
+      end
+
+   end
+
+   local count = ntop.getCache(scanned_hosts_count_key)
+   if (not isEmptyString(count)) then
+      hosts_scanned = tonumber(count)
+   end
+
+   local response = {
+      scanned_hosts = hosts_scanned,
+      open_ports = open_ports_count,
+      hosts_count = hosts_count
+   }
+
+   return response
+end
+
+-- **********************************************************
+
+-- Function to format num for emails
+-- @param case: 1 - udp, 2 - tcp, 3 - scanned_hosts, 4 - hosts unreachable, 5 - no hosts down now
+local function format_num_for_email(num, case)
+   local formatted_num = format_high_num_value_for_tables({num = num}, "num")
+
+   if (case == 1) then
+      -- udp
+      if (num == 0) then
+         return(i18n("hosts_stats.page_scan_hosts.email.no_udp"))
+      else
+         return(i18n("hosts_stats.page_scan_hosts.email.num_udp", {num = formatted_num}))
+      end
+   elseif (case == 2) then
+      -- tcp
+      if (num == 0) then
+         return(i18n("hosts_stats.page_scan_hosts.email.no_tcp"))
+      else
+         return(i18n("hosts_stats.page_scan_hosts.email.num_tcp", {num = formatted_num}))
+      end
+
+   elseif (case == 3) then
+      -- scanned_hosts
+
+      if (num == 0) then
+         return(i18n("hosts_stats.page_scan_hosts.email.no_scanned_hosts"))
+      else
+         return(i18n("hosts_stats.page_scan_hosts.email.num_scanned_hosts", {num = formatted_num}))
+      end
+   elseif (case == 4) then
+      -- not scanned_hosts  --> hosts unreachable
+
+      if (num == 0) then
+         return(i18n("hosts_stats.page_scan_hosts.email.num_failed_scanned_hosts", {num = 0}))
+      else
+         return(i18n("hosts_stats.page_scan_hosts.email.num_failed_scanned_hosts", {num = formatted_num}))
+      end
+   elseif (case == 5) then 
+      if (num == 0) then
+         return ""
+      else 
+         return(i18n("hosts_stats.page_scan_hosts.email.num_no_longer_down_now", {num = formatted_num}))
+      end
+   end
+
+end
+
+-- **********************************************************
+-- Function to retrieve info for email notification
+local function retrieve_email_info(exec_type)
+   local info_redis_key = get_counter_periodic_all_scan_keys(exec_type)
+
+   local info_string = ntop.getCache(info_redis_key)
+
+   local info_json = nil
+   if (info_string ~= nil) then
+      info_json = json.decode(info_string) or {}
+   else
+      info_json = {
+         udp_ports = 0,
+         tcp_ports = 0
+      }
+   end
+
+   if(debug_me) then
+      tprint("----- INFO JSON -------")
+      tprint(info_json)
+   end
+
+   local email_info = {
+      udp_ports = tonumber(info_json.udp_ports) or 0,
+      tcp_ports = tonumber(info_json.tcp_ports) or 0,
+      scanned_hosts = tonumber(info_json.scanned_hosts) or 0,
+      not_scanned_hosts = tonumber(info_json.not_scanned_hosts) or 0,
+      no_longer_down_now = tonumber(info_json.no_longer_down_now) or 0,
+      begin_epoch_t = tonumber(info_json.begin_epoch),
+      end_epoch_t   = os.time(),
+      report_type = exec_type,
+      -- has_discrepancy must be true only if there are new open ports
+      has_discrepancy = ((info_json.new_open_ports or 0) > 0),
+      hosts_down_list = info_json.hosts_down_list,
+      hosts_was_down_list = info_json.hosts_was_down_list,
+      scanned_networks = info_json.net_scanned or {},
+      scanned_networks_no_hosts_found = info_json.net_scanned_no_hosts_found or {}
+   }
+
+   if (email_info.has_discrepancy) then
+      email_info.new_open_ports = info_json.new_open_ports or 0
+      email_info.discrepancies_details = tostring(info_json.hosts_discrepancies_details)
+   end
+
+   email_info.duration = email_info.end_epoch_t - email_info.begin_epoch_t
+
+   ntop.setCache(info_redis_key,json.encode({
+		       udp_ports = 0,
+		       tcp_ports = 0,
+		       begin_epoch = 0,
+		       scanned_hosts = 0,
+		       not_scanned_hosts = 0,
+             no_longer_down_now = 0,
+   }))
+   return email_info
+end
+
+-- **********************************************************
+-- Function to retrieves report info
+
+local function retrieve_report_info(date)
+   local host_scanned_info = ascan_utils.retrieve_hosts_to_scan()
+   local info = {
+      tcp_ports = 0,
+      udp_ports = 0,
+      scanned_hosts = 0,
+      not_scanned_hosts = 0
+   }
+
+   for _, item in ipairs(host_scanned_info) do
+      info.tcp_ports = info.tcp_ports + tonumber(item.tcp_ports or 0)
+      info.udp_ports = info.udp_ports + tonumber(item.udp_ports or 0)
+
+      -- plus 1 because start from 0
+      info.scanned_hosts = info.scanned_hosts + 1
+      info.not_scanned_hosts = info.not_scanned_hosts + 1
+   end
+
+   if (date) then
+      -- case of periodic scan and scan all
+      -- in order to save same date on email and report
+      info.date = tonumber(date)
+   else
+      info.date = tonumber(os.time())
+   end
+
+   local info_date_formatted = tostring(formatEpoch(info.date))
+   info.name = "Report of "..info_date_formatted
+
+   info.all_data_details = host_scanned_info
+   
+   return info
+end
+
+-- **********************************************************
+-- params date used only in case of periodic or scan all exec
+function ascan_utils.generate_report(date)
+
+   local report_info = retrieve_report_info(date)
+
+   ascan_db_utils.save_report_info(report_info)
+
+   return report_info
+
+end
+
+-- **********************************************************
+-- Function to format open port for email notification
+local function add_ports_open_for_email_report(l4_key_prefix, host_details)
+   if (tonumber(host_details[l4_key_prefix.."_ports"]) > 0) then
+      return (i18n("hosts_stats.page_scan_hosts.email.host_details_open_ports", {
+		      ports_list = host_details[l4_key_prefix.."_ports_list"],
+		      l4_proto = ternary(l4_key_prefix == "tcp", "TCP", "UDP")
+      }))
+
+   end
+   return nil
+end
+
+-- **********************************************************
+-- Function to format hosts details for email notification
+local function format_all_hosts_details_info_for_email(all_hosts_details)
+   local formatted_hosts_details_string = ""
+   for _,host_details in ipairs(all_hosts_details) do
+      -- by default the first element is the scan type always fullfil
+      local label_id_scan_type = string.format("hosts_stats.page_scan_hosts.scan_type_list.%s",host_details.scan_type)
+      local scan_type_label = i18n(label_id_scan_type)
+      local formatted_host_details_string = i18n("hosts_stats.page_scan_hosts.email.host_details_scan_type",{
+						    scan_type = scan_type_label
+      })
+      local host_id = get_host_id(host_details)
+
+      local tcp_prefix = "tcp"
+      local udp_prefix = "udp"
+
+      local tcp_ports_details = add_ports_open_for_email_report(tcp_prefix, host_details)
+      if(tcp_ports_details) then
+         formatted_host_details_string = formatted_host_details_string .. tcp_ports_details
+      end
+
+      local udp_ports_details = add_ports_open_for_email_report(udp_prefix, host_details)
+      if(udp_ports_details) then
+         formatted_host_details_string = formatted_host_details_string .. udp_ports_details
+      end
+
+      local host_details_email_line = i18n("hosts_stats.page_scan_hosts.email.host_details", {
+					      host_id = host_id,
+					      details = formatted_host_details_string
+      })
+      formatted_hosts_details_string = formatted_hosts_details_string .. host_details_email_line
+
+   end
+
+
+   return formatted_hosts_details_string
+end
+
+-- **********************************************************
+
+-- Function to send notification after a periodic scan
+-- @param exec_type (2 -> is an all scan message, 3 -> is a periodic scan message)
+-- @param periodicity (can be nil in case of scan all)
+function ascan_utils.notify_scan_results(exec_type, periodicity)
+   local notification_message = ""
+
+   local email_info = retrieve_email_info(exec_type)
+
+   local title = i18n("hosts_stats.page_scan_hosts.email.active_scan_report_title",{host = getHttpHost()})
+   local duration = 0
+   local duration_label = ''
+
+   if (email_info.duration ~= nil) then
+      duration_label = secondsToTime(email_info.duration)
+   end
+
+   local start_date_formatted = formatEpoch(email_info.begin_epoch_t)
+   local end_date_formatted   = formatEpoch(email_info.end_epoch_t)
+
+   local report_date = tonumber(email_info.end_epoch_t)
+
+   ntop.setCache(hosts_scan_last_report_dates, json.encode({start_date = start_date_formatted, end_date = end_date_formatted}))
+
+   local email_body_i18n_key
+   if (periodicity and periodicity == "1day") then
+      -- 1 day scan case
+      email_body_i18n_key = "hosts_stats.page_scan_hosts.email.periodicity_scan_1_day_ended"
+   elseif (periodicity and periodicity == "1week") then
+      -- 1 week scan case
+      email_body_i18n_key = "hosts_stats.page_scan_hosts.email.periodicity_scan_1_week_ended"
+   else
+      -- on demand case
+      email_body_i18n_key = "hosts_stats.page_scan_hosts.email.scan_all_ended"
+   end
+
+   local skipped_hosts_list = ""
+   local no_hosts_down_br = ""
+
+   if (email_info.hosts_down_list ~= nil) then
+      local ret = ""
+
+      for k, v in pairsByKeys(email_info.hosts_down_list, asc) do
+	 ret = ret .. k .. "\n"
+      end
+      
+      skipped_hosts_list = i18n("hosts_stats.page_scan_hosts.email.host_down_list", { host_down_items = ret })
+   else
+      no_hosts_down_br = "</br><br>"
+   end
+
+   notification_message = i18n(email_body_i18n_key, {
+				  udp_ports = format_num_for_email(email_info.udp_ports, 1),
+				  tcp_ports = format_num_for_email(email_info.tcp_ports, 2),
+				  scanned_hosts = format_num_for_email(email_info.scanned_hosts, 3),
+				  not_scanned_hosts = format_num_for_email(email_info.not_scanned_hosts or 0, 4),
+				  no_hosts_down_br = no_hosts_down_br,
+				  skipped_hosts_list = skipped_hosts_list,
+				  duration = duration_label,
+				  start_date = start_date_formatted,
+				  end_date = end_date_formatted,
+   })
+   
+   local possible_discrepancies_info = ""
+   local add_br = ""
+
+   local add_new_configured_hosts_br = true
+   if (email_info.has_discrepancy) then
+      
+      -- ports discrepancies
+
+      possible_discrepancies_info = i18n("hosts_stats.page_scan_hosts.email.discrepancy", {
+					    new_ports_open = ternary(email_info.new_open_ports ~= 0, format_high_num_value_for_tables({num = email_info.new_open_ports}, "num"),"0"),
+					    hosts_discrepancy_details = email_info.discrepancies_details
+      })
+      add_new_configured_hosts_br = false
+   end
+
+   local no_longer_down_now = ""
+   local no_longer_down_list = ""
+   if (email_info.no_longer_down_now and email_info.no_longer_down_now > 0) then
+      
+      -- hosts no longer down 
+      add_new_configured_hosts_br = false
+      if (email_info.hosts_was_down_list ~= nil) then
+         local ret = ""
+   
+         for k, v in pairsByKeys(email_info.hosts_was_down_list, asc) do
+       ret = ret .. k .. "\n"
+         end
+         
+         no_longer_down_list = i18n("hosts_stats.page_scan_hosts.email.host_down_list", { host_down_items = ret })
+      end
+
+      local add_br = ternary(email_info.has_discrepancy, "", "<br>")
+      no_longer_down_now = i18n("hosts_stats.page_scan_hosts.email.hosts_no_longer_down", {
+         no_longer_down_now_num = format_num_for_email(email_info.no_longer_down_now or 0, 5),
+         no_longer_down_list = no_longer_down_list,
+         add_br = add_br
+      })  
+   end
+
+   local net_scan_without_hosts_discovered = "" 
+   if (email_info.scanned_networks_no_hosts_found ~= nil and next(email_info.scanned_networks_no_hosts_found)) then
+      if (add_new_configured_hosts_br) then
+         net_scan_without_hosts_discovered = net_scan_without_hosts_discovered .. "<br>"
+      end
+      add_new_configured_hosts_br = false
+      local net_scan_list = ""
+
+      for net, v in pairsByKeys(email_info.scanned_networks_no_hosts_found, asc) do
+      
+         net_scan_list = net_scan_list .. i18n("hosts_stats.page_scan_hosts.email.host_down_item", {host_id = net.."/24"}) 
+      end
+
+      local no_discovered_hosts_list = i18n("hosts_stats.page_scan_hosts.email.host_down_list", {host_down_items = net_scan_list})
+      net_scan_without_hosts_discovered = i18n("hosts_stats.page_scan_hosts.email.no_new_hosts_detected", {subnets = no_discovered_hosts_list})
+   end
+
+   local discovered_hosts_list = ""
+   local discovered_hosts = false
+   if email_info.scanned_networks ~= nil and next(email_info.scanned_networks) then
+
+      -- hosts not configured but discovered by the netscan
+      discovered_hosts = true
+      if (add_new_configured_hosts_br) then
+         discovered_hosts_list = discovered_hosts_list .. "<br>"
+      end
+
+      for net, v in pairsByKeys(email_info.scanned_networks, asc) do
+         local hosts_string = email_info.scanned_networks[net]
+         
+         local net_scan = net.."/24"
+
+         local new_hosts_discovered = {}
+         if (not isEmptyString(hosts_string)) then
+            if (hosts_string:find(",")) then
+               new_hosts_discovered = string.split(hosts_string, ",")
+            else
+               new_hosts_discovered[#new_hosts_discovered+1] = hosts_string
+            end
+         end
+         local num_hosts = table.len(new_hosts_discovered) or 0
+
+         local hosts_list_formatted_string = ""
+         for _,host in ipairs(new_hosts_discovered) do 
+            hosts_list_formatted_string = hosts_list_formatted_string .. i18n("hosts_stats.page_scan_hosts.email.host_down_item", {host_id = host})
+         end
+
+         local discovered_formatted_hosts_list = i18n("hosts_stats.page_scan_hosts.email.host_down_list", {host_down_items = hosts_list_formatted_string})
+
+         discovered_hosts_list = discovered_hosts_list .. i18n("hosts_stats.page_scan_hosts.email.netscan_new_hosts", {
+            net_scan = net_scan,
+            num_hosts = num_hosts,
+            host_list = discovered_formatted_hosts_list,
+            add_br = ""
+         })
+      end
+   end
+
+   local no_discrepancy = false
+   if ((not email_info.has_discrepancy) and email_info.no_longer_down_now == 0 and not discovered_hosts) then
+      add_br = "<br>"
+      no_discrepancy = true
+      possible_discrepancies_info = i18n("hosts_stats.page_scan_hosts.email.no_discrepancy")
+   end
+
+   if (not no_discrepancy) then
+      notification_message = notification_message .. possible_discrepancies_info .. no_longer_down_now .. net_scan_without_hosts_discovered .. discovered_hosts_list
+   else
+      notification_message = notification_message .. no_longer_down_now .. net_scan_without_hosts_discovered .. discovered_hosts_list .. possible_discrepancies_info
+   end
+   local report_link_line = i18n("hosts_stats.page_scan_hosts.email.report_link_line",
+				 {url = string.format(getHttpHost() .. ntop.getHttpPrefix() .. "/lua/pro/enterprise/active_scan_report.lua?epoch_end=%u&epoch_begin=%u",
+						      report_date,report_date), add_br = add_br})
+
+   notification_message = notification_message .. report_link_line
+
+   ascan_utils.generate_report(email_info.end_epoch_t)
+
+   if verbose then
+      traceError(TRACE_NORMAL,TRACE_CONSOLE, "Active Scan completed. Sending " .. title .."\n")
+   end
+
+   recipients.sendMessageByNotificationType({periodicity = periodicity, success = true, message = notification_message, title = title}, "active_scans")
+end
+
+-- **********************************************************
+-- Function to retrieve dates of scan all or periodic scan
+function ascan_utils.get_scan_all_dates()
+   return ntop.getCache(hosts_scan_last_report_dates)
+end
+
+-- **********************************************************
+-- Function to verify if periodic scan is ended
+function ascan_utils.is_periodic_scan_completed()
+   local periodicity_scan_in_progress = ntop.getCache(periodic_scan_key) == "1"
+
+   if (periodicity_scan_in_progress) then
+      local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+      for _,item in ipairs(hosts_details) do
+
+         -- verify status of in progress periodic scanning
+         if(item.is_periodicity and (item.is_ok_last_scan == ascan_utils.scan_status.scheduled or item.is_ok_last_scan == ascan_utils.scan_status.scanning)) then
+            return false
+         end
+      end
+
+      ntop.setCache(periodic_scan_key, "0")
+
+      local periodicity = ntop.getCache(periodic_scan_type_key)
+
+      for _,item in ipairs(hosts_details) do
+         local host_hash_key = ascan_utils.get_host_hash_key(item.host, item.scan_type)
+         local host_hash_value_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+         if(not isEmptyString(host_hash_value_string)) then
+
+            local host_hash_value = json.decode(host_hash_value_string)
+
+            host_hash_value.is_periodicity = false
+
+            ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(host_hash_value))
+         end
+      end
+
+      return true, periodicity
+   end
+
+   return false
+end
+
+-- **********************************************************
+-- Function to verify if scan all is ended
+function ascan_utils.is_ondemand_scan_completed()
+   local scan_all_in_progress = ntop.getCache(ondemand_scan_key) == "1"
+
+   if (scan_all_in_progress) then
+      local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+      for _,item in ipairs(hosts_details) do
+
+         -- verify status of in progress periodic scanning
+         if(item.is_all and (item.is_ok_last_scan == ascan_utils.scan_status.scheduled or item.is_ok_last_scan == ascan_utils.scan_status.scanning)) then
+            return false
+         end
+      end
+
+      ntop.setCache(ondemand_scan_key, "0")
+
+      for _,item in ipairs(hosts_details) do
+         local host_hash_key = ascan_utils.get_host_hash_key(item.host, item.scan_type)
+         local host_hash_value_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+         if(not isEmptyString(host_hash_value_string)) then
+
+            local host_hash_value = json.decode(host_hash_value_string)
+
+            host_hash_value.is_all = false
+
+            ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(host_hash_value))
+         end
+      end
+
+      return true
+   end
+
+   return false
+end
+
+-- **********************************************************
+-- Function to verify if single scan is ended
+function ascan_utils.is_single_scan_completed()
+   local single_scan_in_progress = ntop.getCache(single_scan_key) == "1"
+
+   if (single_scan_in_progress) then
+      local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+      for _,item in ipairs(hosts_details) do
+
+         -- verify status of in progress periodic scanning
+         if(item.is_single_scan and (item.is_ok_last_scan == ascan_utils.scan_status.scheduled or item.is_ok_last_scan == ascan_utils.scan_status.scanning)) then
+            return false
+         end
+      end
+
+      ntop.setCache(single_scan_key, "0")
+
+      for _,item in ipairs(hosts_details) do
+         local host_hash_key = ascan_utils.get_host_hash_key(item.host, item.scan_type)
+         local host_hash_value_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+         if(not isEmptyString(host_hash_value_string)) then
+
+            local host_hash_value = json.decode(host_hash_value_string)
+
+            host_hash_value.is_single_scan = false
+
+            ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(host_hash_value))
+         end
+      end
+
+      return true
+   end
+
+   return false
+
+end
+
+-- **********************************************************
+-- Function to enable periodic scan end check on callbacks
+function ascan_utils.is_periodic_scan_running()
+   return ntop.getCache(periodic_scan_key) == "1"
+end
+
+-- **********************************************************
+-- Function to retrieve hosts list to scan
+function ascan_utils.retrieve_hosts_to_scan(epoch)
+   if (isEmptyString(epoch) or (not ntop.isClickHouseEnabled())) then
+      -- not a request for historical data (only for report)
+      local hash_keys = ntop.getHashKeysCache(prefs_host_values_key)
+      local rsp = {}
+      if hash_keys then
+         for k in pairs(hash_keys) do
+            local hash_value_string = ntop.getHashCache(host_to_scan_key, k)
+            local hash_prefs_string = ntop.getHashCache(prefs_host_values_key,k)
+            local hash_value = json.decode(hash_prefs_string)
+
+            if (not isEmptyString(hash_value_string)) then
+               -- hash value found
+
+               hash_value = json.decode(hash_value_string)
+               local hash_pref_value = json.decode(hash_prefs_string) or {}
+
+	       for key,value in pairs(hash_pref_value) do
+		  if (key ~= 'is_ok_last_scan') then
+		     hash_value[key] = value
+		  end
+	       end
+            else
+               -- hash value not found
+               ntop.setHashCache(host_to_scan_key, k, hash_prefs_string)
+
+            end
+
+            -- Defensive: never show entries left behind by removed scan
+            -- engines (migrate_keys() purges them at startup)
+            if not (hash_value and hash_value.scan_type and obsolete_scan_types[hash_value.scan_type]) then
+               rsp[#rsp+1] = hash_value
+            end
+         end
+      end
+      return rsp
+   else
+      -- request for report
+      local all_details, data = ascan_db_utils.retrieve_report(epoch)
+      return(data)
+   end
+end
+
+-- **********************************************************
+-- Function to retrieve hosts list to scan just for status_info
+function ascan_utils.check_in_progress_status()
+   return ascan_status_utils.check_in_progress_status()
+end
+
+-- **********************************************************
+-- Function restrieve scan result from FS
+local function retrieve_scan_result_from_file(scan_type, host)
+   -- for retrocompatibility
+   local path = get_report_path(scan_type, host)
+
+   if(ntop.exists(path)) then
+      local handle = io.open(path, "r")
+      local result = handle:read("*a")
+      handle:close()
+
+      return result
+   else
+      return("Unable to read file "..path)
+   end
+
+end
+
+-- **********************************************************
+-- Function to retrieve last host scan result
+function ascan_utils.retrieve_hosts_scan_result(scan_type, host, epoch)
+
+   -- retrieve from DB
+   local db_result
+   local fs_result
+
+   local is_clickhouse_enabled = ntop.isClickHouseEnabled()
+
+   -- retrieve data here
+   if (is_clickhouse_enabled) then
+      -- retrieve from DB
+      db_result = ascan_db_utils.retrieve_scan_result(scan_type, host, tonumber(epoch))
+   else
+      -- retrieve from FS
+      fs_result = retrieve_scan_result_from_file(scan_type, host)
+
+      return fs_result
+   end
+
+   -- return data
+   if (is_clickhouse_enabled and db_result == "") then
+
+      -- ****************************************
+      -- retrocompatibility case:
+
+      -- when there were results saved on FS,
+      -- but the user updates ntopng to use clickhouse,
+      -- and there are currently no results in clickhouse.
+      -- ****************************************
+
+      -- clickhouse is enabled but maybe the user had old data on FS and no data on DB
+      fs_result = retrieve_scan_result_from_file(scan_type, host)
+      return fs_result
+   else
+      -- the result from DB is ok.
+      return db_result
+   end
+
+end
+
+-- **********************************************************
+-- Function to delete host to scan
+function ascan_utils.delete_host_to_scan(host, scan_type, all)
+   if all then
+      ntop.delCache(prefs_host_values_key)
+      ntop.delCache(host_to_scan_key)
+      ntop.delCache(host_scan_queue_key)
+      ntop.delCache(host_in_scanning_hash_key)
+      ntop.delCache(periodic_scan_key)
+      ntop.delCache(periodic_scan_type_key)
+
+      local path_to_s_result = get_report_path(scan_type, host, true)
+      os.execute("rm -f "..path_to_s_result)
+   else
+      local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+      local path_to_s_result = get_report_path(scan_type, host, false)
+      os.remove(path_to_s_result)
+      ntop.delHashCache(host_to_scan_key, host_hash_key)
+      ntop.delHashCache(prefs_host_values_key, host_hash_key)
+      ntop.delHashCache(host_in_scanning_hash_key, host_hash_key)
+
+      -- Remove this host from active schedules
+      local elems = {}
+      while(true) do
+         local e = ntop.lpopCache(host_scan_queue_key)
+
+         if(e == nil) then
+            break
+         else
+            local r = json.decode(e)
+            if(r and not((r.scan_type == scan_type) and (r.host == host))) then
+               elems[#elems + 1] = e
+            end
+         end
+      end
+
+      for _,i in pairs(elems) do
+         ntop.lpushCache(host_scan_queue_key, i)
+      end
+   end
+
+   return true
+end
+
+-- **********************************************************
+-- Function to delete only the hosts whose last scan failed
+-- (i.e. host down or unreachable, is_ok_last_scan == failed).
+function ascan_utils.delete_failed_hosts_to_scan()   
+   local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+   for _, host_detail in ipairs(hosts_details) do
+      if (host_detail.is_ok_last_scan == ascan_utils.scan_status.failed) then
+         ascan_utils.delete_host_to_scan(host_detail.host, host_detail.scan_type, false)
+      end
+   end
+
+   return true
+end
+
+-- *********************************************************
+-- Function to delete host to scan by id
+function ascan_utils.delete_host_to_scan_by_id(id)
+   local hosts_details = ascan_utils.retrieve_hosts_to_scan()
+   local host_to_delete = {}
+   local id_number = tonumber(id)
+
+   for _,value in ipairs(hosts_details) do
+      if(tonumber(value.id) == id_number ) then
+         host_to_delete.host = value.host
+         host_to_delete.scan_type = value.scan_type
+         break
+      end
+   end
+
+   local host_hash_key = ascan_utils.get_host_hash_key(host_to_delete.host, host_to_delete.scan_type)
+   local path_to_s_result = get_report_path(host_to_delete.scan_type, host_to_delete.host, false)
+   os.remove(path_to_s_result)
+   ntop.delHashCache(host_to_scan_key, host_hash_key)
+   ntop.delHashCache(prefs_host_values_key, host_hash_key)
+
+
+   return true
+end
+
+-- **********************************************************
+-- Function to retrieve scan types list
+function ascan_utils.retrieve_scan_types()
+   local scan_types = ascan_utils.list_scan_modules()
+   local ret = {}
+
+   for _,scan_type in ipairs(scan_types) do
+      -- Raw id: the page builds the label (hosts_stats.page_scan_hosts.scan_type_list.<id>)
+      ret[#ret + 1] = { id = scan_type }
+   end
+
+   return ret
+end
+
+-- **********************************************************
+-- Function to list scan modules
+function ascan_utils.list_scan_modules()
+   local dirs = ntop.getDirs()
+   local basedir = dirs.scriptdir .. "/lua/modules/active_scan/modules"
+   local modules = {}
+
+   for name in pairs(ntop.readdir(basedir)) do
+      if(ends(name, ".lua")) then
+         name = string.sub(name, 1, string.len(name)-4) -- remove .lua trailer
+         local m = ascan_utils.load_module(name)
+
+         if(m:is_enabled()) then
+            modules[#modules + 1] = name
+         end
+      end
+   end
+
+   return(modules)
+end
+
+-- **********************************************************
+-- Function to check if a scan type is the name of one of the scan engines
+-- available in modules/active_scan/modules
+-- NOTE: the scan type is passed to require(), which is not confined to that
+-- directory as it also accepts paths and (with ';') additional search templates
+function ascan_utils.is_valid_scan_type(scan_type)
+   if (type(scan_type) ~= "string") or not scan_type:match("^[%w_]+$") then
+      return false
+   end
+
+   return ntop.exists(dirs.installdir .. "/scripts/lua/modules/active_scan/modules/" .. scan_type .. ".lua")
+end
+
+-- **********************************************************
+-- Periodicity of a scan: none, every night, every week (see update_all_periodicity)
+local scan_frequencies = { disabled = true, ["1day"] = true, ["1week"] = true }
+
+function ascan_utils.is_valid_scan_frequency(scan_frequency)
+   return scan_frequencies[scan_frequency] == true
+end
+
+-- **********************************************************
+-- Function to load VS module by name
+function ascan_utils.load_module(name)
+   if not ascan_utils.is_valid_scan_type(name) then
+      traceError(TRACE_WARNING, TRACE_CONSOLE, "load_module: invalid scan type rejected: " .. tostring(name))
+      return nil
+   end
+
+   package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/modules/?.lua;".. package.path
+
+   return(require(name):new())
+end
+
+-- **********************************************************
+-- Function to discover open ports
+function ascan_utils.discover_open_ports(host)
+   local result,duration,scan_result,num_open_ports, udp_ports, tcp_ports, scan_ports, network_alert_store,now
+
+   local scan_module = ascan_utils.load_module("tcp_portscan")
+   now,result,duration,scan_result,num_open_ports, udp_ports, tcp_ports = scan_module:scan_host(host, ports)
+
+   return format_port_list_to_string(tcp_ports)
+end
+
+-- **********************************************************
+-- Function to exec single host scan
+function ascan_utils.scan_host(scan_type, host, ports, scan_id, use_coroutines, cidr)
+   if(ntop.isShuttingDown()) then return(false) end
+
+   if(use_coroutines == nil) then use_coroutines = false end
+
+   if not ascan_utils.is_valid_scan_type(scan_type) then
+      traceError(TRACE_WARNING, TRACE_CONSOLE, "scan_host: invalid scan type rejected: " .. tostring(scan_type))
+      return false
+   end
+
+   if debug_me then
+      if (ports ~= nil) then
+         traceError(TRACE_NORMAL,TRACE_CONSOLE, "Scanning Host ".. host .. " on Ports: " .. ports .. "\n")
+      else
+         traceError(TRACE_NORMAL,TRACE_CONSOLE, "Scanning Host ".. host.."\n")
+      end
+   end
+
+   -- to save on redis the user input
+   local ports_scan_param = ports
+
+   if(string.contains(scan_type, '_portscan')) then
+      -- Nothing to do
+   else
+      if (isEmptyString(ports)) then
+         ports = ascan_utils.discover_open_ports(host)
+      end
+   end
+
+   if(ntop.isShuttingDown()) then return(false) end
+
+   if (isAlreadyPresent({host= host, scan_type= scan_type})) then
+      -- It is possible that the scan entry could be removed during the ascan_utils.discover_open_ports phase.
+      ascan_utils.set_status_scan(scan_type, host, ports_scan_param, id, nil,nil,nil, ascan_utils.scan_status.scanning)
+      -- Save on redis the scanning host to avoid inconsistent state on ntopng restarts
+      local scanning_host = {scan_type = scan_type, host = host, ports = ports_scan_param, id = scan_id}
+      save_scanning_host(scanning_host)
+   else
+      return false
+   end
+   
+   -- Scan host
+   local scan_module = ascan_utils.load_module(scan_type)
+   local now,result,duration,scan_result,num_open_ports, udp_ports, tcp_ports, discovered_hosts = scan_module:scan_host(host, ports, use_coroutines, cidr)
+
+   if(ntop.isShuttingDown()) then
+      return false
+   end
+
+   if (udp_ports ~= nil) then
+      udp_ports = {ports = format_port_list_to_string(udp_ports), num_ports = #udp_ports}
+   end
+
+   if(tcp_ports ~= nil) then
+      tcp_ports = {ports = format_port_list_to_string(tcp_ports), num_ports = #tcp_ports}
+   end
+
+   if scan_result and scan_result ~= ascan_utils.scan_status.failed then
+      scan_result = ascan_utils.scan_status.ok
+
+      if (scan_type ~= 'ipv4_netscan') then
+         -- excluding the netscan 
+         ntop.incrCache(scanned_hosts_count_key)
+      end
+   elseif(scan_result and scan_result == ascan_utils.scan_status.failed) then
+      scan_result = ascan_utils.scan_status.failed
+   end
+
+      --traceError(TRACE_NORMAL, TRACE_CONSOLE, "End scan Host ".. host .. ", result: " .. result .. "\n")
+
+   if (isAlreadyPresent({host= host, scan_type= scan_type})) then
+      ascan_utils.save_host_to_scan(scan_type, host, result, now, duration, scan_result,
+                                 ports_scan_param, nil, num_open_ports, scan_id, false, udp_ports, tcp_ports, discovered_hosts)
+   end
+
+   return true
+end
+
+-- **********************************************************
+-- Function to set singles can in progress redis key
+local function set_single_scan_in_progress()
+
+   if (ntop.getCache(single_scan_key) ~= '1') then
+      ntop.setCache(single_scan_key, "1")
+      ntop.setCache(single_scan_info_key, json.encode({
+			  udp_ports = 0,
+			  tcp_ports = 0,
+			  begin_epoch = os.time(),
+			  scanned_host = 1
+      }))
+   end
+
+end
+
+-- **********************************************************
+-- Function to update single host status
+function ascan_utils.set_status_scan(scan_type, host, ports, id, is_periodicity, is_all,is_single_scan, status)
+   local host_hash_key = ascan_utils.get_host_hash_key(host, scan_type)
+   local host_hash_value_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+   local host_hash_value
+   if(not isEmptyString(host_hash_value_string)) then
+
+      host_hash_value = json.decode(host_hash_value_string) or {}
+   else
+      host_hash_value = {}
+   end
+
+   host_hash_value.is_ok_last_scan = status
+   if (is_periodicity ~= nil and is_periodicity) then
+      host_hash_value.is_periodicity = is_periodicity
+   end
+
+   if (is_all ~= nil and is_all) then
+      host_hash_value.is_all = is_all
+   end
+
+   if (is_single_scan ~= nil and is_single_scan) then
+      host_hash_value.is_single_scan = is_single_scan
+      set_single_scan_in_progress()
+   end
+
+   ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(host_hash_value))
+
+   return true
+end
+
+-- **********************************************************
+-- Function to schedule ondemand single host scan
+function ascan_utils.schedule_ondemand_single_host_scan(scan_type, host, ports, scan_id, is_periodicity, is_all, is_single_scan, cidr)
+   local scan = { scan_type = scan_type, host = host, ports = ports, id= scan_id, cidr = cidr}
+   ascan_utils.set_status_scan(scan_type, host, ports, scan_id, is_periodicity, is_all, is_single_scan, ascan_utils.scan_status.scheduled)
+
+   ntop.rpushCache(host_scan_queue_key, json.encode(scan))
+
+   return true
+end
+
+-- **********************************************************
+-- Function to schedule ondemand scan all hosts
+function ascan_utils.schedule_ondemand_all_hosts_scan()
+   local host_to_scan_list = ascan_utils.retrieve_hosts_to_scan()
+
+   local is_scanning_almost_one = false
+   if #host_to_scan_list > 0 then
+      for _,scan_info in ipairs(host_to_scan_list) do
+         ascan_utils.schedule_ondemand_single_host_scan(scan_info.scan_type, scan_info.host, scan_info.ports, scan_info.id, false, true, false, scan_info.cidr)
+         is_scanning_almost_one = true
+      end
+   end
+
+   if (is_scanning_almost_one) then
+      ntop.setCache(ondemand_scan_key , "1")
+   end
+
+   ntop.setCache(ondemand_scan_host_info_key, json.encode({
+                       udp_ports = 0,
+                       tcp_ports = 0,
+                       begin_epoch = os.time(),
+                       scanned_host = 0
+   }))
+
+   return true
+end
+
+-- **********************************************************
+-- periodicity can be set to "1day" "1week" "disabled"
+function ascan_utils.schedule_periodic_scan(periodicity)
+   local host_to_scan_list = ascan_utils.retrieve_hosts_to_scan()
+
+   if (#host_to_scan_list > 0 ) then
+
+      local is_already_running = ntop.getCache(periodic_scan_key) == "1"
+      if not is_already_running then
+
+         local is_scanning_almost_one = false
+
+         for _,scan_info in ipairs(host_to_scan_list) do
+            local frequency = scan_info.scan_frequency
+            if(frequency == periodicity) then
+               ascan_utils.schedule_ondemand_single_host_scan(scan_info.scan_type, scan_info.host, scan_info.ports, scan_info.id, true, false, false, scan_info.cidr)
+               is_scanning_almost_one = true
+            end
+         end
+
+
+         if is_scanning_almost_one then
+            ntop.setCache(periodic_scan_key , "1")
+            ntop.setCache(periodic_scan_type_key, periodicity)
+
+
+            ntop.setCache(periodic_scan_host_info_key , json.encode({
+                                udp_ports = 0,
+                                tcp_ports = 0,
+                                begin_epoch = os.time(),
+                                scanned_hosts = 0,
+                                not_scanned_hosts = 0
+            }))
+
+         end
+      end
+   end
+   return true
+end
+
+-- **********************************************************
+-- Process a single host scan request that has been queued
+function ascan_utils.process_oldest_scheduled_scan(use_coroutines)
+   if(ntop.isShuttingDown()) then return(false) end
+
+   local elem = ntop.lpopCache(host_scan_queue_key)
+
+   if((elem ~= nil) and (elem ~= "")) then
+      if debug_me then
+         traceError(TRACE_NORMAL,TRACE_CONSOLE, "Found active scan: ".. elem .. "\n")
+      end
+
+      local elem = json.decode(elem)
+
+      if(use_coroutines) then
+         if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Starting scan on host "..elem.host.."["..elem.scan_type .."]") end
+         return(coroutine.create(function () ascan_utils.scan_host(elem.scan_type, elem.host, elem.ports, elem.id, use_coroutines, elem.cidr) end))
+      else
+         ascan_utils.scan_host(elem.scan_type, elem.host, elem.ports, elem.id, use_coroutines, elem.cidr)
+
+         return true
+      end
+   else
+      if(use_coroutines) then
+         if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "No host to scan") end
+         return nil
+      else
+         return false
+      end
+   end
+end
+
+-- **********************************************************
+-- Process all host scans request that has been queued
+function ascan_utils.process_all_scheduled_scans(max_num_scans, use_coroutines)
+   local num = 0
+   local co = {}
+
+   if(max_num_scans == nil) then max_num_scans = 9999 end
+
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Starting up to "..max_num_scans.." scans...") end
+
+   while((max_num_scans > 0) and not(ntop.isShuttingDown())) do
+      local res = ascan_utils.process_oldest_scheduled_scan(use_coroutines)
+      local do_inc = true
+
+      if(use_coroutines) then
+         if(res == nil) then
+            break -- nothing to do
+            do_inc = false
+         else
+            co[#co + 1] = res
+         end
+      else
+         if(res == false) then
+            break
+         end
+      end
+
+      if(do_inc) then
+         max_num_scans = max_num_scans - 1
+         num = num + 1
+      end
+   end
+
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Started "..num.." scans") end
+
+   if(use_coroutines and (num > 0)) then
+      -- See snmp_poll.lua
+
+      while(not(ntop.isShuttingDown())) do
+         local tot = #co
+         local keep_on = false
+
+         for i = 1, tot do
+            if coroutine.status(co[i]) ~= "dead" then
+               local rc, msg = coroutine.resume(co[i])
+
+               -- Note that resume runs in protected mode.
+               -- Therefore, if there is any error inside a coroutine, Lua will not show the error message,
+               -- but instead will return it to the resume call.
+               if not rc then
+                  traceError(TRACE_NORMAL, TRACE_CONSOLE, msg or "Unknown error occurred")
+               end
+
+               keep_on = rc or keep_on
+            end
+         end -- for
+
+         if(keep_on == false) then
+            break
+         end
+      end -- while
+   end
+
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "All "..num.." scans are completed") end
+
+   return num
+end
+
+-- **********************************************************
+-- Example ascan_utils.get_active_hosts("192.168.2.0", "24")
+function ascan_utils.get_active_hosts(host, cidr)
+   local result = ascan_utils.exec_netscan(host, cidr)
+   return result
+end
+
+-- **********************************************************
+-- Function to cleanup netscan result
+function ascan_utils.netscan_cleanup(scan_result)
+
+   scan_result = lines(scan_result)
+
+   local scan_out = {}
+   local discovered_hosts = {}
+   for i=1,4 do
+      table.remove(scan_result, 1)
+   end
+
+   table.remove(scan_result, #scan_result)
+
+   for _,l in pairs(scan_result) do 
+      if (string.find(l, "Nmap scan report for") ~= nil) then
+         discovered_hosts[#discovered_hosts + 1] =  string.split(l," ")[5]
+         
+      end
+      scan_out[#scan_out + 1] = l
+   end
+
+   local scan_result_out = table.concat(scan_out, "\n")
+   return scan_result_out, discovered_hosts
+end
+
+-- **********************************************************
+-- Example ascan_utils.exec_netscan("192.168.2.0", "24")
+function ascan_utils.exec_netscan(host, cidr)
+   local result = {}
+   local out
+   local begin_epoch
+   local duration
+   local scan_ok
+
+   cidr = tonumber(cidr)
+
+   if((cidr == 32) or (cidr == 128)
+      or (host:find('.') == nil) -- not dots in IP, it looks symbolic
+      or (string.sub(host, -1) ~= "0") -- last digit is not 0, so let's assume /32
+   ) then
+      result[#result+1] = host -- return it as is
+   else
+      local net_range = '1-254'
+      if (cidr == 25) then
+         net_range = '1-127'
+      elseif (cidr == 26) then
+         net_range = '1-63'
+      elseif (cidr == 27) then
+         net_range = '1-31'
+      elseif (cidr == 28) then
+         net_range = '1-15'
+      elseif (cidr == 29) then
+         net_range = '1-7'
+      elseif (cidr == 30) then
+         net_range = '1-3'
+      end
+
+      if not isIPv4(host) then
+         traceError(TRACE_WARNING, TRACE_CONSOLE, "exec_netscan: invalid host rejected: " .. tostring(host))
+         return {}, nil, nil, nil, false
+      end
+
+      local s = string.split(host, '%.')
+      local net = s[1].."."..s[2].."."..s[3].."."
+      local nmap = ascan_utils.get_nmap_path()
+      local command = nmap..' -sP -n ' .. net .. net_range
+      
+      begin_epoch = os.time()
+      out = ntop.execCmd(command)
+      duration = os.time() - begin_epoch
+
+      out, result = ascan_utils.netscan_cleanup(out)
+      scan_ok = true
+      
+   end
+
+   return result,out,begin_epoch,duration,scan_ok
+end
+
+-- **********************************************************
+-- Update all scan frequencies
+function ascan_utils.update_all_periodicity(scan_frequency)
+   local host_to_scan_list = ascan_utils.retrieve_hosts_to_scan()
+
+   for _,value in ipairs(host_to_scan_list) do
+      local host_hash_key = ascan_utils.get_host_hash_key(value.host, value.scan_type)
+      local host_hash_value_string = ntop.getHashCache(host_to_scan_key, host_hash_key)
+      if(not isEmptyString(host_hash_value_string)) then
+
+         local host_hash_value = json.decode(host_hash_value_string)
+
+         host_hash_value.scan_frequency = scan_frequency
+
+         ntop.setHashCache(host_to_scan_key, host_hash_key, json.encode(host_hash_value))
+      end
+
+      local prefs_host_value_string = ntop.getHashCache(prefs_host_values_key, host_hash_key)
+
+      if (not isEmptyString(prefs_host_value_string)) then
+         local host_hash_value = json.decode(prefs_host_value_string)
+
+         host_hash_value.scan_frequency = scan_frequency
+
+         ntop.setHashCache(prefs_host_values_key, host_hash_key, json.encode(host_hash_value))
+      end
+   end
+
+   return true
+end
+
+-- **********************************************************
+-- Function to verify if VS is enabled
+function ascan_utils.is_available()
+   if (ntop.isnEdge and ntop.isnEdge()) then
+      return false
+   end
+   local scan_modules = ascan_utils.list_scan_modules()
+   return (#scan_modules > 0)
+end
+
+-- **********************************************************
+-- Function to run command
+function ascan_utils.runCommand(scan_command, use_coroutines)
+   local result
+   local debug_me = false
+
+   if ntop.isWindows() then
+      local handle = io.popen(scan_command)
+      result = handle:read("*a")
+      handle:close()
+   else
+      if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Started " .. scan_command) end
+
+      if(use_coroutines) then
+         if(true) then
+            local job_id = ntop.execCmdAsync(scan_command)
+
+            result = nil
+
+            while((result == nil) and not(ntop.isShuttingDown())) do
+               coroutine.yield()
+               result = ntop.readResultCmdAsync(job_id)
+               ntop.msleep(100)
+            end
+
+            if(debug_me) then tprint(result) end
+         else
+            coroutine.yield()
+         end
+      else
+         result = ntop.execCmd(scan_command)
+      end
+   end
+
+   return result
+end
+
+-- **********************************************************
+-- Validates that a nmap target is a plain IP address or CIDR (IPv4 or IPv6).
+-- Rejects anything containing shell metacharacters to prevent command injection.
+local function is_valid_nmap_target(target)
+   if isEmptyString(target) then return false end
+   local ip = target:match("^([^/]+)") or target
+   return isIPv4(ip) or isIPv6(ip)
+end
+
+-- **********************************************************
+-- Validates the scan_ports parameter used for nmap.
+-- Allow plain numeric port lists/ranges only ("80,443" or "1-1000")
+local function is_valid_nmap_ports(ports)
+   if isEmptyString(ports) then return true end
+   if (#ports > 256) or not ports:match("^[%d,%-]+$") then return false end
+
+   for token in ports:gmatch("[^,]+") do
+      local from, to = token:match("^(%d+)%-(%d+)$")
+
+      if from and to then
+         from, to = tonumber(from), tonumber(to)
+         if not (from and to and from >= 1 and from <= to and to <= 65535) then
+            return false
+         end
+      else
+         local port = token:match("^%d+$") and tonumber(token)
+         if not (port and port >= 1 and port <= 65535) then
+            return false
+         end
+      end
+   end
+
+   return true
+end
+
+-- **********************************************************
+-- Function to scan host
+function ascan_utils.nmap_scan_host(command, host_ip, ports, use_coroutines)
+   local scan_command
+
+   if(ntop.isShuttingDown()) then
+      return nil
+   end
+
+   if not is_valid_nmap_target(host_ip) then
+      traceError(TRACE_WARNING, TRACE_CONSOLE, "nmap_scan_host: invalid target rejected: " .. tostring(host_ip))
+      return nil
+   end
+
+   if not is_valid_nmap_ports(ports) then
+      traceError(TRACE_WARNING, TRACE_CONSOLE, "nmap_scan_host: invalid ports rejected: " .. tostring(ports))
+      return nil
+   end
+
+   -- IPv6 check
+   if(string.contains(host_ip, ':')) then command = command .. " -6 " end
+
+   if(not(isEmptyString(ports))) then command = command .. " -p " .. ports end
+
+   scan_command = string.format("%s %s", command, host_ip)
+
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Executing: "..scan_command.."\n") end
+
+   local begin_epoch = os.time()
+   local result = ascan_utils.runCommand(scan_command, use_coroutines)
+   local duration = os.time() - begin_epoch
+   local scan_ok = true
+   local num_open_ports
+   local tcp_ports
+   local udp_ports
+
+   result, num_open_ports, udp_ports, tcp_ports = ascan_utils.cleanup_nmap_result(result)
+   return begin_epoch, result, duration, scan_ok, num_open_ports, udp_ports, tcp_ports
+end
+
+-- **********************************************************
+-- Function to check if a host is available
+function ascan_utils.nmap_check_host(host_ip, use_coroutines)
+   if not is_valid_nmap_target(host_ip) then
+      traceError(TRACE_WARNING, TRACE_CONSOLE, "nmap_check_host: invalid target rejected: " .. tostring(host_ip))
+      return nil, 0
+   end
+
+   local nmap =  ascan_utils.get_nmap_path()
+   local scan_command = nmap.." -sn"
+
+   -- IPv6 check (need to use --privileged otherwise nmap will report hosts are down even if up)
+   if(string.contains(host_ip, ':')) then scan_command = scan_command .. " --privileged -6" end
+   scan_command = string.format("%s %s",scan_command,host_ip)
+
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Executing: "..scan_command.."\n") end
+
+   local start_scan = os.time()
+   local result = ascan_utils.runCommand(scan_command, use_coroutines)
+   local end_scan = os.time()
+   local scan_duration = end_scan - start_scan
+
+   local is_up = ascan_utils.cleanup_nmap_check_host_result(result)
+   if(debug_me) then traceError(TRACE_NORMAL, TRACE_CONSOLE, "Host is up: "..tostring(is_up).."\n") end
+
+   return is_up, scan_duration, start_scan, end_scan
+
+end
+
+-- **********************************************************
+-- Migrate old configurations
+function ascan_utils.migrate_keys()
+   local old_hash_key = "ntopng.prefs.host_to_scan"
+   local old_hosts = ntop.getHashKeysCache(old_hash_key) or {}
+
+   for key,_ in pairs(old_hosts) do
+      local hash_value_string = ntop.getHashCache(old_hash_key, key)
+      local old_hash_value = json.decode(hash_value_string)
+      if (old_hash_value) then
+         local new_hash_value = {
+            host = old_hash_value.host,
+            host_name = old_hash_value.host_name,
+            scan_type = old_hash_value.scan_type,
+            scan_frequency = old_hash_value.scan_frequency,
+            ports = old_hash_value.ports,
+         }
+
+         if (not isEmptyString(old_hash_value.discovered_host_scan_type)) then
+            new_hash_value = old_hash_value.discovered_host_scan_type
+         end
+
+         ntop.setHashCache(prefs_host_values_key, key,json.encode(new_hash_value))
+      end
+   end
+
+   ntop.delCache(old_hash_key)
+
+   -- Purge the configurations of the scan engines that have been removed
+   -- (CVE, Vulners, OpenVAS): they can still be around on setups configured
+   -- before those engines were dropped
+   for _,hash_key in ipairs({ prefs_host_values_key, host_to_scan_key }) do
+      for key, _ in pairs(ntop.getHashKeysCache(hash_key) or {}) do
+         local value = json.decode(ntop.getHashCache(hash_key, key) or "")
+
+         if (value and value.scan_type and obsolete_scan_types[value.scan_type]) then
+            ntop.delHashCache(hash_key, key)
+         end
+      end
+   end
+
+   local hosts = ntop.getHashKeysCache(host_to_scan_key) or {}
+   local from_key = "tcp_openports"
+   local to_key   = "tcp_portscan"
+
+   for key, _ in pairs(hosts) do
+      if(string.contains(key, from_key)) then
+         value = ntop.getHashCache(host_to_scan_key, key)
+
+         new_key   = key:gsub(from_key, to_key)
+         new_value = value:gsub(from_key, to_key)
+
+         ntop.setHashCache(host_to_scan_key, new_key, new_value)
+         ntop.delHashCache(host_to_scan_key, key)
+      end
+   end
+end
+
+-- **********************************************************
+-- init once
+if(ntop.getCache("ntopng.prefs.vs.vs_slow_scan") == "1") then
+   use_slow_scan = " -T polite --max-parallelism 1"
+else
+   use_slow_scan = ""
+end
+
+-- ##########################################################
+-- ipv4_netscan functions 
+
+-- **********************************************************
+-- Function to retrieve discovered_host_scan_type 
+-- and scan_frequency
+
+-- discovered_host_scan_type: 
+   -- the scan type for the hosts discovered by the netscan 
+
+-- scan_frequency:
+   -- the scan_frequency for the hosts discovered by the netscan
+function ascan_utils.get_network_pref_value(network_ip, scan_type)
+
+   local hash_key = ascan_utils.get_host_hash_key(network_ip, scan_type)
+   local network_pref_value = json.decode(ntop.getHashCache(prefs_host_values_key,hash_key) or {})
+
+   --[[ Retrieving values to includes net sub scans in reports and email data ]]
+   local network_others_value = json.decode(ntop.getHashCache(host_to_scan_key, hash_key) or {})
+   local net_scan_all, net_periodic_scan, net_single_scan
+   if (network_others_value) then
+      net_scan_all, net_periodic_scan, net_single_scan = network_others_value.is_all, network_others_value.is_periodicity, network_others_value.is_single_scan
+      net_scan_all = toboolean(net_scan_all)
+      net_periodic_scan = toboolean(net_periodic_scan)
+      net_single_scan = toboolean(net_single_scan)
+   end
+   if(network_pref_value and not isEmptyString(network_pref_value)) then
+      return network_pref_value.discovered_host_scan_type, network_pref_value.scan_frequency, net_scan_all, net_periodic_scan, net_single_scan
+   end
+   return nil
+end
+
+-- **********************************************************
+-- Function to find if an ip is configured with a specific scan_type
+function ascan_utils.isVSConfiguredHostScanType(ip,scan_type)
+   local host_configured_key = ascan_utils.get_host_hash_key(ip, scan_type)
+   local pref_value = ntop.getHashCache(prefs_host_values_key,host_configured_key)
+   return not isEmptyString(pref_value)
+end
+
+
+-- **********************************************************
+-- Function to find if an ip is configured
+function ascan_utils.isVSConfiguredHost(ip)
+   local hosts_scanned = ntop.getHashKeysCache(prefs_host_values_key) or {}
+   for key, _ in pairs(hosts_scanned) do
+      if key:find(ip) then
+         return true
+      end
+   end
+   return false
+end
+
+-- **********************************************************
+-- Function to trigger an alert if the host
+-- is not configured
+function ascan_utils.triggerHostNotConfiguredAlert(host, scan_type)
+   trigger_alert_host_not_configured(host, scan_type)
+end
+
+-- **********************************************************
+
+-- ##########################################################
+-- VS DB Functions
+-- **********************************************************
+
+-- Function to retrieve reports list from the DB
+function ascan_utils.retrieve_report_list(epoch)
+   local sort_on = "DATE"
+   return (ascan_db_utils.retrieve_reports(sort_on,epoch))
+end
+
+-- **********************************************************
+-- Function to retrieve single report from the DB
+function ascan_utils.retrieve_report(report_name)
+   return (ascan_db_utils.retrieve_report(report_name))
+end
+
+-- **********************************************************
+-- Function to delete single report on the DB
+function ascan_utils.delete_report(epoch)
+   return(ascan_db_utils.delete_report(epoch))
+end
+
+-- **********************************************************
+-- Function to edit single report on the DB
+function ascan_utils.edit_report(epoch, report_name)
+   return(ascan_db_utils.edit_report(epoch,report_name))
+end
+
+-- ##########################################################
+
+return ascan_utils

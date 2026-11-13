@@ -8,6 +8,11 @@ PartOf=@SERVICE_WANTS@
 [Service]
 Type=simple
 
+Environment=UNIT_NAME=%N
+
+ExecStartPre=/bin/sh -c '/bin/echo "$(/bin/date) ntopng StartPre" >> /var/log/ntop-systemd.log'
+ExecStartPre=/bin/sh -c 'if [ -x /etc/ntopng/pre ]; then /etc/ntopng/pre; fi'
+@SERVICE_PRE@
 ExecStartPre=/bin/sh -c '/usr/bin/ntopng-utils-manage-config -a check-restore  && /usr/bin/ntopng-utils-manage-config -a restore || true'
 ExecStartPre=/bin/sh -c '/bin/cat /etc/ntopng/ntopng.conf > /run/ntopng.conf.raw'
 ExecStartPre=/bin/sh -c '/bin/cat /etc/ntopng/ntopng.conf.d/*.conf >> /run/ntopng.conf.raw 2>/dev/null || true'
@@ -15,7 +20,11 @@ ExecStartPre=/bin/sh -c '/bin/sed "/^[ ]*-e.*$\\|^[ ]*-G.*\\|^[ ]*--daemon.*\\|[
 
 ExecStart=/usr/bin/@APP@ /run/ntopng.conf
 
+ExecStartPost=/bin/sh -c '/bin/echo "$(/bin/date) ntopng StartPost" >> /var/log/ntop-systemd.log'
+ExecStartPost=/bin/sh -c 'if [ -x /etc/ntopng/post ]; then /etc/ntopng/post; fi'
+
 ExecStopPost=-/bin/rm -rf /run/ntopng.conf /run/ntopng.conf.raw /run/ntopng.pid
+ExecStopPost=/bin/sh -c '/bin/echo "$(/bin/date) ntopng StopPost" >> /var/log/ntop-systemd.log'
 
 Restart=on-failure
 RestartSec=5

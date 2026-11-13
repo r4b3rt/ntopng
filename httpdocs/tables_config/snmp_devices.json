@@ -1,0 +1,125 @@
+{
+	"id": "snmp_interfaces",
+	"data_url": "lua/pro/rest/v2/get/snmp/list.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.snmp_devices",
+	"default_sort": {
+		"column_id": "device",
+		"sort": 1
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "edit",
+					"icon": "fas fa-edit",
+					"title_i18n": "edit",
+					"event_id": "click_button_edit"
+				},
+				{
+					"id": "delete",
+					"icon": "fas fa fa-trash",
+					"title_i18n": "delete",
+					"event_id": "click_button_delete"
+				},
+				{
+					"id": "timeseries",
+					"icon": "fas fa-chart-area",
+					"title_i18n": "prefs.timeseries",
+					"class": [],
+					"event_id": "click_button_timeseries"
+				},
+				{
+					"id": "export",
+					"icon": "fa-solid fa-download",
+					"title_i18n": "export_snmp_device_data",
+					"event_id": "click_button_export_snmp_device_data"
+				}
+			]
+		},
+		{
+			"title_i18n": "unknown_devices.device_name",
+			"data_field": "name",
+			"min-width": "80px",
+			"sortable": true,
+			"class": []
+		},
+		{
+			"title_i18n": "snmp.device_ip",
+			"data_field": "ip",
+			"min-width": "160px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "site",
+			"title_i18n": "snmp.snmp_device_site",
+			"data_field": "site",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.snmp_version",
+			"data_field": "snmp_version",
+			"min-width": "100px",
+			"sortable": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "show_alerts.alert_description",
+			"data_field": "description",
+			"min-width": "80px",
+			"sortable": true,
+			"class": []
+		},
+		{
+			"title_i18n": "snmp.alerted_interfaces",
+			"data_field": "interfaces_with_errors",
+			"min-width": "180px",
+			"sortable": true,
+			"class": [
+				"text-right",
+				"pre-wrap"
+			]
+		},
+		{
+			"title_i18n": "snmp.snmp_device_last_poll",
+			"data_field": "last_update",
+			"min-width": "80px",
+			"sortable": true,
+			"class": [
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "snmp.snmp_device_last_poll_duration",
+			"data_field": "last_poll_duration",
+			"min-width": "80px",
+			"sortable": true,
+			"class": [
+				"text-center"
+			]
+		}
+	]
+}

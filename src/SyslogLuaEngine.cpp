@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,23 +23,27 @@
 
 /* ****************************************** */
 
-SyslogLuaEngine::SyslogLuaEngine(NetworkInterface *iface) : LuaEngine(NULL) {
+SyslogLuaEngine::SyslogLuaEngine(NetworkInterface* iface) : LuaEngine() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
   initialized = false;
 
   snprintf(script_path, sizeof(script_path), "%s/%s",
-	   ntop->getPrefs()->get_scripts_dir(), 
-	   SYSLOG_SCRIPT_PATH);
+           ntop->getPrefs()->get_scripts_dir(), SYSLOG_SCRIPT_PATH);
 
   ntop->fixPath(script_path);
 
-  if(load_script(script_path, iface) < 0) {
-    ntop->getTrace()->traceEvent(TRACE_ERROR, "Failure loading %s", script_path);
+  if (load_script(script_path, lua_engine_mode_callback, iface) < 0) {
+    ntop->getTrace()->traceEvent(TRACE_ERROR, "Failure loading %s",
+                                 script_path);
     return;
   }
 
   /* Execute the script so that the "setup" function will be exposed */
-  if(lua_pcall(L, 0, 0, 0)) {
-    ntop->getTrace()->traceEvent(TRACE_WARNING, "Script failure[%s] [%s]", script_path, lua_tostring(L, -1));
+  if (lua_pcall(L, 0, 0, 0)) {
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Script failure[%s] [%s]",
+                                 script_path, lua_tostring(L, -1));
     return;
   }
 
@@ -47,20 +51,17 @@ SyslogLuaEngine::SyslogLuaEngine(NetworkInterface *iface) : LuaEngine(NULL) {
 
   /* Calling setup() */
   lua_getglobal(L, "setup");
-  if (lua_isfunction(L, -1))
-    pcall(0 /* no argument */, 0);
+  if (lua_isfunction(L, -1)) pcall(0 /* no argument */, 0);
 }
 
 /* ****************************************** */
 
 SyslogLuaEngine::~SyslogLuaEngine() {
-  if (!initialized)
-    return;
+  if (!initialized) return;
 
   /* Calling teardown() */
   lua_getglobal(L, "teardown");
-  if (lua_isfunction(L, -1))
-    pcall(0 /* no argument */, 0);
+  if (lua_isfunction(L, -1)) pcall(0 /* no argument */, 0);
 }
 
 /* ****************************************** */
@@ -73,7 +74,12 @@ bool SyslogLuaEngine::pcall(int num_args, int num_results) {
   }
 
   if (lua_pcall(L, num_args, num_results, 0)) {
-    ntop->getTrace()->traceEvent(TRACE_WARNING, "Script failure [%s]", lua_tostring(L, -1));
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "Script failure [%s]",
+                                 lua_tostring(L, -1));
+    /* Pop the error object: this VM is reused for every event received
+       on the interface, so anything left on the lua stack piles up until
+       it overflows */
+    lua_pop(L, 1);
     return false;
   }
 
@@ -82,9 +88,17 @@ bool SyslogLuaEngine::pcall(int num_args, int num_results) {
 
 /* **************************************************** */
 
-void SyslogLuaEngine::handleEvent(const char *producer, const char *message,
-    const char *host, int priority) {
-  lua_State *L = getState();
+void SyslogLuaEngine::handleEvent(const char* producer, const char* message,
+                                  const char* host, int priority) {
+  lua_State* L = getState();
+
+  // ntop->getTrace()->traceEvent(TRACE_WARNING, "Producer = %s Host = %s
+  // Message = %s",
+  //   producer ? producer : "", host ? host : "", message ? message : "");
+
+  /* Reset the stack in case anything was left by a previous event */
+  lua_settop(L, 0);
+
   lua_getglobal(L, SYSLOG_SCRIPT_CALLBACK_EVENT);
   lua_pushstring(L, producer ? producer : "");
   lua_pushstring(L, message ? message : "");
@@ -92,4 +106,3 @@ void SyslogLuaEngine::handleEvent(const char *producer, const char *message,
   lua_pushinteger(L, priority);
   pcall(4 /* num args */, 0);
 }
-

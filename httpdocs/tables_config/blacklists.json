@@ -1,0 +1,121 @@
+{
+	"id": "blacklists",
+	"data_url": "lua/rest/v2/get/system/blacklists/blacklists.lua",
+	"filters_url": "lua/rest/v2/get/system/blacklists/blacklists_filters.lua",
+	"use_current_page": false,
+	"enable_search": false,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.blacklists",
+	"default_sort": {
+		"column_id": "hits",
+		"sort": 2
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "chart_blacklist",
+					"icon": "fas fa-lg fa-chart-area",
+					"title_i18n": "chart",
+					"class": [],
+					"event_id": "click_chart"
+				},
+				{
+					"id": "edit_blacklist",
+					"icon": "fas fa-edit",
+					"title_i18n": "edit",
+					"class": [],
+					"event_id": "click_edit"
+				},
+				{
+					"id": "refresh_blacklist",
+					"icon": "fas fa-sync-alt",
+					"title_i18n": "refresh",
+					"class": [],
+					"event_id": "click_refresh"
+				}
+			]
+		},
+		{
+			"title_i18n": "name",
+			"data_field": "name",
+			"sortable": true,
+			"min-width": "155px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "status",
+			"data_field": "status",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "category",
+			"data_field": "category",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "category_lists.update_frequency",
+			"data_field": "update_frequency",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "category_lists.last_update",
+			"data_field": "last_update",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "num_entries",
+			"data_field": "entries",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "graphs.metrics_prefixes.num_hits",
+			"data_field": "hits",
+			"sortable": true,
+			"min-width": "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		}
+	]
+}

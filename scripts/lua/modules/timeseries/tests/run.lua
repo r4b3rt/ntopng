@@ -12,9 +12,8 @@ package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/tests/?.lua;"
 
 local tests = {
   require("utils_test"),
-  require("influxdb2series"),
-  require("influxdb_queries"),
   require("rrd_paths_test"),
+  require("ts_common_test"),
 }
 
 -- ##############################################

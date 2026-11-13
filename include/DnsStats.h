@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,13 +25,12 @@
 #include "ntop_includes.h"
 
 struct queries_breakdown {
-  u_int32_t num_a, num_ns, num_cname, num_soa,
-    num_ptr, num_mx, num_txt, num_aaaa,
-    num_any, num_other;
+  u_int32_t num_a, num_ns, num_cname, num_soa, num_ptr, num_mx, num_txt,
+      num_aaaa, num_any, num_other;
 };
 
 struct dns_stats {
-  MonitoredCounter<u_int32_t> num_queries, num_replies_ok, num_replies_error;
+  u_int32_t num_queries, num_replies_ok, num_replies_error;
   struct queries_breakdown breakdown;
 };
 
@@ -39,30 +38,26 @@ class DnsStats {
  private:
   struct dns_stats sent_stats, rcvd_stats;
 
-  void deserializeStats(json_object *o, struct dns_stats *stats);
-  json_object* getStatsJSONObject(struct dns_stats *stats);
-  void luaStats(lua_State *vm, struct dns_stats *stats, const char *label, bool verbose);
+  json_object* getStatsJSONObject(struct dns_stats* stats);
+  void luaStats(lua_State* vm, struct dns_stats* stats, const char* label,
+                bool verbose);
 
  public:
   DnsStats();
 
-  void incStats(bool as_client, const FlowDNSStats *fts);
-  void updateStats(const struct timeval * const tv);
+  void incStats(bool as_client, const FlowDNSStats* fts);
+  void updateStats(const struct timeval* const tv);
 
-  u_int32_t getSentNumQueries()       { return sent_stats.num_queries.get(); }
-  u_int32_t getSentNumRepliesOk()     { return sent_stats.num_replies_ok.get(); }
-  u_int32_t getSentNumRepliesError()  { return sent_stats.num_replies_error.get(); }
+  u_int32_t getSentNumQueries() { return sent_stats.num_queries; }
+  u_int32_t getSentNumRepliesOk() { return sent_stats.num_replies_ok; }
+  u_int32_t getSentNumRepliesError() { return sent_stats.num_replies_error; }
 
-  u_int32_t getRcvdNumQueries()       { return rcvd_stats.num_queries.get(); }
-  u_int32_t getRcvdNumRepliesOk()     { return rcvd_stats.num_replies_ok.get(); }
-  u_int32_t getRcvdNumRepliesError()  { return rcvd_stats.num_replies_error.get(); }
+  u_int32_t getRcvdNumQueries() { return rcvd_stats.num_queries; }
+  u_int32_t getRcvdNumRepliesOk() { return rcvd_stats.num_replies_ok; }
+  u_int32_t getRcvdNumRepliesError() { return rcvd_stats.num_replies_error; }
 
-  char* serialize();
-  void deserialize(json_object *o);
   json_object* getJSONObject();
-  void lua(lua_State *vm, bool verbose);
-  bool hasAnomalies(time_t when);
-  void luaAnomalies(lua_State* vm, time_t when);
+  void lua(lua_State* vm, bool verbose);
 };
 
 #endif /* _STATS_H_ */

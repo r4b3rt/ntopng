@@ -1,0 +1,244 @@
+{
+	"id": "flows_list",
+	"data_url": "lua/rest/v2/get/flow/active_list.lua",
+	"filters_url": "lua/rest/v2/get/flow/flow_filters.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": true,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.flows_list",
+	"default_sort": {
+		"column_id": "ip",
+		"sort": 0
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "split_button",
+			"button_def_array": [
+				{
+					"id": "live_flows",
+					"icon": "fa-solid fa-magnifying-glass-plus",
+					"title_i18n": "flow_details.flow_details",
+					"event_id": "click_button_live_flows"
+				},
+				{
+					"id": "flow_page",
+					"icon": "fas fa-file-lines",
+					"title_i18n": "flows_page.open_flow_page",
+					"event_id": "click_button_flow_page"
+				},
+				{
+					"id": "historical_chart",
+					"icon": "fas fa-chart-area",
+					"title_i18n": "db_explorer.historical_data",
+					"event_id": "click_button_historical_data"
+				},
+				{
+					"id": "block_host",
+					"icon": "fas fa-ban",
+					"title_i18n": "flow_details.drop_flow_traffic_btn",
+					"danger": true,
+					"event_id": "click_button_drop_host_traffic"
+				}
+			]
+		},
+		{
+			"title_i18n": "first_seen",
+			"data_field": "first_seen",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "last_seen",
+			"data_field": "last_seen",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "duration",
+			"data_field": "duration",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "protocol",
+			"data_field": "protocol",
+			"sortable": true,
+			"min-width" : "160px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "score",
+			"data_field": "score",
+			"sortable": true,
+			"min-width" : "70px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "db_search.flowfilters.qoe",
+			"data_field": "qoe",
+			"sortable": true,
+			"min-width" : "70px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		},
+		{
+			"title_i18n": "flow",
+			"data_field": "flow",
+			"sortable": false,
+			"min-width" : "200px",
+			"auto_max_width": false,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.cli_asn",
+			"data_field": "cli_asn",
+			"sortable": true,
+			"min-width" : "95px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "db_search.srv_asn",
+			"data_field": "srv_asn",
+			"sortable": true,
+			"min-width" : "95px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.transit_asn",
+			"data_field": "transit_asn",
+			"sortable": true,
+			"min-width" : "102px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "db_search.cli_asn",
+			"data_field": "cli_asn_asnmode_disabled",
+			"sortable": true,
+			"min-width" : "95px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "db_search.srv_asn",
+			"data_field": "srv_asn_asnmode_disabled",
+			"sortable": true,
+			"min-width" : "95px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "flows_page.actual_throughput",
+			"data_field": "throughput",
+			"sortable": true,
+			"min-width" : "125px",
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "flows_page.total_bytes",
+			"data_field": "bytes",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap",
+				"text-end"
+			]
+		},
+		{
+			"title_i18n": "info",
+			"data_field": "info",
+			"sortable": false,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "flow_alerts_filter",
+			"data_field": "risk",
+			"sortable": false,
+			"min-width" : "140px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "seen_on_interface",
+			"title_i18n": "if_stats_config.target_exporter_device_ifid",
+			"data_field": "seen_on_interface",
+			"sortable": false,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "flow_devices.exporter_ip",
+			"data_field": "flow_exporter",
+			"sortable": true,
+			"min-width" : "150px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "flows_page.inIfIdx",
+			"data_field": "in_index",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "flows_page.outIfIdx",
+			"data_field": "out_index",
+			"sortable": true,
+			"min-width" : "100px",
+			"class": [
+				"text-nowrap"
+			]
+		}
+	]
+}

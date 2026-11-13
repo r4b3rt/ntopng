@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,15 +33,27 @@ class IECInvalidTransitionAlert : public FlowAlert {
   ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType() { return { flow_alert_iec_invalid_transition, alert_category_security }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_iec_invalid_transition,
+            alert_category_security};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
-  IECInvalidTransitionAlert(FlowCheck *c, Flow *f, struct timeval *_time, u_int16_t _type_i, u_int8_t _type_id) : FlowAlert(c, f) {
+  inline u_int32_t get_packet_epoch() { return packet_epoch; };
+  inline u_int16_t get_type_i() { return type_i; };
+  inline u_int8_t get_type_id() { return type_id; };
+
+  IECInvalidTransitionAlert(FlowCheck* c, Flow* f, struct timeval* _time,
+                            u_int16_t _type_i, u_int8_t _type_id)
+      : FlowAlert(c, f) {
     type_i = _type_i;
     type_id = _type_id;
     packet_epoch = _time->tv_sec;
+    setAlertScore(getDefaultScore());
   };
-  ~IECInvalidTransitionAlert() { };
+  ~IECInvalidTransitionAlert() {};
+
+  bool autoAck() const { return false; };
 
   FlowAlertType getAlertType() const { return getClassType(); }
 };

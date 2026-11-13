@@ -47,19 +47,18 @@ end
 --! @param tags_filter a list of filter tags.
 --! @param wildcard_tags the remaining tags of the schema which are considered wildcard.
 --! @param start_time time filter. Only timeseries updated after start_time will be returned.
+--! @param end_time time filter. Only timeseries updated before end_time will be returned.
 --! @return a (possibly empty) list of tags values for the matching timeseries on success, nil for non-existing series.
-function driver:listSeries(schema, tags_filter, wildcard_tags, start_time)
+function driver:listSeries(schema, tags_filter, wildcard_tags, start_time, end_time)
 end
 
 --! @brief Get top k items information.
---! @param schema the schema object.
---! @param tags a list of filter tags.
---! @param tstart lower time bound for the query.
---! @param tend upper time bound for the query.
---! @param options query options.
+--! @param options query options: schema, schema_info, tags (filter tags), epoch_begin, epoch_end, top.
+--!        options.unlimited_top returns every item with data; options.totals_only returns only
+--!        tags, name and value of each item (no per item data query).
 --! @param top_tags the remaining tags of the schema, on which top k calculation is taking place.
---! @return a (possibly empty) topk result on success, nil on error.
-function driver:topk(schema, tags, tstart, tend, options, top_tags)
+--! @return {metadata, series} with the items sorted by value (total) descending, nil on error or no data.
+function driver:timeseries_top(options, top_tags)
 end
 
 --! @brief Informs the driver that it's time to export data.

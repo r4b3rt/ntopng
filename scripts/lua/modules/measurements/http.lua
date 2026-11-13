@@ -1,5 +1,5 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 
 --
@@ -43,7 +43,7 @@ local function check(measurement, hosts, granularity)
 			 nil, false --[[ don't follow redirects ]])
     end
 
-    if(rv and rv.HTTP_STATS and (rv.HTTP_STATS.TOTAL_TIME > 0)) then
+    if(rv and not rv.IS_PARTIAL and rv.HTTP_STATS and (rv.HTTP_STATS.TOTAL_TIME > 0)) then
       local total_time = rv.HTTP_STATS.TOTAL_TIME * 1000
       local lookup_time = (rv.HTTP_STATS.NAMELOOKUP_TIME or 0) * 1000
       local connect_time = (rv.HTTP_STATS.APPCONNECT_TIME or 0) * 1000
@@ -154,7 +154,7 @@ return {
       -- If set, indicates a maximum threshold value
       max_threshold = 10000,
       -- A list of additional timeseries (the am_host:val_* is always shown) to show in the charts.
-      -- See https://www.ntop.org/guides/ntopng/api/timeseries/adding_new_timeseries.html#charting-new-metrics .
+      -- See https://www.ntop.org/guides/ntopng/api/timeseries/adding_new_timeseries.html?utm_source=ntopng#charting-new-metrics .
       additional_timeseries = {{
 	schema="am_host:http_stats",
 	label=i18n("graphs.http_stats"),

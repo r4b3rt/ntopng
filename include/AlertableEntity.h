@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2021 - ntop.org
+ * (C) 2021-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,36 +30,38 @@ class AlertableEntity {
  private:
   AlertEntity entity_type;
   std::string entity_val;
-  NetworkInterface *alert_iface;
+  NetworkInterface* alert_iface;
   u_int num_engaged_alerts;
 
- protected:  
-  RwLock engaged_alerts_lock; /* Lock to handle concurrent access from the GUI */
+ protected:
+  RwLock
+      engaged_alerts_lock; /* Lock to handle concurrent access from the GUI */
 
   void incNumAlertsEngaged(AlertLevel alert_severity);
   void decNumAlertsEngaged(AlertLevel alert_severity);
 
  public:
-  AlertableEntity(NetworkInterface *alert_iface, AlertEntity entity);
+  AlertableEntity(NetworkInterface* alert_iface, AlertEntity entity);
   virtual ~AlertableEntity();
 
-  inline NetworkInterface *getAlertInterface() { return alert_iface; }
+  inline NetworkInterface* getAlertInterface() { return alert_iface; }
 
-  inline void setEntityValue(const char *ent_val) { entity_val = ent_val; }
-  inline std::string getEntityValue() const { return(entity_val); }
+  inline void setEntityValue(const char* ent_val) { entity_val = ent_val; }
+  inline std::string getEntityValue() const { return (entity_val); }
 
-  inline AlertEntity getEntityType()  const { return(entity_type); }
+  inline AlertEntity getEntityType() const { return (entity_type); }
 
-  inline u_int getNumEngagedAlerts()  const { return(num_engaged_alerts); }
+  inline u_int getNumEngagedAlerts() const { return (num_engaged_alerts); }
 
-  virtual void countAlerts(grouped_alerts_counters *counters) {};
-  virtual void getAlerts(lua_State* vm, ScriptPeriodicity p, 
-			 AlertType type_filter, AlertLevel severity_filter, AlertRole role_filter,
-			 u_int *idx) {};
+  virtual void countAlerts(grouped_alerts_counters* counters) {};
+  virtual void getAlerts(lua_State* vm, ScriptPeriodicity p,
+                         AlertType type_filter, AlertLevel severity_filter,
+                         AlertRole role_filter, u_int* idx) {};
 
-  bool matchesAllowedNetworks(AddressTree *allowed_nets);
+  bool matchesAllowedNetworks(AddressTree* allowed_nets);
 
-  static int parseEntityValueIp(const char *alert_entity_value, struct in6_addr *ip_raw);
+  static int parseEntityValueIp(const char* alert_entity_value,
+                                struct in6_addr* ip_raw);
 };
 
 #endif

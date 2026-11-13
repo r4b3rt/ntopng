@@ -1,14 +1,16 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/?.lua;" .. package.path
+
+local prefs_dump_utils = require "prefs_dump_utils"
+local cpu_utils = require "cpu_utils"
 
 local scripts_triggers = require "scripts_triggers"
-local prefs_dump_utils = require "prefs_dump_utils"
-local cpu_utils = require("cpu_utils")
 local ts_utils = require("ts_utils_core")
 
 local system_host_stats = cpu_utils.systemHostStats()
@@ -19,9 +21,10 @@ local when = os.time()
 prefs_dump_utils.check_dump_prefs_to_disk()
 
 -- #####################################
+local create_rrd = scripts_triggers.isRrdInterfaceCreation()
 
 -- Dump periodic activities duration if the telementry timeseries preference is enabled
-if scripts_triggers.isRrdInterfaceCreation() then
+if create_rrd then
    local ts_dump = require "ts_min_dump_utils"
 
    ts_dump.update_internals_periodic_activities_stats(when, ifstats, false)
@@ -29,10 +32,12 @@ end
 
 -- #####################################
 
-if scripts_triggers.isRrdInterfaceCreation() then
+if create_rrd then
    if areAlertsEnabled() then
+      local alert_utils = require "alert_utils"
+      local tot_dropped_alerts = alert_utils.computeDroppedAlerts(ifstats)
       ts_utils.append("iface:engaged_alerts", {ifid=getSystemInterfaceId(), engaged_alerts=ifstats.num_alerts_engaged}, when)
-      ts_utils.append("iface:dropped_alerts", {ifid=getSystemInterfaceId(), dropped_alerts=ifstats.num_dropped_alerts}, when)
+      ts_utils.append("iface:dropped_alerts_v2", {ifid=getSystemInterfaceId(), dropped_alerts=tot_dropped_alerts}, when)
    end
 end
 

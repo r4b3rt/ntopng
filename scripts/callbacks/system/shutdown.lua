@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 --
@@ -15,6 +15,7 @@ local recovery_utils = require "recovery_utils"
 
 require "lua_utils" -- NOTE: required by alert_utils
 local alert_utils = require "alert_utils"
+local alerts_api = require "alerts_api"
 local recipients = require "recipients"
 local checks = require "checks"
 local periodicity = 3
@@ -29,12 +30,25 @@ alert_utils.notify_ntopng_stop()
 -- Check and possibly dump preferences to disk
 prefs_dump_utils.check_dump_prefs_to_disk()
 
+-- Alerts are released on shutdown even if the condition is still active
+alerts_api.setForcedReleases(true)
+
+-- First of all release the alert of the system interface (current one)
+alerts_api.releaseAllAlerts()
+-- Then release the alerts of all other interfaces
 for _, ifname in pairs(ifnames) do
   interface.select(ifname)
-  interface.releaseEngagedAlerts()
+  alerts_api.releaseAllAlerts()
 end
 
-recipients.process_notifications(now, now + 3 --[[ deadline ]], 3 --[[ periodicity ]], true)
+alerts_api.setForcedReleases(false)
+
+recipients.process_notifications(now, now + 10 --[[ deadline ]], 0 --[[ periodicity ]], true)
+
+if ntop.isPro and ntop.isPro() then
+   package.path = dirs.installdir .. "/pro/scripts/callbacks/system/?.lua;" .. package.path
+   require("shutdown")
+end
 
 -- Unload all checks
 checks.loadUnloadUserScripts(false --[[ unload --]])

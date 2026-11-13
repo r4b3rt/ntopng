@@ -1,25 +1,60 @@
 --
--- (C) 2021 - ntop.org
+-- (C) 2021-26 - ntop.org
 --
-
 -- This file contains a small set of utility functions
+
+-- ###############################################
+
+if (pragma_once_ntop_utils == true) then
+   -- io.write(debug.traceback().."\n")
+   -- avoid multiple inclusions
+   return
+end
+
+pragma_once_ntop_utils = true
+
+-- This is required because it simply adds the tracing functions, like traceError
+require "lua_trace"
+
+local clock_start = os.clock()
 
 -- ##############################################
 
-function string.starts(String,Start)
-   if type(String) ~= 'string' or type(Start) ~= 'string' then
-      return false
+-- split
+function split(s, delimiter)
+   result = {};
+   if (s ~= nil) then
+      if delimiter == nil then
+	 -- No delimiter, split all characters
+	 for match in s:gmatch "." do result[#result + 1] = match; end
+      else
+	 -- Split by delimiter
+	 for match in (s .. delimiter):gmatch("(.-)" .. delimiter) do
+	    result[#result + 1] = match;
+	 end
+      end
    end
-   return string.sub(String,1,string.len(Start))==Start
+   return result;
 end
 
 -- ##############################################
 
-function string.ends(String,End)
-   if type(String) ~= 'string' or type(End) ~= 'string' then
-      return false
-   end
-   return End=='' or string.sub(String,-string.len(End))==End
+function ends(String, End)
+   return End == '' or string.sub(String, -string.len(End)) == End
+end
+
+-- ##############################################
+
+function string.starts(String, Start)
+   if type(String) ~= 'string' or type(Start) ~= 'string' then return false end
+   return string.sub(String, 1, string.len(Start)) == Start
+end
+
+-- ##############################################
+
+function string.ends(String, End)
+   if type(String) ~= 'string' or type(End) ~= 'string' then return false end
+   return End == '' or string.sub(String, -string.len(End)) == End
 end
 
 -- ##############################################
@@ -35,15 +70,14 @@ function string.oid_starts(oid_string, oid_string_start)
 
    -- Make sure both OIDs end with a dot, to avoid
    -- considering 1.3.6.1.4.1.99 starting with 1.3.6.1.4.1.9
-   if not string.ends(oid_string, ".") then
-      oid_string = oid_string.."."
-   end
+   if not string.ends(oid_string, ".") then oid_string = oid_string .. "." end
 
    if not string.ends(oid_string_start, ".") then
-      oid_string_start = oid_string_start.."."
+      oid_string_start = oid_string_start .. "."
    end
 
-   return string.sub(oid_string , 1, string.len(oid_string_start)) == oid_string_start
+   return string.sub(oid_string, 1, string.len(oid_string_start)) ==
+      oid_string_start
 end
 
 -- ##############################################
@@ -52,17 +86,24 @@ end
 -- You can call it as tprint(mytable)
 -- The other two parameters should not be set
 function tprint(s, l, i)
-   l = (l) or 1000; i = i or "";-- default item limit, indent string
-   if (l<1) then io.write("ERROR: Item limit reached.\n"); return l-1 end;
+   -- io.write(debug.traceback().."\n")
+
+   l = (l) or 1000;
+   i = i or ""; -- default item limit, indent string
+   if (l < 1) then
+      io.write("ERROR: Item limit reached.\n");
+      return l - 1
+   end
    local ts = type(s);
-   if (ts ~= "table") then io.write(i..' '..ts..' '..tostring(s)..'\n'); return l-1 end
-   io.write(i..' '..ts..'\n');
-   for k,v in pairs(s) do
+   if (ts ~= "table") then
+      io.write(i .. ' ' .. ts .. ' ' .. tostring(s) .. '\n');
+      return l - 1
+   end
+   io.write(i .. ' ' .. ts .. '\n');
+   for k, v in pairs(s) do
       local indent = ""
 
-      if(i ~= "") then
-         indent = i .. "."
-      end
+      if (i ~= "") then indent = i .. "." end
       indent = indent .. tostring(k)
 
       l = tprint(v, l, indent);
@@ -70,6 +111,15 @@ function tprint(s, l, i)
    end
 
    return l
+end
+
+-- ##############################################
+
+function splitNetworkPrefix(net)
+   if not net then tprint(debug.traceback()) end
+   local prefix = tonumber(net:match("/(.+)"))
+   local address = net:gsub("/.+", "")
+   return address, prefix
 end
 
 -- ##############################################
@@ -85,37 +135,45 @@ end
 --    value_quote: a string to be used to quote values
 --
 function table.tconcat(keys_values, kv_sep, group_sep, last_sep, value_quote)
-  local groups = {}
-  kv_sep = kv_sep or ""
-  group_sep = group_sep or ""
-  last_sep = last_sep or ""
-  value_quote = value_quote or ""
+   local groups = {}
+   kv_sep = kv_sep or ""
+   group_sep = group_sep or ""
+   last_sep = last_sep or ""
+   value_quote = value_quote or ""
 
-  for k, v in pairs(keys_values) do
-    local parts = {k, kv_sep, value_quote, v, value_quote}
-    groups[#groups + 1] = table.concat(parts, "")
-  end
+   for k, v in pairs(keys_values) do
+      local parts = {k, kv_sep, value_quote, v, value_quote}
+      groups[#groups + 1] = table.concat(parts, "")
+   end
 
-  if #groups > 0 then
-    return table.concat(groups, group_sep) .. last_sep
-  else
-    return ""
-  end
+   if #groups > 0 then
+      return table.concat(groups, group_sep) .. last_sep
+   else
+      return ""
+   end
 end
 
 -- ##############################################
 
 -- NOTE: on index based tables using #table is much more performant
 function table.len(tbl)
- local count = 0
+   local count = 0
 
-  if(tbl == nil) then return(0) end
+   if tbl == nil then
+      -- io.write("ERROR: table expected, got nil\n")
+      -- io.write(debug.traceback().."\n")
+      return 0
+   end
 
-  for k,v in pairs(tbl) do
-    count = count + 1
-  end
+   if type(tbl) ~= "table" then
+      io.write("ERROR: table expected, got " .. type(tbl) .. "\n")
+      io.write(debug.traceback() .. "\n")
+      return 0
+   end
 
-  return count
+   for k, v in pairs(tbl) do count = count + 1 end
+
+   return count
 end
 
 -- ##############################################
@@ -124,7 +182,7 @@ function table.slice(tbl, first, last, step)
    local sliced = {}
 
    for i = first or 1, last or #tbl, step or 1 do
-      sliced[#sliced+1] = tbl[i]
+      sliced[#sliced + 1] = tbl[i]
    end
 
    return sliced
@@ -133,19 +191,103 @@ end
 -- ##############################################
 
 function table.empty(tbl)
-  if(tbl == nil) then return true end
+   if (tbl == nil) then return true end
 
-  if next(tbl) == nil then
-    return true
-  end
+   if next(tbl) == nil then return true end
 
-  return false
+   return false
 end
 
 -- ##############################################
 
-function isIPv6(ip)
-  return((not isEmptyString(ip)) and ntop.isIPv6(ip))
+function isIPv4(address)
+   if (address == nil) then return false end
+
+   -- Reuse the for loop to check the address validity
+   local checkAddress = (function(chunks)
+	 for _, v in pairs(chunks) do
+            if (tonumber(v) < 0) or (tonumber(v) > 255) then
+	       return false
+            end
+	 end
+	 return true
+   end)
+
+   local chunks = {address:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")}
+   local chunksWithPort = {
+      address:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)%:(%d+)$")
+   }
+
+   if #chunks == 4 then
+      return checkAddress(chunks)
+   elseif #chunksWithPort == 5 then
+      table.remove(chunksWithPort, 5)
+      return checkAddress(chunksWithPort)
+   end
+
+   return false
+end
+
+-- ##############################################
+
+function isIPv6(ip) return ((not isEmptyString(ip)) and ntop.isIPv6(ip)) end
+
+-- ##############################################
+
+-- Check if address is a CIDR
+-- strict (optional) do not accept subnets without the '/<mask>'
+function isIPv4Network(address, strict)
+   -- Check for @ VLAN
+   local parts = split(address, "@")
+   if #parts == 2 then address = parts[1] end
+
+   -- Parse CIDR
+   parts = split(address, "/")
+   if #parts == 2 then
+      local prefix = tonumber(parts[2])
+
+      if (prefix == nil) or (math.floor(prefix) ~= prefix) or (prefix < 0) or
+	 (prefix > 32) then return false end
+
+   elseif #parts == 1 and strict then
+      return false
+
+      -- Check empty
+   elseif #parts ~= 1 then
+      return false
+   end
+
+   -- Check IP
+   return isIPv4(parts[1])
+end
+
+-- ##############################################
+
+-- Check if address is a CIDR
+-- strict (optional) do not accept subnets without the '/<mask>'
+function isIPv6Network(address, strict)
+   -- Check for @ VLAN
+   local parts = split(address, "@")
+   if #parts == 2 then address = parts[1] end
+
+   -- Parse CIDR
+   parts = split(address, "/")
+   if #parts == 2 then
+      local prefix = tonumber(parts[2])
+
+      if (prefix == nil) or (math.floor(prefix) ~= prefix) or (prefix < 0) or
+	 (prefix > 128) then return false end
+
+   elseif #parts == 1 and strict then
+      return false
+
+      -- Check empty
+   elseif #parts ~= 1 then
+      return false
+   end
+
+   -- Check IPv6
+   return isIPv6(parts[1])
 end
 
 -- ##############################################
@@ -157,40 +299,141 @@ end
 
 -- ##############################################
 
+-- Sorting helpers
+--
+-- When f is asc, rev, asc_insensitive or rev_insensitive and all the sort
+-- values are numbers, or all are strings, the comparators are exactly
+-- '<' / '>' (on the lowered strings for the _insensitive ones): the sort
+-- values are computed once per element (string.lower included) and the
+-- comparison is inlined, with no function call nor nil/type checks per
+-- comparison. In all the other cases (custom f, nil values, mixed types)
+-- f is used as is.
+
+local string_lower = string.lower
+
+-- Collects the keys of t into an array, returns the array and its length
+local function collectKeys(t)
+   local a, n = {}, 0
+
+   for k in pairs(t) do
+      n = n + 1
+      a[n] = k
+   end
+
+   return a, n
+end
+
+-- Sorts in place the n elements of a by get(element), or by the element
+-- itself when get is nil, with the comparator f
+local function sortBy(a, n, f, get)
+   local descending
+
+   if (f == asc) or (f == asc_insensitive) then
+      descending = false
+   elseif (f == rev) or (f == rev_insensitive) then
+      descending = true
+   end
+
+   if descending ~= nil then
+      local insensitive = (f == asc_insensitive) or (f == rev_insensitive)
+      -- Precomputed sort values, not needed when sorting plain elements
+      local values = (get or insensitive) and {} or nil
+      local value_type
+
+      -- Single pass: check that the sort values are all numbers or all
+      -- strings, and compute them once
+      for i = 1, n do
+	 local x = a[i]
+	 local v
+
+	 if get then v = get(x) else v = x end
+
+	 local vt = type(v)
+
+	 if value_type == nil then
+	    if (vt ~= "number") and (vt ~= "string") then
+	       value_type = false
+	       break
+	    end
+
+	    value_type = vt
+	 elseif vt ~= value_type then
+	    value_type = false
+	    break
+	 end
+
+	 if values then
+	    if insensitive and (vt == "string") then
+	       values[x] = string_lower(v)
+	    else
+	       values[x] = v
+	    end
+	 end
+      end
+
+      if value_type ~= false then
+	 if values == nil then
+       -- Descending
+	    if descending then
+	       table.sort(a, function(x, y) return x > y end)
+	    else
+          -- Ascending
+	       table.sort(a) -- Native '<'
+	    end
+	 elseif descending then
+	    table.sort(a, function(x, y) return values[x] > values[y] end)
+	 else
+       -- Ascending
+	    table.sort(a, function(x, y) return values[x] < values[y] end)
+	 end
+
+	 return
+      end
+   end
+
+   -- Custom comparator, nil values or mixed types: use f as is
+   if get then
+      table.sort(a, function(x, y) return f(get(x), get(y)) end)
+   else
+      table.sort(a, f)
+   end
+end
+
+-- Iterator over the sorted keys
+local function sortedKeysIterator(a, n, t)
+   local i = 0
+
+   return function()
+      i = i + 1
+      if i > n then return nil end
+
+      local k = a[i]
+      return k, t[k]
+   end
+end
+
+-- ##############################################
+
 function pairsByKeys(t, f)
-  local a = {}
-  if t == nil then
-    io.write(debug.traceback().."\n")
-  end
-  for n in pairs(t) do table.insert(a, n) end
-  table.sort(a, f)
-  local i = 0      -- iterator variable
-  local iter = function ()   -- iterator function
-    i = i + 1
-    if a[i] == nil then return nil
-    else return a[i], t[a[i]]
-    end
-  end
-  return iter
+   if t == nil then io.write(debug.traceback() .. "\n") end
+
+   local a, n = collectKeys(t)
+
+   sortBy(a, n, f)
+
+   return sortedKeysIterator(a, n, t)
 end
 
 -- ##############################################
 
 function pairsByValues(t, f)
-  local a = {}
-  if t == nil then
-    io.write(debug.traceback().."\n")
-  end
-  for n in pairs(t) do table.insert(a, n) end
-  table.sort(a, function(x, y) return f(t[x], t[y]) end)
-  local i = 0      -- iterator variable
-  local iter = function ()   -- iterator function
-    i = i + 1
-    if a[i] == nil then return nil
-    else return a[i], t[a[i]]
-    end
-  end
-  return iter
+   if t == nil then io.write(debug.traceback() .. "\n") end
+
+   local a, n = collectKeys(t)
+
+   sortBy(a, n, f, function(k) return t[k] end)
+
+   return sortedKeysIterator(a, n, t)
 end
 
 -- ##############################################
@@ -205,21 +448,28 @@ function pairsByDottedDecimalKeys(t, f)
 
    -- Build a support array for the actual sorting
    for key, value in pairs(t) do
+      local key_sorter = key:split("%.") or {key} -- An array that will be used to sort
+      local splitted = key_sorter[#key_sorter]:split("@") or {}
+      -- This example handles the VLAN, if no VLAN is present, add 0, in case
+      -- a comparison between an host with VLAN and one without is performed
+      key_sorter[#key_sorter] = splitted[1]
+      key_sorter[#key_sorter + 1] = splitted[2] or 0
+
       sorter[#sorter + 1] = {
-	 sorter = key:split("%.") or {key}, -- An array that will be used to sort
+	 sorter = key_sorter,
 	 key = key, -- Original key
 	 value = value -- Original value
       }
    end
 
-   table.sort(sorter,
-	      function(left, right)
+   table.sort(sorter, function(left, right)
 		 -- The minimum of the two lengths, used to to the comparisons
 		 local len = math.min(#left.sorter, #right.sorter)
 
 		 for i = 1, len do
 		    -- Convert elements to numbers
-		    local left_number, right_number = tonumber(left.sorter[i]), tonumber(right.sorter[i])
+		    local left_number, right_number = tonumber(left.sorter[i]),
+		       tonumber(right.sorter[i])
 
 		    if left_number ~= right_number then
 		       -- If numbers are different, compare them using the sort function
@@ -230,16 +480,13 @@ function pairsByDottedDecimalKeys(t, f)
 		       return f(#left.sorter, #right.sorter)
 		    end
 		 end
-	      end
-   )
+   end)
 
    local i = 0
    local iter = function()
       i = i + 1
 
-      if sorter[i] == nil then
-	 return
-      end
+      if sorter[i] == nil then return end
 
       return sorter[i].key, sorter[i].value
    end
@@ -250,27 +497,52 @@ end
 -- ##############################################
 
 function pairsByField(t, field, f)
-  local a = {}
-  for n in pairs(t) do table.insert(a, n) end
+   local a, n = collectKeys(t)
 
-  table.sort(a, function(x, y) return f(t[x][field], t[y][field]) end)
-  local i = 0      -- iterator variable
-  local iter = function ()   -- iterator function
-    i = i + 1
-    if a[i] == nil then return nil
-    else return a[i], t[a[i]]
-    end
-  end
-  return iter
+   sortBy(a, n, f, function(k) return t[k][field] end)
+
+   return sortedKeysIterator(a, n, t)
 end
 
 -- ##############################################
 
-function asc(a,b)
+-- @brief Returns the values of t (tables) in an array sorted by one of their fields.
+--        Use it instead of pairsByField when the sorted list itself is needed
+--        (e.g. to be returned or serialized): it sorts the values directly
+--        (no keys array, no iterator)
+-- @param t The table whose values are sorted
+-- @param field The field of the values used to sort
+-- @param f The sort function, e.g. `asc` or `rev`
+-- @param max_entries (optional) Max number of returned values
+-- @return The array of sorted values
+function valuesSortedByField(t, field, f, max_entries)
+   local a, n = {}, 0
+
+   for _, v in pairs(t) do
+      n = n + 1
+      a[n] = v
+   end
+
+   sortBy(a, n, f, function(v) return v[field] end)
+
+   if (max_entries ~= nil) and (n > max_entries) then
+      for i = n, max_entries + 1, -1 do
+	 a[i] = nil
+      end
+   end
+
+   return a
+end
+
+-- ##############################################
+
+function asc(a, b)
    if a == nil or b == nil then
       return false
    elseif type(a) ~= type(b) then
-      traceError(TRACE_WARNING, TRACE_CONSOLE, "Bad types in asc(): " .. a .. " (".. type(a) ..") vs " .. b .. " (".. type(b) .. ")")
+      traceError(TRACE_WARNING, TRACE_CONSOLE,
+		 "Bad types in asc(): " .. a .. " (" .. type(a) .. ") vs " ..
+		 b .. " (" .. type(b) .. ")")
       return false
    end
 
@@ -279,11 +551,14 @@ end
 
 -- ##############################################
 
-function rev(a,b)
+function rev(a, b)
    if a == nil or b == nil then
       return false
    elseif type(a) ~= type(b) then
-      traceError(TRACE_WARNING, TRACE_CONSOLE, "Bad types in rev(): " .. a .. " (".. type(a) ..") vs " .. b .. " (".. type(b) .. ")")
+      traceError(TRACE_WARNING, TRACE_CONSOLE,
+		 "Bad types in rev(): " .. a .. " (" .. type(a) .. ") vs " ..
+		 b .. " (" .. type(b) .. ")")
+      tprint(debug.traceback())
       return false
    end
 
@@ -292,86 +567,112 @@ end
 
 -- ##############################################
 
-function asc_insensitive(a,b)
-  if type(a) ~= "string" then return asc(a,b) end
-  return (string.lower(a) < string.lower(b))
+-- NOTE: when passed to pairsByKeys/pairsByValues/pairsByField/valuesSortedByField
+-- these are not called per comparison: the strings are lowered once per element
+function asc_insensitive(a, b)
+   if type(a) ~= "string" then return asc(a, b) end
+   return (string_lower(a) < string_lower(b))
 end
 
 -- ##############################################
 
-function rev_insensitive(a,b)
-  if type(a) ~= "string" then return rev(a,b) end
-  return (string.lower(a) > string.lower(b))
+function rev_insensitive(a, b)
+   if type(a) ~= "string" then return rev(a, b) end
+   return (string_lower(a) > string_lower(b))
 end
 
 -- ##############################################
 
 function string.split(s, p)
-  local temp = {}
-  local index = 0
-  local last_index = string.len(s)
+   local temp = {}
+   local index = 0
 
-  while true do
-    local i, e = string.find(s, p, index)
+   if s == nil then io.write(debug.traceback() .. "\n") end
 
-    if i and e then
-      local next_index = e + 1
-      local word_bound = i - 1
-      table.insert(temp, string.sub(s, index, word_bound))
-      index = next_index
-    else
-      if index > 0 and index <= last_index then
-        table.insert(temp, string.sub(s, index, last_index))
-      elseif index == 0 then
-        temp = nil
+   local last_index = string.len(s)
+
+   while true do
+      local i, e = string.find(s, p, index)
+
+      if i and e then
+	 local next_index = e + 1
+	 local word_bound = i - 1
+	 temp[#temp + 1] = string.sub(s, index, word_bound)
+	 index = next_index
+      else
+	 if index > 0 and index <= last_index then
+	    temp[#temp + 1] = string.sub(s, index, last_index)
+	 elseif index == 0 then
+	    temp = nil
+	 end
+	 break
       end
-      break
-    end
-  end
+   end
 
-  return temp
+   return temp
 end
 
 -- ##############################################
 
 function isMacAddress(address)
+   local v
+   local addr
 
-  if (address == nil) then return false end
+   if (address == nil) then return false end
 
-   if(string.match(address, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") ~= nil)  or
-     (string.match(address, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x%@%d+$") ~= nil) then
+   v = string.split(address, "@")
+
+   if (v ~= nil) then
+      addr = v[1]
+   else
+      addr = address
+   end
+
+   if (string.ends(addr, "_v4") or string.ends(addr, "_v6") or
+       (string.match(addr, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") ~= nil) or
+       (string.match(addr, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x%@%d+$") ~= nil)) then
       return true
    end
+   return false
+end
+
+function isCommunityId(address)
+   local c
+   if (address == nil) then return false end
+
+   c = string.split(address, ":")
+   if (c ~= nil and #c == 2) then return true end
+
    return false
 end
 
 -- ##############################################
 
 function isEmptyString(str)
-  if((str == nil) or (str == "")) then
-    return true
-  else
-    return false
-  end
+   if ((str == nil) or (str == "") or (str == " ")) then
+      return true
+   else
+      return false
+   end
 end
 
 -- ##############################################
 
 function ternary(cond, T, F)
-   if cond then return T else return F end
+   if cond then
+      return T
+   else
+      return F
+   end
 end
 
 -- ##############################################
 
-function isAdministrator()
-   return ntop.isAdministrator()
-end
+function isAdministrator() return ntop.isAdministrator() end
 
 -- ##############################################
 
-function isNoLoginUser()
-  return _SESSION["user"] == ntop.getNologinUser()
-end
+function isNoLoginUser() return _SESSION["user"] == ntop.getNologinUser() end
 
 -- ##############################################
 
@@ -395,6 +696,481 @@ function hasHighResolutionTs()
 
    -- High resolution timeseries means dumping the host timeseries
    -- every 60 seconds instead of 300 seconds.
-   return((active_driver == "influxdb") and
-    (ntop.getPref("ntopng.prefs.ts_resolution") ~= "300"))
+   return (((active_driver == "influxdb") or (active_driver == "clickhouse")) and
+      (ntop.getPref("ntopng.prefs.ts_resolution") ~= "300"))
+end
+
+if (trace_script_duration ~= nil) then
+   io.write(debug.getinfo(1, 'S').source .. " executed in " ..
+	    (os.clock() - clock_start) * 1000 .. " ms\n")
+end
+
+-- ##############################################
+
+function getInterfaceId(interface_name)
+   if (interface_name == getSystemInterfaceName()) then
+      return (getSystemInterfaceId())
+   end
+
+   local ifnames = interface.getIfNames()
+
+   for if_id, if_name in pairs(ifnames) do
+      if if_name == interface_name then return tonumber(if_id) end
+   end
+
+   return (-1)
+end
+
+-- ###########################################
+
+function visualTsKey(tskey)
+   if ends(tskey, "_v4") or ends(tskey, "_v6") then
+      local ver = string.sub(tskey, string.len(tskey) - 1, string.len(tskey))
+      local address = string.sub(tskey, 1, string.len(tskey) - 3)
+      local visual_addr
+
+      if ver == "v4" then
+	 visual_addr = address
+      else
+	 visual_addr = address .. " (" .. ver .. ")"
+      end
+
+      return visual_addr
+   end
+
+   return tskey
+end
+
+-- ##############################################
+
+-- @brief Performs a difference between the current metric value and
+-- the previous saved value and saves the current value for next call.
+-- @param reg lua C context pointer to the alertable entity storage
+-- @param metric_name name of the metric to retrieve
+-- @param granularity the granularity number
+-- @param curr_val the current metric value
+-- @param skip_first if true, 0 will be returned when no cached value is present
+-- @return the difference between current and previous value
+function delta_val(reg, metric_name, granularity, curr_val, skip_first)
+   -- This require is okay, alert_granularities is just a struct
+   local alert_granularities = require "alert_granularities"
+
+   local granularity_num = alert_granularities[granularity] or 0
+   if granularity_num ~= 0 and not isEmptyString(granularity_num) then
+      granularity_num = granularity_num.granularity_id
+   end
+
+   local key = string.format("%s:%d", metric_name, granularity_num)
+
+   -- Read cached value and purify it
+   local prev_val
+   local prev = reg.getCachedAlertValue(key, granularity_num)
+   if prev == nil or type(prev) == "table" then -- Safety check and debug
+      -- traceError(TRACE_ERROR, TRACE_CONSOLE, "Bad prev val")
+      -- tprint(prev)
+      -- tprint(debug.traceback())
+   else
+      prev_val = tonumber(prev)
+   end
+
+   -- Save the value for the next round
+   reg.setCachedAlertValue(key, tostring(curr_val), granularity_num)
+
+   if ((skip_first == true) and (prev_val == nil)) then
+      return (0)
+   else
+      if (prev_val == nil) then prev_val = 0 end
+
+      if (curr_val < prev_val) then
+	 return (0) -- counter wrap check
+      else
+	 return (curr_val - (prev_val or 0))
+      end
+   end
+end
+
+-- ##############################################
+
+--
+-- Members supported format
+-- 192.168.1.10/32@10
+-- 00:11:22:33:44:55
+--
+
+-- ##############################################
+
+-- Check if this is a valid pool member (MAC or CIDR@VLAN)
+-- @param fix_relaxed Fix relaxed notation (IP without net mask or vlan)
+function checkPoolMember(member, fix_relaxed)
+   if isEmptyString(member) then return nil end
+
+   if isMacAddress(member) then return member end
+
+   -- VLAN
+   local vlan_id
+   local vlan_idx = string.find(member, "@")
+   if vlan_idx == nil then
+      if fix_relaxed then
+	 vlan_id = 0 -- default vlan: 0
+      else
+	 return nil -- no vlan
+      end
+   elseif vlan_idx == 1 then
+      return nil -- bad format
+   else
+      local other = string.sub(member, 1, vlan_idx - 1)
+      vlan_id = tonumber(string.sub(member, vlan_idx + 1))
+      if vlan_id == nil or vlan_id < 0 then return nil end
+      member = other
+   end
+
+   -- prefix is mandatory here
+   local address, prefix = splitNetworkPrefix(member)
+   if address == nil then
+      return nil -- bad format
+   elseif prefix == nil then
+      if fix_relaxed then
+	 if isIPv4(address) then
+	    prefix = '32' -- default mask: 32
+	 elseif isIPv6(address) then
+	    prefix = '128' -- default mask: 128
+	 else
+	    return nil -- bad format
+	 end
+      else
+	 return nil -- no mask
+      end
+   end
+
+   if isIPv4(address) and (tonumber(prefix) >= 0) and (tonumber(prefix) <= 32) then
+      -- ok
+   elseif isIPv6(address) and (tonumber(prefix) >= 0) and
+      (tonumber(prefix) <= 128) then
+      -- ok
+   else
+      return nil -- bad format
+   end
+
+   return address .. '/' .. prefix .. '@' .. vlan_id
+end
+
+-- ##############################################
+
+-- Check if this is a valid pool member (MAC or CIDR@VLAN)
+-- @param relaxed Allow relaxed notation (IP without net mask or vlan)
+function isValidPoolMember(member, relaxed)
+   if checkPoolMember(member, relaxed) then
+      return true
+   else
+      return false
+   end
+end
+
+-- ##############################################
+
+function fixPoolMemberFormat(member) return checkPoolMember(member, true) end
+
+-- #################################################################
+
+function bit(p)
+   return 2 ^ (p - 1) -- 1-based indexing
+end
+
+-- ##############################################
+
+-- Typical call:  if hasbit(x, bit(3)) then ...
+function hasbit(x, p) return x % (p + p) >= p end
+
+-- ##############################################
+
+function setbit(x, p) return hasbit(x, p) and x or x + p end
+
+-- ##############################################
+
+function clearbit(x, p) return hasbit(x, p) and x - p or x end
+
+-- ###########################################
+
+function getHttpHost()
+   local ntopng_info = ntop.getInfo()
+   local ntopng_host_info = ntop.getHostInformation() or {}
+
+   -- Read configured ntopng host name or IP
+   local ntopng_host_ip = ntop.getPref("ntopng.prefs.ntopng_host_address")
+   if isEmptyString(ntopng_host_ip) then
+      -- fallback: managegemt IP
+      ntopng_host_ip = ntopng_host_info.ip
+   end
+   if isEmptyString(ntopng_host_ip) then
+      -- last resort: dummy IP
+      ntopng_host_ip = '127.0.0.1'
+   end
+
+   local http_host
+   if starts(ntopng_host_ip, 'http') then
+      http_host = ntopng_host_ip
+   else
+      -- Computing URL adding protocol and port
+      local ntopng_protocol = "http://"
+      local ntopng_port = ntopng_info.http_port
+
+      if not (ntop.isnEdge and ntop.isnEdge()) and ntopng_info.https_port and
+	 tonumber(ntopng_info.https_port) ~= 0 then
+	 ntopng_protocol = "https://"
+	 ntopng_port = ntopng_info.https_port
+      end
+
+      http_host = ntopng_protocol .. ntopng_host_ip .. ":" .. ntopng_port
+   end
+
+   return http_host
+end
+
+-- ##############################################
+
+function starts(String, Start)
+   if ((String == nil) or (Start == nil)) then return (false) end
+
+   return string.sub(String, 1, string.len(Start)) == Start
+end
+
+-- ##############################################
+
+function getExportersUnifiedStats()
+   local flowdevs = interface.getFlowDevices()
+   local unified_exporters = {}
+   for interface_id, device_list in pairs(flowdevs or {}) do
+      for device_id, exporter_info in pairs(device_list, asc) do
+	 if type(exporter_info) == "number" then
+	    tprint(flowdevs)
+	    tprint(debug.traceback())
+	    goto continue
+	 end
+	 local exporter_ip = exporter_info.exporter_ip
+	 if not unified_exporters[exporter_ip] then
+	    unified_exporters[exporter_ip] = {}
+	 end
+	 local ports_table = interface.getFlowDeviceInfoByIP(exporter_ip,
+							     true)
+	 for _, ports in pairs(ports_table) do
+	    for port_idx, port_info in pairs(ports) do
+	       if not unified_exporters[exporter_ip][port_idx] then
+		  unified_exporters[exporter_ip][port_idx] = port_info
+	       else
+		  local tmp = unified_exporters[exporter_ip][port_idx]
+		  tmp["ifid"] = interface_id
+		  tmp["bytes.in_bytes"] =
+		     port_info["bytes.in_bytes"] +
+		     (tmp["bytes.in_bytes"] or 0)
+		  tmp["bytes.out_bytes"] =
+		     port_info["bytes.out_bytes"] +
+		     (tmp["bytes.out_bytes"] or 0)
+		  if not tmp.ndpi then
+		     tmp["ndpi"] = {}
+		  end
+		  for proto, proto_info in pairs(port_info.ndpi or {}) do
+		     if not tmp["ndpi"][proto] then
+			tmp["ndpi"][proto] = {}
+		     end
+		     for field, value in pairs(proto_info or {}) do
+			if (type(value) == "number") then
+			   -- skip non numeric fields such as "breed"
+			   tmp["ndpi"][proto][field] = value +
+			      (tmp["ndpi"][proto][field] or
+			       0)
+			end
+		     end
+		  end
+		  unified_exporters[exporter_ip][port_idx] = tmp
+	       end
+	    end
+	 end
+	 ::continue::
+      end
+   end
+
+   return unified_exporters
+end
+
+-- ##############################################
+
+function getExporterInfo(unique_source_id) -- Exporter unique_source_id
+   local ifstats = interface.getStats()
+   local exporter = {}
+   local found = false
+   if ifstats.probes then
+      for interface_id, probe_list in pairs(ifstats.probes or {}) do
+	 for probe_id, probe_info in pairs(probe_list or {}) do
+	    if probe_info.exporters and table.len(probe_info.exporters) > 0 then -- Sflow or NetFlow/IPFIX
+	       for exporter_ip, exporter_info in pairs(
+		  probe_info.exporters or
+		  {}) do
+		  if exporter_info.unique_source_id == unique_source_id then
+		     return table.merge({
+			   exporter_ip = exporter_ip,
+			   probe_ip = probe_info["probe.ip"],
+			   ifid = interface_id
+					}, exporter_info)
+		  end
+	       end
+	    elseif probe_info["probe.source_id"] == unique_source_id then
+	       return {
+		  exporter_ip = probe_info["remote.if_addr"],
+		  probe_ip = probe_info["probe.ip"],
+		  ifid = interface_id
+	       }
+	    end
+	 end
+      end
+   end
+
+   return exporter
+end
+
+-- ##############################################
+
+function getProbeFromID(nprobe_source_id)
+   nprobe_source_id = tonumber(nprobe_source_id)
+   local ifstats = interface.getStats()
+   local exporter = {}
+   local found = false
+   if ifstats.probes then
+      for interface_id, probe_list in pairs(ifstats.probes or {}) do
+	 for probe_id, probe_info in pairs(probe_list or {}) do
+	    if nprobe_source_id == probe_info["probe.source_id"] then
+	       return probe_info
+	    end
+	 end
+      end
+   end
+
+   return nil
+end
+
+-- ##############################################
+
+function getProbeInfoFromExporterIP(ip)
+   local ifstats = interface.getStats()
+   for interface_id, probe_list in pairs(ifstats.probes or {}) do
+      for probe_ip, probe_info in pairsByKeys(probe_list or {}) do
+	 for exporter_ip, exporter_info in pairsByKeys(
+	    probe_info.exporters or {}) do
+	    if exporter_ip == ip then
+	       return {
+		  probe_source_id = tostring(probe_info["probe.source_id"]),
+		  exporter_source_id = tostring(
+		     exporter_info["unique_source_id"])
+	       }
+	    end
+	 end
+      end
+   end
+
+   return nil
+end
+
+-- ##############################################
+
+function generateASNLink(asn)
+   if (tostring(asn) == '0') then return nil end
+   return string.format("%s/lua/as_overview.lua?asn=%s", ntop.getHttpPrefix(),
+			asn)
+end
+
+-- ##############################################
+
+function generateExporterLink(ip)
+   if ntop.isPro and ntop.isPro() then
+      -- Fallback SNMP not available, use exporter link
+      local exporters_utils = require "exporters_utils"
+      local exporter_source_id = nil
+      local probe_source_id = nil
+      local exporter_ifid = nil
+
+      if tonumber(ip) then ip = ntop.inet_ntoa(ip) end
+      exporter_source_id, exporter_ifid = exporters_utils.getExporterID(ip)
+      probe_source_id = exporters_utils.getProbeID(ip)
+      return string.format(
+	 "%s/lua/pro/enterprise/exporters.lua?ip=%s&exporter_source_id=%s&probe_source_id=%s",
+	 ntop.getHttpPrefix(), ip, exporter_source_id, probe_source_id)
+   end
+
+   return nil
+end
+
+-- ##############################################
+
+function generateExporterInterfaceLink(ip, interface)
+   if ntop.isPro and ntop.isPro() then
+      -- Fallback SNMP not available, use exporter link
+      local exporters_utils = require "exporters_utils"
+      local exporter_source_id = nil
+      local exporter_ifid = nil
+      if tonumber(ip) then ip = ntop.inet_ntoa(ip) end
+
+      exporter_source_id, exporter_ifid = exporters_utils.getExporterID(ip)
+
+      return string.format(
+	 "%s/lua/pro/exporter_interface_overview?deviceIP=%s&ifIdx=%s&ifid=%s",
+	 ntop.getHttpPrefix(), ip, interface, exporter_ifid)
+   end
+
+   return nil
+end
+
+-- ##############################################
+
+function isSystemInterface(ifid)
+   if ifid == nil then ifid = interface.getId() end
+   return (getSystemInterfaceId() == tostring(ifid))
+end
+
+-- ##############################################
+
+function igmpType2String(v)
+   if(v == 0x11) then
+      return("Membership Query")
+   elseif((v == 0x12) or (v == 0x16) or (v == 0x22)) then
+	 return("Membership Report")
+   elseif(v == 0x17) then
+	 return("Leave Group")
+   else
+      return(v)
+   end
+end
+
+-- ##############################################
+
+function toInt64(x)
+   x = tonumber(x)
+   if not x then return nil end
+
+   local i = math.tointeger(x)
+   if i then return i end
+
+   -- Value is a "clean" float but out of signed int64 range.
+   -- If it's in the valid *unsigned* 64-bit range, wrap it into
+   -- the equivalent two's-complement signed representation.
+   if x == math.floor(x) and x >= 0 and x < 18446744073709551616.0 then -- 2^64
+      if x >= 9223372036854775808.0 then -- 2^63
+         x = x - 18446744073709551616.0 -- subtract 2^64
+      end
+      return math.tointeger(x)
+   end
+
+   return nil
+end
+
+-- ##############################################
+
+function url_encode(str)
+   if str then
+      str = str:gsub("\n", "\r\n")
+      str = str:gsub("([^%w %-%_%.%~])", function(c)
+         return string.format("%%%02X", string.byte(c))
+      end)
+      str = str:gsub(" ", "+") -- Standard HTML forms use + for spaces
+   end
+
+   return str
 end

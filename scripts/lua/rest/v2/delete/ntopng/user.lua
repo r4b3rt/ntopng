@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -34,6 +34,13 @@ if username == nil then
 end
 
 username = string.lower(username)
+
+-- The built-in admin and the logged user cannot be deleted (the GUI disables
+-- the button, this also covers direct API calls)
+if (username == "admin") or (username == string.lower(_SESSION["user"] or "")) then
+   rest_utils.answer(rest_utils.consts.err.delete_user_failed, res)
+   return
+end
 
 if not ntop.deleteUser(username) then
    rest_utils.answer(rest_utils.consts.err.delete_user_failed, res)

@@ -1,0 +1,61 @@
+{
+	"name" : "L7 Traffic In/Out",
+	"i18n_name" : "",
+	"data_source" : "flows",
+	"show_in_page" : "overview",
+	"hourly": true,
+	"visualization_type" : "table",
+	"select" : {
+		"items" : [
+			{
+				"name" : "PROTOCOL"
+			},
+			{
+				"name" : "L7_PROTO"
+			},
+			{
+				"name" : "L7_PROTO_MASTER"
+			},
+			{
+				"name" : "ingress_bytes",
+				"func" : "SUM(CASE WHEN CLIENT_LOCATION = 0 AND SERVER_LOCATION = 1 THEN SRC2DST_BYTES ELSE 0 END) + SUM(CASE WHEN CLIENT_LOCATION = 1 AND SERVER_LOCATION = 0 THEN DST2SRC_BYTES ELSE 0 END)",
+				"value_type" : "bytes"
+			},
+			{
+				"name" : "egress_bytes",
+				"func" : "SUM(CASE WHEN CLIENT_LOCATION = 1 AND SERVER_LOCATION = 0 THEN SRC2DST_BYTES ELSE 0 END) + SUM(CASE WHEN CLIENT_LOCATION = 0 AND SERVER_LOCATION = 1 THEN DST2SRC_BYTES ELSE 0 END)",
+				"value_type" : "bytes"
+			},
+			{
+				"name" : "total_bytes",
+				"func" : "(ingress_bytes + egress_bytes)",
+				"value_type" : "bytes"
+			}
+		]
+	},
+	"filters" : {
+		"items" : [
+		]
+	},
+	"groupby" : {
+		"items" : [
+			{
+				"name" : "PROTOCOL"
+			},
+			{
+				"name" : "L7_PROTO"
+			},
+			{
+				"name" : "L7_PROTO_MASTER"
+			}
+		]
+	},
+	"sortby" : {
+		"items" : [
+			{
+				"name" : "total_bytes",
+				"order" : "DESC"
+			}
+		]
+	}
+}

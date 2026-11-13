@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -10,9 +10,11 @@ require "lua_utils"
 
 local captive_portal_utils = require("captive_portal_utils")
 
-if not ntop.isnEdge() then
+if not (ntop.isnEdge and ntop.isnEdge()) then
    return
 end
+
+local info = ntop.getInfo()
 
 local remote_addr = _SERVER["REMOTE_ADDR"]
 local method = _SERVER["REQUEST_METHOD"]
@@ -31,7 +33,7 @@ if is_logged then
   print [[
    <form role="form" class="form-signin" action="]] print(ntop.getHttpPrefix()) print[[/lua/captive_portal.lua" method="POST">
 	 <h2 class="form-signin-heading" style="font-weight: bold;">]] print(info["product"]) print [[ Access Portal</h2>
-    <div class="form-group mb-3 has-feedback">
+    <div class="mb-3 has-feedback">
        <input type="hidden" class="form-control" name="action" value="logout" />
        <input type="hidden" class="form-control" name="csrf" value="]] print(ntop.getRandomCSRFValue()) print [[" />
         <small>
@@ -74,14 +76,12 @@ if not isEmptyString(r) then
    print("?referer="..r)
 end
 
-local info = ntop.getInfo()
-
 print[[" method="POST">
 	 <h2 class="form-signin-heading" style="font-weight: bold;">]] print(info["product"]) print [[ Access Portal</h2>
-  <div class="form-group mb-3 has-feedback">
-      <input type="text" class="form-control" name="username" placeholder="]] print(i18n("login.username")) print[[" pattern="^[\w\.%]{1,}$" required>
-      <input type="password" class="form-control" name="password" placeholder="]] print(i18n("login.password")) print[[" pattern="]] print(getPasswordInputPattern()) print[[" required>
-      <input type="text" class="form-control" name="label" placeholder="]] print(i18n("login.device_label")) print[[" pattern="^[ \w\.%]{1,}$" required>
+  <div class="mb-3 has-feedback">
+      <input type="text" class="form-control" name="username" placeholder="]] print(js_str(i18n("login.username"))) print[[" pattern="^[\w\.%]{1,}$" required>
+      <input type="password" autocomplete="off" class="form-control" name="password" placeholder="]] print(js_str(i18n("login.password"))) print[[" pattern="]] print(getPasswordInputPattern()) print[[" required>
+      <input type="text" class="form-control" name="label" placeholder="]] print(js_str(i18n("login.device_label"))) print[[" pattern="^[ \w\.%]{1,}$" required>
 </div>
     <button class="w-100 btn btn-lg btn-primary" type="submit">]] print(i18n("login.login")) print[[</button>
   	<div class="row">

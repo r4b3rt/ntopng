@@ -1,0 +1,60 @@
+--
+-- (C) 2019-26 - ntop.org
+--
+
+--
+-- This script performs the scheduled active scans
+--
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;".. package.path
+local ascan_utils = require "ascan_utils"
+
+-- ###########################
+
+local use_coroutines
+local max_num_scans_for_loop = ntop.getCache("ntopng.prefs.host_to_scan_max_num_scans")
+
+if((max_num_scans_for_loop == nil) or (max_num_scans_for_loop == "")) then
+   max_num_scans_for_loop = 4 -- avoid lasting too long (too many loops)
+else
+   max_num_scans_for_loop = tonumber(max_num_scans_for_loop)
+end
+
+if(max_num_scans_for_loop > 16) then
+   max_num_scans_for_loop = 16
+elseif(max_num_scans_for_loop < 1) then
+   max_num_scans_for_loop = 1
+end
+
+if(max_num_scans_for_loop == 1) then
+   use_coroutines = false
+else
+   use_coroutines = true
+end
+
+local num_scans = ascan_utils.process_all_scheduled_scans(max_num_scans_for_loop, use_coroutines)
+
+if(ntop.isEnterpriseL and ntop.isEnterpriseL()) then
+   -- send the notification at the end of periodic scan
+   local is_periodic_scan_completed, periodicity = ascan_utils.is_periodic_scan_completed()
+   
+   if (is_periodic_scan_completed) then
+      ascan_utils.notify_scan_results(ascan_utils.scan_in_exec_type.periodic_scan, periodicity)
+   end
+end
+
+local is_ondemand_scan_completed = ascan_utils.is_ondemand_scan_completed()
+
+if (is_ondemand_scan_completed) then
+   -- send notification at the end of scan all
+   ascan_utils.notify_scan_results(ascan_utils.scan_in_exec_type.scan_all, nil)
+end
+
+local is_single_scan_completed = ascan_utils.is_single_scan_completed()
+
+if (is_single_scan_completed) then
+   ascan_utils.generate_report()
+end
+

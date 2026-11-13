@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -33,13 +33,29 @@ local confirm_password = _POST["confirm_password"]
 local host_role = _POST["user_role"]
 local networks = _POST["allowed_networks"]
 local allowed_interface = _POST["allowed_interface"]
-local allow_historical_flow = _POST["allow_historical_flow"] or false
 local language = _POST["add_user_language"]
-local allow_pcap_download = _POST["allow_pcap_download"]
 local host_pool_id = _POST["host_pool_id"]
+local allowed_host_pools = _POST["allowed_host_pools"] or ""
+local allow_historical_flows = _POST["allow_historical_flows"]
+local allow_alerts = _POST["allow_alerts"]
+local allow_pcap_download = _POST["allow_pcap_download"]
 
-if allow_historical_flow == "1" then
-  allow_historical_flow = true
+if allow_historical_flows == "1" then
+   allow_historical_flows = true
+else
+   allow_historical_flows = false
+end
+
+if allow_alerts == "1" then
+   allow_alerts = true
+else
+   allow_alerts = false
+end
+
+if allow_pcap_download == "1" then
+   allow_pcap_download = true
+else
+   allow_pcap_download = false
 end
 
 if username == nil or full_name == nil or password == nil or
@@ -57,6 +73,20 @@ end
 
 username = string.lower(username)
 
+-- NOTE: usernames longer than NTOP_USERNAME_MAXLEN-1 are
+-- truncated by the authentication layer, so the user would be unusable
+if string.len(username) > 32 then
+   rest_utils.answer(rest_utils.consts.err.invalid_args, res)
+   return
+end
+
+-- Letters, digits and . _ - @ only: the username is shown in many pages
+-- (http_lint only refuses spaces and quotes, so e.g. "<" would pass)
+if not username:match("^[%w%._%-@]+$") then
+   rest_utils.answer(rest_utils.consts.err.invalid_args, res)
+   return
+end
+
 local all_users = ntop.getUsers()
 
 if(all_users[username] ~= nil) then
@@ -65,14 +95,10 @@ if(all_users[username] ~= nil) then
    return
 end
 
-
-local allow_pcap_download_enabled = false
-if _POST["allow_pcap_download"] and _POST["allow_pcap_download"] == "1" then
-   allow_pcap_download_enabled = true
-end
-
-if not ntop.addUser(username, full_name, password, host_role, networks, 
-		    getInterfaceName(allowed_interface), host_pool_id, language, allow_pcap_download_enabled, allow_historical_flow) then
+if not ntop.addUser(username, full_name, password, host_role, networks,
+		    getInterfaceName(allowed_interface), host_pool_id, language,
+                    allow_pcap_download, allow_historical_flows, allow_alerts,
+                    allowed_host_pools) then
    rest_utils.answer(rest_utils.consts.err.add_user_failed, res)
    return
 end

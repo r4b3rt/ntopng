@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +24,8 @@
 
 #include "ntop_includes.h"
 
+class Flow; /* Forward */
+
 /* *************************************** */
 
 class FlowStats {
@@ -31,19 +33,24 @@ class FlowStats {
   u_int32_t counters[BITMAP_NUM_BITS];
   u_int32_t protocols[0x100];
   u_int32_t alert_levels[ALERT_LEVEL_MAX_LEVEL];
-  u_int32_t dscps[64]; // 64 values available for dscp
+  u_int32_t risks[NDPI_MAX_RISK];
+  u_int32_t dscps[64];  // 64 values available for dscp
   u_int32_t host_pools[UNLIMITED_NUM_HOST_POOLS];
-  std::map< std::string, u_int16_t > talking_hosts;
+  std::map<std::string, u_int16_t> talking_hosts;
+  std::map<std::string, u_int16_t> wlan_ssid;
+  ASNStats* asn_stats;
 
  public:
   FlowStats();
   ~FlowStats();
 
-  void incStats(Bitmap128 alert_bitmap, u_int8_t l4_protocol, AlertLevel alert_level, 
-		u_int8_t dscp_cli2srv, u_int8_t dscp_srv2cli, Flow *flow);
-  
-  void updateTalkingHosts(Flow *f);
-  
+  void incStats(Bitmap128 alert_bitmap, u_int8_t l4_protocol,
+                AlertLevel alert_level, u_int8_t dscp_cli2srv,
+                u_int8_t dscp_srv2cli, Flow* flow);
+
+  void updateTalkingHosts(Flow* f);
+  void updateWLANSSID(Flow* f);
+
   void lua(lua_State* vm);
 
   void resetStats();

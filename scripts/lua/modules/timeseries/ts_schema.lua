@@ -95,6 +95,18 @@ local function validateTagMetric(name)
     return(false)
   end
 
+  local slen = string.len(name)
+
+  -- https://oss.oetiker.ch/rrdtool/doc/rrdcreate.en.html
+  -- ds-name is the name you will use to reference this particular data source from an RRD. A ds-name must be 1 to 19 characters long in the characters [a-zA-Z0-9_].
+  local maxlen = 19
+  
+  if(slen > maxlen) then
+    traceError(TRACE_ERROR, TRACE_CONSOLE, "Metric '".. name .."' exceeds the maximum lenght (".. slen .. " > "..maxlen ..")")
+    tprint(debug.traceback())
+    return(false)
+  end
+  
   return(true)
 end
 
@@ -136,15 +148,19 @@ function ts_schema:verifyTags(tags)
   local all_defined, missing_tag = self:allTagsDefined(tags)
 
   if not all_defined then
+    tprint(debug.traceback())
     traceError(TRACE_ERROR, TRACE_CONSOLE, "missing tag '" .. missing_tag .. "' in schema " .. self.name)
     return nil
   end
 
   for tag in pairs(tags) do
     if self.tags[tag] == nil then
-      -- NOTE: just ignore the additional tags
-      --traceError(TRACE_ERROR, TRACE_CONSOLE, "unknown tag '" .. tag .. "' in schema " .. self.name)
-      --return false
+      -- Schemas with pass_unknown_tags (e.g. flow:hr_traffic_aggr) forward every tag
+      -- to the driver (so that build_agg_where can pass them to formatWhere).
+      -- All other schemas just drop unrecognised tags.
+      if self.options and self.options.pass_unknown_tags then
+        actual_tags[tag] = tags[tag]
+      end
     else
       actual_tags[tag] = tags[tag]
     end
@@ -163,13 +179,26 @@ function ts_schema:verifyTagsAndMetrics(tags_and_metrics)
       return nil
     end
 
+    -- Return an error if the tag contains a / or \, because it could
+    -- generate errors in that case
+    if(string.match(self.name, "^(.*):ndpi$")) then
+      if(string.find(tags_and_metrics[tag], "/") 
+        or string.find(tags_and_metrics[tag], "\\")) then
+          traceError(TRACE_ERROR, TRACE_CONSOLE, "Invalid tag '" .. tag .. "' in schema " .. self.name .. ", it contains '\\' or '/' characters")
+          return nil
+      end
+    end
+
     tags[tag] = tags_and_metrics[tag]
   end
 
-
   for metric in pairs(self.metrics) do
     if tags_and_metrics[metric] == nil then
+    tprint(debug.traceback())
       traceError(TRACE_ERROR, TRACE_CONSOLE, "Missing mandatory metric '" .. metric .. "' while using schema " .. self.name)
+      tprint("tags_and_metrics: ")
+      tprint(tags_and_metrics)
+
       return nil
     end
 

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,43 +26,70 @@
 
 class FlowAlert {
  private:
-  Flow *flow;
+  Flow* flow;
   std::string check_name;
   bool cli_attacker, srv_attacker;
   bool cli_victim, srv_victim;
+  u_int8_t cli_score, srv_score;
+  u_int8_t alert_score;
+  char* json_alert;
+  bool refresh_json_alert;
+  u_int64_t tags_bitmap; /* Tags of the check, copied as the check is deleted on reload */
 
-  /* 
-     Adds to the passed `serializer` (generated with `getAlertSerializer`) information specific to this alert
+  /*
+     Adds to the passed `serializer` (generated with `getAlertSerializer`)
+     information specific to this alert
    */
-  virtual ndpi_serializer* getAlertJSON(ndpi_serializer* serializer)  { return serializer; }  
+  virtual ndpi_serializer* getAlertJSON(ndpi_serializer* serializer) {
+    return serializer;
+  }
 
  public:
-  FlowAlert(FlowCheck *c, Flow *f);
+  FlowAlert(FlowCheck* c, Flow* f);
   virtual ~FlowAlert();
 
   inline void setCliAttacker() { cli_attacker = true; }
   inline void setSrvAttacker() { srv_attacker = true; }
-  inline void setCliVictim()   { cli_victim = true;   }
-  inline void setSrvVictim()   { srv_victim = true;   }
+  inline void setCliVictim() { cli_victim = true; }
+  inline void setSrvVictim() { srv_victim = true; }
 
   inline bool isCliAttacker() { return cli_attacker; }
-  inline bool isCliVictim()   { return cli_victim;   }
+  inline bool isCliVictim() { return cli_victim; }
 
   inline bool isSrvAttacker() { return srv_attacker; }
-  inline bool isSrvVictim()   { return srv_victim;   }
+  inline bool isSrvVictim() { return srv_victim; }
 
-  virtual FlowAlertType getAlertType()  const = 0;
-  virtual u_int8_t getAlertScore()      const { return SCORE_LEVEL_INFO; };
+  inline void setCliSrvScores(u_int8_t c, u_int8_t s) {
+    cli_score = min_val(c, SCORE_MAX_VALUE);
+    srv_score = min_val(s, SCORE_MAX_VALUE);
+    if (cli_score + srv_score > SCORE_MAX_VALUE)
+      srv_score = SCORE_MAX_VALUE - cli_score;
+  };
+  inline u_int8_t getCliScore() { return cli_score; };
+  inline u_int8_t getSrvScore() { return srv_score; };
 
-  inline Flow *getFlow() const { return(flow); }
-  inline std::string getCheckName() const { return(check_name); }
+  virtual FlowAlertType getAlertType() const = 0;
+  inline u_int8_t getAlertScore() const { return alert_score; };
+  inline void setAlertScore(u_int8_t value) {
+    if (value > SCORE_MAX_VALUE) value = SCORE_MAX_VALUE;
+    alert_score = value;
+  };
 
-  /* 
-     Generates the JSON alert serializer with base information and per-check information gathered with `getAlertJSON`.
-     NOTE: memory must be freed by the caller.
+  /* false = alert that requires attention, true = not important (auto ack) */
+  virtual bool autoAck() const { return true; };
+
+  inline Flow* getFlow() const { return (flow); }
+  inline std::string getCheckName() const { return (check_name); }
+  inline u_int64_t getTags() const { return (tags_bitmap); }
+
+  /*
+     Generates the JSON alert serializer with base information and per-check
+     information gathered with `getAlertJSON`. The returned string should not
+     be freed by the caller as it is a reference to an internal string released
+     with the alert.
   */
-  ndpi_serializer* getSerializedAlert();
-
+  const char* getSerializedAlert();
+  inline void refreshAlert() { refresh_json_alert = true; };
 };
 
 #endif /* _FLOW_ALERT_H_ */

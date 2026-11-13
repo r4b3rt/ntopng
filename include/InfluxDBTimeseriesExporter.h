@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2020 - ntop.org
+ * (C) 2020-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,19 +29,19 @@ class InfluxDBTimeseriesExporter : public TimeseriesExporter {
   time_t flushTime;
   u_int32_t cursize;
   u_int32_t num_exports;
-  FILE *fp;
-  char fbase[PATH_MAX], fname[PATH_MAX+32];
-  u_int num_cached_entries; 
+  FILE* fp;
+  char fbase[PATH_MAX], fname[PATH_MAX + 32];
+  u_int num_cached_entries;
   Mutex m;
-  
+
   void createDump();
-  
+
  public:
-  InfluxDBTimeseriesExporter(NetworkInterface *_if);
+  InfluxDBTimeseriesExporter(NetworkInterface* _if);
   ~InfluxDBTimeseriesExporter();
 
   bool enqueueData(lua_State* vm, bool do_lock = true);
-  char *dequeueData();
+  char* dequeueData();
   void flush();
 };
 

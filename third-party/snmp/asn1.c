@@ -232,7 +232,7 @@ int oid_length(char *oid)
     
   oid_split(oid, parts);
     
-  for (i = 2; i < num_parts; i++)
+  for (i = 2; i < num_parts && i < MAX_OID_PARTS; i++)
     {
       data_len += oid_part_length(parts[i]);
     }
@@ -251,7 +251,7 @@ static void *render_oid(char *oid, void *dest)
         
   first_two = parts[0] * 40 + parts[1];
   dest = render_byte(first_two, dest);
-  for (i = 2; i < num_parts; i++)
+  for (i = 2; i < num_parts && i < MAX_OID_PARTS; i++)
     dest = render_oid_part(parts[i], dest);
     
   return dest;
@@ -294,7 +294,7 @@ static void *read_oid(void *src, char **oid, int size)
     
   i = 2;
     
-  while (src < endp)
+  while ((i <= MAX_OID_PARTS) && (src < endp))
     {
       src = read_oid_part(src, &parts[i]);
       i++;
@@ -309,10 +309,11 @@ static void *read_oid(void *src, char **oid, int size)
     
   *oid = (char*)malloc(len+1);
   p = *oid;
-  p += sprintf(p, "%lu", (unsigned long)parts[0]);
+  p += snprintf(p, len, "%lu", (unsigned long)parts[0]);
+  
   for (i =1; i < num_parts; i++)
     {
-      p += sprintf(p, ".%lu", (unsigned long)parts[i]);
+      p += snprintf(p, len, ".%lu", (unsigned long)parts[i]);
     }
     
   return src;
@@ -509,7 +510,18 @@ int asn1_parse_integer_type(ASN1Parser *parser, int *type, int64_t *dest)
     
   size = next_len(parser);
   payload = next_payload(parser);
-    
+
+  /* A declared length must stay within the bytes still present in the current
+     state, otherwise the read loop walks off the datagram. asn1_parse_structure
+     already performs this containment check on its payload. */
+  if ((size < 0) ||
+      ((char*)payload + size >
+       (char*)parser->state->buffer + parser->state->remaining))
+    {
+      if (dest) *dest = 0;
+      return 0;
+    }
+
   for (i = 0; i < size; i++)
     {
       int v;
@@ -554,7 +566,15 @@ int asn1_parse_string_type(ASN1Parser *parser, int *type, char **dest)
     
   size = next_len(parser);
   payload = next_payload(parser);
-    
+
+  if ((size < 0) ||
+      ((char*)payload + size >
+       (char*)parser->state->buffer + parser->state->remaining))
+    {
+      *dest = NULL;
+      return 0;
+    }
+
   *dest = (char*)malloc(size + 1);
     
   for (i = 0; i < size; i++)
@@ -589,13 +609,21 @@ int asn1_parse_string_type(ASN1Parser *parser, int *type, char **dest)
     }
   } else if(size == 4) {
     /* Check for IPv4 addresses */
-    char tmp[24];
-    
-    snprintf(tmp, sizeof(tmp), "%u.%u.%u.%u",
-	     (*dest)[0] & 0xFF, (*dest)[1] & 0xFF, (*dest)[2] & 0xFF, 
-	     (*dest)[3] & 0xFF);
-    free(*dest);
-    *dest = strdup(tmp);
+    u_int8_t v1 = (*dest)[0] & 0xFF, v2 = (*dest)[1] & 0xFF, v3 = (*dest)[2] & 0xFF, v4 = (*dest)[3] & 0xFF;
+
+    if((isalnum(v1)    || ispunct(v1))
+       && (isalnum(v2) || ispunct(v2))
+       && (isalnum(v3) || ispunct(v3))
+       && (isalnum(v4) || ispunct(v4))
+      )
+      /* this looks like a string */;
+    else {
+      char tmp[24];
+      
+      snprintf(tmp, sizeof(tmp), "%u.%u.%u.%u", v1, v2, v3, v4);
+      free(*dest);
+      *dest = strdup(tmp);
+    }
   }
   
   consume(parser);
@@ -618,9 +646,19 @@ int asn1_parse_oid(ASN1Parser *parser, char **dest)
     return 0;
   size = next_len(parser);
   payload = next_payload(parser);
-    
+
+  /* read_oid dereferences the first payload byte unconditionally, so require at
+     least one content byte and keep the whole OID within the available bytes. */
+  if ((size < 1) ||
+      ((char*)payload + size >
+       (char*)parser->state->buffer + parser->state->remaining))
+    {
+      *dest = NULL;
+      return 0;
+    }
+
   read_oid(payload, dest, size);
-    
+
   consume(parser);
   return 1;
 }

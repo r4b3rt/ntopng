@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -30,15 +30,18 @@ class FlowTrafficStats : public PartializableFlowTrafficStats {
 
  public:
   FlowTrafficStats();
-  FlowTrafficStats(const FlowTrafficStats &fts);
+  FlowTrafficStats(const FlowTrafficStats& fts);
 
   virtual ~FlowTrafficStats();
 
-  virtual void incStats(bool cli2srv_direction, u_int num_pkts, u_int pkt_len, u_int payload_len);
-  virtual void setStats(bool cli2srv_direction, u_int num_pkts, u_int pkt_len, u_int payload_len);
+  virtual void incStats(bool cli2srv_direction, u_int32_t num_pkts,
+                        u_int64_t pkts_bytes, u_int64_t payloads_bytes);
+  virtual void setStats(bool cli2srv_direction, u_int32_t num_pkts,
+                        u_int64_t pkts_bytes, u_int64_t payloads_bytes);
 
   const ndpi_analyze_struct* get_analize_struct(bool cli2srv_direction) const;
-  
+
+  void swap();
 };
 
 #endif /* FLOW_TRAFFIC_STATS_H_ */

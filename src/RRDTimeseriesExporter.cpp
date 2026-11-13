@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2018-22 - ntop.org
+ * (C) 2018-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,15 +23,16 @@
 
 /* ******************************************************* */
 
-RRDTimeseriesExporter::RRDTimeseriesExporter(NetworkInterface *_if) : TimeseriesExporter(_if) {
+RRDTimeseriesExporter::RRDTimeseriesExporter(NetworkInterface* _if)
+    : TimeseriesExporter(_if) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
   ts_queue = new (std::nothrow) StringFifoQueue(MAX_RRD_QUEUE_LEN);
 }
 
 /* ******************************************************* */
 
-RRDTimeseriesExporter::~RRDTimeseriesExporter() {
-  delete ts_queue;
-}
+RRDTimeseriesExporter::~RRDTimeseriesExporter() { delete ts_queue; }
 
 /* ******************************************************* */
 
@@ -39,21 +40,29 @@ bool RRDTimeseriesExporter::enqueueData(lua_State* vm, bool do_lock) {
   char data[LINE_PROTOCOL_MAX_LINE];
   bool rv = false;
 
-  if(line_protocol_write_line(vm, data, sizeof(data), NULL /* No need to escape here */) < 0)
+  if (line_protocol_write_line(vm, data, sizeof(data),
+                               NULL /* No need to escape here */) < 0)
     return false;
 
   rv = ts_queue->enqueue(data);
+  if(!rv) qdrops++;
 
+#ifdef DEBUG_QUEUE
+  if(rv == false)
+    ntop->getTrace()->traceEvent(TRACE_WARNING, "RRD queue too long: %u [%.1f %%]",
+				 ts_queue->getLength(), ts_queue->fillPct());
+#endif
+  
   return rv;
 }
 
 /* ******************************************************* */
 
 char* RRDTimeseriesExporter::dequeueData() {
-  if(ts_queue->empty())
-    return(NULL);
+  if (ts_queue->empty())
+    return (NULL);
   else
-    return(ts_queue->dequeue());
+    return (ts_queue->dequeue());
 }
 
 /* ******************************************************* */
@@ -64,5 +73,4 @@ u_int64_t RRDTimeseriesExporter::queueLength() const {
 
 /* ******************************************************* */
 
-void RRDTimeseriesExporter::flush() {
-}
+void RRDTimeseriesExporter::flush() {}

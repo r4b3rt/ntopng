@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
@@ -25,7 +25,7 @@ end
 
 -- ################################################
 
-local modules = import_export_rest_utils.unpack(_POST["JSON"])
+local modules = import_export_rest_utils.unpack(import_export_rest_utils.get_json_conf())
 
 if not modules then
   rest_utils.answer(rest_utils.consts.err.invalid_args)
@@ -40,6 +40,7 @@ end
 local items = {}
 
 local notifications_ie = notifications_import_export:create()
+
 items[#items+1] = {
    name = "notifications",
    conf = modules["notifications"],

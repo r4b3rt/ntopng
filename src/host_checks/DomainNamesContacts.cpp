@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,36 +25,45 @@
 /* ***************************************************** */
 
 DomainNamesContacts::DomainNamesContacts() : ServerContacts() {
-  domain_names_threshold=(u_int16_t)-1;
+  domain_names_threshold = (u_int16_t)-1;
 };
 
 /* ***************************************************** */
 
-void DomainNamesContacts::periodicUpdate(Host *h, HostAlert *engaged_alert) {
-  HostAlert *alert = engaged_alert;
+void DomainNamesContacts::periodicUpdate(Host* h, HostAlert* engaged_alert) {
+  HostAlert* alert = engaged_alert;
   u_int32_t num_domain_names = 0;
 
+  IpAddress* ip = h->get_ip();
 
-  if((num_domain_names = h->getDomainNamesCardinality()) > domain_names_threshold ) {
-    if (!alert) alert = allocAlert(this, h, CLIENT_FAIR_RISK_PERCENTAGE, num_domain_names,domain_names_threshold);
+  /* If the host is a DNS or SMTP server, the alert is not triggered
+  for both statically specified and dynamically identified hosts.*/
+  if ((h->getServicesMap() | ntop->getPrefs()->getServerTypes(ip, h->get_vlan_id())) & ((1 << HOST_SERVICE_DNS) | (1 << HOST_SERVICE_SMTP)))
+    return;
+
+  if ((num_domain_names = h->getDomainNamesCardinality()) >
+      domain_names_threshold) {
+    if (!alert)
+      alert = allocAlert(this, h, CLIENT_FAIR_RISK_PERCENTAGE, num_domain_names,
+                         domain_names_threshold);
     if (alert) h->triggerAlert(alert);
   }
 
   h->resetDomainNamesCardinality();
-
 }
 
-bool DomainNamesContacts::loadConfiguration(json_object *config) {
-  json_object *json_threshold;
+bool DomainNamesContacts::loadConfiguration(json_object* config) {
+  json_object* json_threshold;
 
   HostCheck::loadConfiguration(config); /* Parse parameters in common */
 
-  if(json_object_object_get_ex(config, "threshold", &json_threshold))
+  if (json_object_object_get_ex(config, "threshold", &json_threshold))
     domain_names_threshold = (u_int16_t)json_object_get_int64(json_threshold);
 
-  // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s %u", json_object_to_json_string(config), ntp_bytes_threshold);
+  // ntop->getTrace()->traceEvent(TRACE_NORMAL, "%s %u",
+  // json_object_to_json_string(config), ntp_bytes_threshold);
 
-  return(true);
+  return (true);
 }
 
 /* ***************************************************** */

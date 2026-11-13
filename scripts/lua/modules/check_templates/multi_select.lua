@@ -1,8 +1,10 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
+
+local dirs = ntop.getDirs()
 
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/check_templates/?.lua;" .. package.path
@@ -62,7 +64,7 @@ function multi_select:describeConfig(hooks_conf)
 
         if table.has_key(conf.items, id) then
           -- if the label is nil then use the id
-          table.insert(temp_msg, label or id)
+          temp_msg[#temp_msg + 1] = label or id
         end
       end
     end

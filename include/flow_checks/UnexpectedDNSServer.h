@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,24 +25,28 @@
 #include "ntop_includes.h"
 
 class UnexpectedDNSServer : public UnexpectedServer {
-private:
-  FlowAlertType getAlertType() const { return UnexpectedDNSServerAlert::getClassType(); }
+ private:
+  FlowAlertType getAlertType() const {
+    return UnexpectedDNSServerAlert::getClassType();
+  }
+  HostService getHostService() const { return (HOST_SERVICE_DNS); }
 
-protected:
-  bool isAllowedProto(Flow *f)          { return(f->isDNS());                  }
-  const IpAddress* getServerIP(Flow *f) { return(f->get_dns_srv_ip_addr());    }
-  
+ protected:
+  bool isAllowedHost(Flow* f);
+  bool isAllowedProto(Flow* f) { return (f->isDNS()); }
+  const IpAddress* getServerIP(Flow* f) { return (f->get_dns_srv_ip_addr()); }
+
  public:
   UnexpectedDNSServer() : UnexpectedServer() {};
   ~UnexpectedDNSServer() {};
-  
-  FlowAlert *buildAlert(Flow *f) {
-    UnexpectedDNSServerAlert *alert = new UnexpectedDNSServerAlert(this, f);
+
+  FlowAlert* buildAlert(Flow* f) {
+    UnexpectedDNSServerAlert* alert = new UnexpectedDNSServerAlert(this, f);
     alert->setCliAttacker();
     return alert;
   }
 
-  std::string getName()          const { return(std::string("unexpected_dns")); }
+  std::string getName() const { return (std::string("unexpected_dns")); }
 };
 
 #endif /* _UNEXPECTED_DNS_SERVER_H_ */

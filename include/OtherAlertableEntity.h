@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,57 +28,65 @@ class NetworkInterface;
 
 class OtherAlertableEntity : public AlertableEntity {
  private:
-
  protected:
   /*
-    Creating multiple maps guarantees that periodic scripts at different granularities
-    do not interfere each other and thus that they can run concurrently without locking.
+    Creating multiple maps guarantees that periodic scripts at different
+    granularities do not interfere each other and thus that they can run
+    concurrently without locking.
 
-    However while alert_cache is accessed only by the alert engine and thus it is "thread-safe"
-    as concurrent scripts (i.e. at different granularities) cannot call it, engaged_alerts
-    needs to be protected as
+    However while alert_cache is accessed only by the alert engine and thus it
+    is "thread-safe" as concurrent scripts (i.e. at different granularities)
+    cannot call it, engaged_alerts needs to be protected as
     - it can be called by the Lua GUI
     - it can be called by the alert engine
+
+    In order to save memory, the std::map key is a hash 32 bit and not the
+    original string. Considered the number of entries this is a good
+    tradeoff with no false positives considered the limited value
+    cardinality.
   */
-  std::map<std::string, std::string> alert_cache[MAX_NUM_PERIODIC_SCRIPTS];
-  std::map<std::string, Alert> engaged_alerts[MAX_NUM_PERIODIC_SCRIPTS];
+  std::map<u_int32_t /* std::string */, std::string>
+      alert_cache[MAX_NUM_PERIODIC_SCRIPTS];
+  std::map<u_int32_t /* std::string */, Alert>
+      engaged_alerts[MAX_NUM_PERIODIC_SCRIPTS];
 
-  void getPeriodicityAlerts(lua_State* vm, ScriptPeriodicity p,
-			    AlertType type_filter, AlertLevel severity_filter,
-			    AlertRole role_filter, u_int *idx);
+  void getAlertsByPeriodicity(lua_State* vm, ScriptPeriodicity p,
+                              AlertType type_filter, AlertLevel severity_filter,
+                              AlertRole role_filter, u_int* idx);
 
-public:
-  OtherAlertableEntity(NetworkInterface *alert_iface, AlertEntity entity);
+ public:
+  OtherAlertableEntity(NetworkInterface* alert_iface, AlertEntity entity);
   virtual ~OtherAlertableEntity();
 
   /*
-    getAlertCachedValue and setAlertCacheValue as thread safe as they are invoked only by
-    periodic scripts and are not accessed by the GUI lua methods
+    getAlertCachedValue and setAlertCacheValue as thread safe as they are
+    invoked only by periodic scripts and are not accessed by the GUI lua methods
   */
-  inline std::string getAlertCachedValue(std::string key, ScriptPeriodicity p) {
-    std::map<std::string, std::string>::iterator it = alert_cache[(u_int)p].find(key);
+  inline std::string getAlertCachedValue(const std::string &key,
+                                         ScriptPeriodicity p) {
+    std::map<u_int32_t /* std::string */, std::string>::iterator it =
+        alert_cache[(u_int)p].find(ndpi_hash_string(key.c_str()));
 
-    return((it != alert_cache[(u_int)p].end()) ? it->second : std::string(""));
+    return ((it != alert_cache[(u_int)p].end()) ? it->second : std::string(""));
   }
 
-  inline void setAlertCacheValue(std::string key, std::string value,
-				 ScriptPeriodicity p) {
-    alert_cache[(u_int)p][key] = value;
+  inline void setAlertCacheValue(const std::string &key,
+                                 const std::string &value,
+                                 ScriptPeriodicity p) {
+    alert_cache[(u_int)p][ndpi_hash_string(key.c_str())] = value;
   }
-  
-  bool triggerAlert(lua_State* vm, std::string key,
-		    ScriptPeriodicity p, time_t now,
-		    u_int32_t score, AlertType alert_id,
-		    const char *subtype,
-		    const char *json);
-  bool releaseAlert(lua_State* vm, std::string key,
-		    ScriptPeriodicity p, time_t now);
 
-  void luaAlert(lua_State* vm, const Alert *alert, ScriptPeriodicity p) const;
-  void countAlerts(grouped_alerts_counters *counters);
+  bool triggerAlert(lua_State* vm, const std::string &key, ScriptPeriodicity p,
+                    time_t now, u_int32_t score, AlertType alert_id,
+                    const char* subtype, const char* json, const char* ip,
+                    const char* name, u_int16_t port);
+  bool releaseAlert(lua_State* vm, const std::string &key, ScriptPeriodicity p,
+                    time_t now);
+
+  void luaAlert(lua_State* vm, const Alert* alert, ScriptPeriodicity p) const;
+  void countAlerts(grouped_alerts_counters* counters);
   void getAlerts(lua_State* vm, ScriptPeriodicity p, AlertType type_filter,
-		 AlertLevel severity_filter, AlertRole role_filter,
-		 u_int *idx);
+                 AlertLevel severity_filter, AlertRole role_filter, u_int* idx);
 };
 
 #endif

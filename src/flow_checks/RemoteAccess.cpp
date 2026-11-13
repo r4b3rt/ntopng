@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,48 +24,59 @@
 
 /* ***************************************************** */
 
-void RemoteAccess::protocolDetected(Flow *f) {
+void RemoteAccess::protocolDetected(Flow* f) {
   FlowAlertType alert_type = RemoteAccessAlert::getClassType();
   u_int8_t c_score, s_score;
   risk_percentage cli_score_pctg = CLIENT_FAIR_RISK_PERCENTAGE;
-  Host *cli = f->get_cli_host();
+  Host* cli = f->get_cli_host();
 
-  switch(f->get_protocol_category()) {
-  case NDPI_PROTOCOL_CATEGORY_REMOTE_ACCESS:
-  case NDPI_PROTOCOL_CATEGORY_VPN:
-  case NDPI_PROTOCOL_CATEGORY_FILE_SHARING:
-    if(!f->isLocalToLocal()) {
-      if(cli) cli->incrRemoteAccess();
-      
-      computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
-      f->triggerAlertAsync(alert_type, c_score, s_score);
-    }
-    break;
-  default:
-    break;
+  switch (f->get_protocol_category()) {
+    case NDPI_PROTOCOL_CATEGORY_REMOTE_ACCESS:
+    case NDPI_PROTOCOL_CATEGORY_VPN:
+    case NDPI_PROTOCOL_CATEGORY_FILE_SHARING:
+      if (!f->isLocalToLocal()) {
+#ifdef DEBUG_REMOTE_ACCESS
+        ntop->getTrace()->traceEvent(
+            TRACE_WARNING, "SYN Flag %s for flow %p; flags: %u",
+            (f->getTcpFlags() & TH_SYN) ? "set" : "not set", f,
+            f->getTcpFlags());
+        break;
+#endif
+        if (cli) cli->incrRemoteAccess();
+
+        computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id),
+                           cli_score_pctg, &c_score, &s_score);
+
+        FlowAlert* alert = buildAlert(f);
+        alert->setCliSrvScores(c_score, s_score);
+        f->triggerAlert(alert);
+      }
+      break;
+    default:
+      break;
   }
 }
 
 /* ***************************************************** */
 
-void RemoteAccess::flowEnd(Flow *f) {
-  Host *cli = f->get_cli_host();
-  
-  switch(f->get_protocol_category()) {
-  case NDPI_PROTOCOL_CATEGORY_REMOTE_ACCESS:
-  case NDPI_PROTOCOL_CATEGORY_VPN:
-  case NDPI_PROTOCOL_CATEGORY_FILE_SHARING:
-    if(cli) cli->decrRemoteAccess();
+void RemoteAccess::flowEnd(Flow* f) {
+  Host* cli = f->get_cli_host();
 
-    break;
-  default:
-    break;
+  switch (f->get_protocol_category()) {
+    case NDPI_PROTOCOL_CATEGORY_REMOTE_ACCESS:
+    case NDPI_PROTOCOL_CATEGORY_VPN:
+    case NDPI_PROTOCOL_CATEGORY_FILE_SHARING:
+      if (cli) cli->decrRemoteAccess();
+
+      break;
+    default:
+      break;
   }
 }
 
 /* ***************************************************** */
 
-FlowAlert *RemoteAccess::buildAlert(Flow *f) {
+FlowAlert* RemoteAccess::buildAlert(Flow* f) {
   return new RemoteAccessAlert(this, f);
 }
 

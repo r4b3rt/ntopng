@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -53,7 +53,7 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_snmp_topology_changed.format(ifid, alert, alert_type_params)
-  if not ntop.isPro() then
+  if not (ntop.isPro and ntop.isPro()) then
     return ""
   end
 

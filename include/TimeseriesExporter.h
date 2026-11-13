@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2020 - ntop.org
+ * (C) 2020-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,25 +26,37 @@
 
 class TimeseriesExporter {
  private:
-  static bool is_table_empty(lua_State *L, int index);
-  static int line_protocol_concat_table_fields(lua_State *L, int index, char *buf, int buf_len,
-					       int (*escape_fn)(char *outbuf, int outlen, const char *orig));
+  static bool is_table_empty(lua_State* L, int index);
+  static int line_protocol_concat_table_fields(
+      lua_State* L, int index, char* buf, int buf_len,
+      int (*escape_fn)(char* outbuf, int outlen, const char* orig));
+
  protected:
-  NetworkInterface *iface;
+  NetworkInterface* iface;
+  u_int32_t qdrops;
+  
+  static int escape_spaces(char* buf, int buf_len, const char* unescaped);
 
-  static int escape_spaces(char *buf, int buf_len, const char *unescaped);
-
-  public:
-  TimeseriesExporter(NetworkInterface *_if);
+ public:
+  TimeseriesExporter(NetworkInterface* _if);
   virtual ~TimeseriesExporter();
 
-  static int line_protocol_write_line(lua_State* vm, char *dst_line, int dst_line_len,
-				      int (*escape_fn)(char *outbuf, int outlen, const char *orig));
+  static int line_protocol_write_line(lua_State* vm, char* dst_line,
+                                      int dst_line_len,
+                                      int (*escape_fn)(char* outbuf, int outlen,
+                                                       const char* orig));
 
-  virtual bool  enqueueData(lua_State* vm, bool do_lock = true) = 0;
+  virtual bool enqueueData(lua_State* vm, bool do_lock = true) = 0;
   virtual char* dequeueData() = 0;
   virtual u_int64_t queueLength() const { return 0; };
+  inline u_int64_t queueDrops() const { return qdrops; };
   virtual void flush() = 0;
+
+  /* Dequeue and dump up to max_rows points (used by ClickHouse timeseries)
+   * Returns the number of points exported (0 on empty queue or failure) */
+  virtual u_int32_t exportBatch(u_int32_t max_rows, std::string& err) {
+    return 0;
+  };
 };
 
 #endif /* _TS_EXPORTER_H_ */

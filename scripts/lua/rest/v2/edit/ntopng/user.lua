@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -28,11 +28,13 @@ local username = _POST["username"]
 local full_name = _POST["full_name"]
 local host_role = _POST["user_role"]
 local host_pool_id = _POST["host_pool_id"]
+local allowed_host_pools = _POST["allowed_host_pools"]
 local networks = _POST["allowed_networks"]
 local allowed_interface = _POST["allowed_interface"]
 local language = _POST["user_language"]
 local allow_pcap_download = _POST["allow_pcap_download"]
-local allow_historical_flow = _POST["allow_historical_flow"]
+local allow_historical_flows = _POST["allow_historical_flows"]
+local allow_alerts = _POST["allow_alerts"]
 local password = _POST["password"]
 local confirm_password = _POST["confirm_password"]
 
@@ -44,12 +46,14 @@ end
 if host_role == nil and
     networks == nil and
     allowed_interface == nil and
-    allow_pcap_download == nil and 
+    allow_pcap_download == nil and
+    allow_alerts == nil and
     language == nil and
     full_name == nil and
     (password == nil or confirm_password == nil) and
     host_pool_id == nil and
-    allow_historical_flow == nil then
+    allowed_host_pools == nil and
+    allow_historical_flows == nil then
     rest_utils.answer(rest_utils.consts.err.invalid_args, res)
    return
 end
@@ -68,6 +72,12 @@ if(full_name ~= nil) then
       rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
       return
    end
+end
+
+-- The built-in admin always stays an administrator
+if (username == "admin") and (host_role ~= nil) and (host_role ~= "administrator") then
+   rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
+   return
 end
 
 if(host_role ~= nil) then
@@ -91,6 +101,13 @@ if(host_pool_id ~= nil) then
    end
 end
 
+if(allowed_host_pools ~= nil) then
+   if(not ntop.changeAllowedHostPools(username, allowed_host_pools)) then
+      rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
+      return
+   end
+end
+
 if(allowed_interface ~= nil) then
    if(not ntop.changeAllowedIfname(username, getInterfaceName(allowed_interface))) then
       rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
@@ -103,7 +120,7 @@ if(allow_pcap_download ~= nil) then
    if(tonumber(allow_pcap_download) == 1) then
       allow_pcap_download_enabled = true;
    end
-   if(not ntop.changeUserPermission(username, allow_pcap_download_enabled)) then
+   if(not ntop.changePcapDownloadPermission(username, allow_pcap_download_enabled)) then
       rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
       return
    end
@@ -124,17 +141,29 @@ if(password ~= nil and confirm_password ~= nil) then
       return
    end
 
-   if(ntop.resetUserPassword(_SESSION["user"], username, "", password)) then
+   if(not ntop.resetUserPassword(_SESSION["user"], username, "", password)) then
       rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
+      return
    end
 end
 
-if(allow_historical_flow ~= nil) then
-  local allow_historical_flow_enabled = false
-  if(tonumber(allow_historical_flow) == 1) then
-     allow_historical_flow_enabled = true;
+if(allow_historical_flows ~= nil) then
+  local allow_historical_flows_enabled = false
+  if(tonumber(allow_historical_flows) == 1) then
+     allow_historical_flows_enabled = true;
   end
-  if(not ntop.changeHistoricalFlowPermission(username, allow_historical_flow_enabled)) then
+  if(not ntop.changeHistoricalFlowPermission(username, allow_historical_flows_enabled)) then
+    rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
+    return
+  end
+end
+
+if(allow_alerts ~= nil) then
+  local allow_alerts_enabled = false
+  if(tonumber(allow_alerts) == 1) then
+     allow_alerts_enabled = true;
+  end
+  if(not ntop.changeAlertsPermission(username, allow_alerts_enabled)) then
     rest_utils.answer(rest_utils.consts.err.edit_user_failed, res)
     return
   end

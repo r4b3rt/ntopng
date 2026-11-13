@@ -1,13 +1,15 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
 
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/?.lua;" .. package.path
 
 local os_utils = require "os_utils"
 
 local callback_utils = {}
+local clock_start = os.clock()
 
 -- ########################################################
 
@@ -16,7 +18,7 @@ local callback_utils = {}
 -- NOTE: direction must only be used by second.lua
 function callback_utils.foreachInterface(ifnames, condition, callback, update_direction_stats)
    for _,_ifname in pairs(ifnames) do
-      if(ntop.isShutdown()) then return true end
+      if(ntop.isShuttingDown()) then return true end
 
       -- NOTE: "eth" will be overwritten here for emulated directions
       interface.select(_ifname)
@@ -25,7 +27,7 @@ function callback_utils.foreachInterface(ifnames, condition, callback, update_di
 	 interface.updateDirectionStats()
       end
 
-      local ifstats = interface.getStats()
+      local ifstats = interface.getStats(false) -- limited stats
 
       if condition == nil or condition(ifstats.id) then
 	 if((ifstats.type ~= "pcap dump") and (ifstats.type ~= "unknown")) then
@@ -141,7 +143,7 @@ function callback_utils.foreachFlow(ifname, deadline, callback, ...)
 
    for flow_key, flow in iterator do
 
-      if(ntop.isShutdown()) then return true end
+      if(ntop.isShuttingDown()) then return true end
 
       if ((deadline ~= nil) and (os.time() >= deadline)) then
 	 -- Out of time
@@ -158,12 +160,12 @@ end
 
 -- ########################################################
 
--- Iterates each active host on the ifname interface for RRD creation.
+-- Iterates each active host on the ifname interface for timeseries creation.
 -- Each host is passed to the callback with some more information.
-function callback_utils.foreachLocalRRDHost(ifname, with_ts, with_one_way_traffic_hosts, callback)
-   interface.select(ifname)
-
+function callback_utils.foreachLocalTimeseriesHost(ifname, with_ts, with_one_way_traffic_hosts, callback)
    local iterator
+   
+   interface.select(ifname)
 
    if with_ts then
       iterator = callback_utils.getLocalHostsTsIterator(nil --[[ show_details --]], nil --[[ maxHits --]], nil --[[ anomalousOnly --]], with_one_way_traffic_hosts)
@@ -172,7 +174,7 @@ function callback_utils.foreachLocalRRDHost(ifname, with_ts, with_one_way_traffi
    end
 
    for hostname, host_ts in iterator do
-      if(ntop.isShutdown()) then return true end
+      if(ntop.isShuttingDown()) then return true end
       if ntop.isDeadlineApproaching() then
 	 -- Out of time
 	 return false
@@ -196,32 +198,7 @@ function callback_utils.foreachHost(ifname, callback)
    local iterator = callback_utils.getHostsIterator(false --[[ no details ]])
 
    for hostname, hoststats in iterator do
-      if(ntop.isShutdown()) then return true end
-
-      if ntop.isDeadlineApproaching() then
-	 -- Out of time
-	 return false
-      end
-
-      if callback(hostname, hoststats) == false then
-	 return false
-      end
-   end
-
-   return true
-end
-
--- ########################################################
-
--- Iterates each active host on the ifname interface.
--- Each host is passed to the callback with some more information.
-function callback_utils.foreachLocalHost(ifname, callback)
-   interface.select(ifname)
-
-   local iterator = callback_utils.getLocalHostsIterator(false --[[ no details ]])
-
-   for hostname, hoststats in iterator do
-      if(ntop.isShutdown()) then return true end
+      if(ntop.isShuttingDown()) then return true end
 
       if ntop.isDeadlineApproaching() then
 	 -- Out of time
@@ -239,12 +216,13 @@ end
 -- Iterates each device on the ifname interface.
 -- Each device is passed to the callback with some more information.
 function callback_utils.foreachDevice(ifname, callback)
+   require "label_utils"
    interface.select(ifname)
 
    local devices_stats = callback_utils.getDevicesIterator()
 
    for devicename, devicestats in devices_stats do
-      if(ntop.isShutdown()) then return true end
+      if(ntop.isShuttingDown()) then return true end
       devicename = hostinfo2hostkey(devicestats) -- make devicename the combination of mac address and vlan
 
       if ntop.isDeadlineApproaching() then
@@ -262,15 +240,31 @@ end
 
 -- ########################################################
 
-function callback_utils.uploadTSdata()
+function callback_utils.uploadTSdata(max_duration)
    local ts_utils = require("ts_utils_core")
    local drivers = ts_utils.listActiveDrivers()
+   local deadline = os.time() + max_duration - 1 -- allow 1 sec of tolerance
+   local tot_exported = 0
+   
    ts_utils.setup()
 
-   for _, driver in ipairs(drivers) do
-      driver:export()
-   end
+   repeat
+      local tot = 0
+      
+      for _, driver in ipairs(drivers) do
+	 tot = tot + driver:export()
+      end
+
+      tot_exported = tot_exported + tot
+   until((deadline < os.time()) or (tot == 0))
+
+   return(tot_exported)
 end
+
 -- ########################################################
+
+if(trace_script_duration ~= nil) then
+   io.write(debug.getinfo(1,'S').source .." executed in ".. (os.clock()-clock_start)*1000 .. " ms\n")
+end
 
 return callback_utils

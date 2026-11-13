@@ -1,0 +1,98 @@
+{
+	"id": "sites_config",
+	"data_url": "lua/pro/rest/v2/get/sites/list.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.sites_config",
+	"default_sort": {
+		"column_id": "name",
+		"sort": 1
+	},
+	"columns": [
+        {
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "site_timeseries",
+					"icon": "fas fa-chart-area",
+					"title_i18n": "sites_page.site_timeseries",
+					"class": [],
+					"event_id": "click_button_site_timeseries"
+				},
+				{
+					"id": "edit_site",
+					"icon": "fas fa-cog",
+					"title_i18n": "sites_page.edit_site",
+					"class": [],
+					"event_id": "click_button_edit_site"
+				},
+				{
+                    "id": "delete_site",
+                    "icon": "fas fa fa-trash",
+                    "title_i18n": "delete",
+                    "class": [],
+                    "event_id": "click_button_delete_site"
+                }
+			]
+		},
+		{
+			"title_i18n": "sites_page.site_name",
+			"data_field": "name",
+			"sortable": true,
+			"min-width" : "120px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"title_i18n": "sites_page.parent_site",
+			"data_field": "parent",
+			"sortable": true,
+			"min-width" : "120px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "sites_page.site_networks",
+			"data_field": "networks",
+			"sortable": false,
+			"min-width" : "180px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "sites_page.site_description",
+			"data_field": "description",
+			"sortable": false,
+			"min-width" : "180px",
+			"class": [
+				"text-nowrap"
+			]
+		},
+        {
+			"title_i18n": "sites_page.site_location",
+			"data_field": "location",
+			"sortable": false,
+			"min-width" : "80px",
+			"max-width" : "160px",
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		}
+	]
+}

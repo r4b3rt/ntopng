@@ -1,22 +1,23 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
-require "lua_utils"
 
 local checks = require("checks")
-local syslog_utils = require "syslog_utils"
 
 local syslog_module = {
   -- Script category
   category = checks.check_categories.security,
 
   key = "host_log",
+   not_periodic_check = true,
 
-  -- See below
-  hooks = {},
+  default_value = {
+    operator = "lt",
+    threshold = 5,
+  },
 
   gui = {
     i18n_title = "host_log_collector.title",
@@ -27,10 +28,8 @@ local syslog_module = {
     field_operator = "lt"
   },
 
-  default_value = {
-    operator = "lt",
-    threshold = 5,
-  },
+  -- See below
+  hooks = {},
 }
 
 -- #################################################################
@@ -44,6 +43,7 @@ end
 
 -- The function below is called for each received alert
 function syslog_module.hooks.handleEvent(syslog_conf, message, host, priority)
+   local syslog_utils = require "syslog_utils"
    local num_unhandled = 0
    local num_alerts = 0
 

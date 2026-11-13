@@ -1,0 +1,32 @@
+{
+	"id": "modbus_function_codes",
+	"data_url": "lua/pro/rest/v2/get/flow/modbus/function_codes.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.modbus_function_codes",
+	"default_sort": {
+		"column_id": "num_uses",
+		"sort": 2
+	},
+	"columns": [
+		{
+			"title_i18n": "id",
+			"data_field": "modbus_function_code",
+			"min-width": "80px",
+			"sortable": true,
+			"class": []
+		},
+		{
+			"title_i18n": "flow_details.num_uses",
+			"data_field": "num_uses",
+			"min-width": "80px",
+			"sortable": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			]
+		}
+	]
+}

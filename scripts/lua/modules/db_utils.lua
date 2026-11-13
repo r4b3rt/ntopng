@@ -1,5 +1,5 @@
 --
--- (C) 2014-22 - ntop.org
+-- (C) 2014-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -166,7 +166,7 @@ function getInterfaceTopFlows(interface_id, version, host_or_profile, peer, l7pr
    end
 
    follow = " ,L4_SRC_PORT,L4_DST_PORT,VLAN_ID,PROTOCOL,FIRST_SWITCHED,LAST_SWITCHED,PACKETS,IN_BYTES + OUT_BYTES as BYTES,IN_BYTES,OUT_BYTES,idx,L7_PROTO,INFO"
-   if ntop.isPro() then follow = follow..",PROFILE" end
+   if ntop.isPro and ntop.isPro() then follow = follow..",PROFILE" end
 
    follow = follow.." from "..flowsTableName(version, true --[[ force raw flows --]]).." where FIRST_SWITCHED <= "..epoch_end.." and FIRST_SWITCHED >= "..epoch_begin
 
@@ -208,7 +208,7 @@ function getInterfaceTopFlows(interface_id, version, host_or_profile, peer, l7pr
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql, false) -- do not limit the maximum number of flows
+   local res,err = interface.execSQLQuery(sql, false) -- do not limit the maximum number of flows
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
       return {}
@@ -236,7 +236,7 @@ function getFlowInfo(interface_id, version, flow_idx)
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
       return {}
@@ -309,7 +309,7 @@ function getNumFlows(interface_id, version, host, protocol, port, l7proto, info,
    end
 
    if(db_debug == true) then io.write(sql.."\n") end
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
 
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
@@ -434,7 +434,7 @@ function getOverallTopTalkers(interface_id, l4proto, port, vlan, profile, info, 
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
       return {}
@@ -541,7 +541,7 @@ function getHostTopTalkers(interface_id, host, l7_proto_id, l4_proto_id, port, v
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
 
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
@@ -667,7 +667,8 @@ function getAppTopTalkers(interface_id, l7_proto_id, l4_proto_id, port, vlan, pr
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
+   
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
       return {}
@@ -760,7 +761,8 @@ function getTopApplications(interface_id, peer1, peer2, l7_proto_id, l4_proto_id
 
    if(db_debug == true) then io.write(sql.."\n") end
 
-   res = interface.execSQLQuery(sql)
+   local res,err = interface.execSQLQuery(sql)
+   
    if(type(res) == "string") then
       if(db_debug == true) then io.write(res.."\n") end
       return {}
@@ -773,54 +775,23 @@ end
 
 -- ########################################################
 
-function db_utils.clickhouseDeleteOldPartitions(mysql_retention)
-   local day_aligned_retention = mysql_retention - (mysql_retention % 86400)
-   -- Create a string that identifies the PARTITIONs name of the most recent partition that will be deleted
-   local retention_yyyymmdd = os.date("%Y%m%d", day_aligned_retention)
-
-   -- Deletion is done directly on partitions (Clickhouse database has daily partitions)
-
-   -- Query the partitions that need to be deleted. Convert YYYYMMDD strings into integers so that
-   -- only relevant partitions can be queried and deleted
-   -- The last condition > 999999 prevents old partitions created as YYYMM to be deleted
-   local partitions_q = string.format("SELECT DISTINCT database, table, toUInt32(partition) drop_part FROM system.parts WHERE active AND database='%s' AND drop_part <= %u AND drop_part > 999999", ntop.getPrefs().mysql_dbname or 'ntopng', retention_yyyymmdd)
-   local partitions_res = interface.execSQLQuery(partitions_q)
-
-   if(partitions_res ~= nil) then
-      -- Iterate queried partitions and delete them (nil is returned if there is nothing to delete)
-      for _, partition_info in ipairs(partitions_res) do
-	 local delete_partition_q = string.format("ALTER TABLE %s.%s DROP PARTITION '%s'",
-						  partition_info["database"], partition_info["table"], partition_info["drop_part"])
-	 local delete_partition_res = interface.execSQLQuery(delete_partition_q)
+function db_utils.populateExtraTables()
+   for _, info in pairs(extra_tables) do
+      if info.populate_table then
+         info.populate_table()
+      else
+         traceError(TRACE_NORMAL, TRACE_CONSOLE, "Missing populate_table function")
       end
    end
 end
 
 -- ########################################################
 
-local function _harvest_expired_mysql_flows(ifname, mysql_retention, verbose)
-   local dbtables = {"flowsv4", "flowsv6"}
-
-   if tonumber(ifname) == nil then
-      ifname = getInterfaceId(ifname)
-   end
-
-   for _, tb in pairs(dbtables) do
-      local sql = "DELETE FROM "..tb.." where FIRST_SWITCHED < "..mysql_retention
-      sql = sql.." AND (INTERFACE_ID = "..ifname..")"
-      sql = sql.." AND (NTOPNG_INSTANCE_NAME='"..ntop.getPrefs()["instance_name"].."' OR NTOPNG_INSTANCE_NAME IS NULL OR NTOPNG_INSTANCE_NAME='')"
-      interface.execSQLQuery(sql)
-      if(verbose) then io.write(sql.."\n") end
-   end
+function db_utils.getExtraTables()
+   return extra_tables
 end
 
 -- ########################################################
-
-function db_utils.harverstExpiredMySQLFlows(ifname, mysql_retention, verbose)
-   if not ntop.isClickHouseEnabled() then
-      return _harvest_expired_mysql_flows(ifname, mysql_retention, verbose)
-   end
-end
 
 return db_utils
 

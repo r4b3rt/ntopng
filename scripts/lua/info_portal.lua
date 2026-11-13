@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -61,7 +61,7 @@ print [[
 <br>
 <br>
 
-<div class="form-group mb-3">
+<div class="mb-3">
   <div class="form-check">]]
 
 print(template.gen("on_off_switch.html", {

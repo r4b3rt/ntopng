@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,40 +22,30 @@
 #include "ntop_includes.h"
 #include "flow_checks_includes.h"
 
-void BlacklistedFlow::protocolDetected(Flow *f) {
-  if(f->isBlacklistedFlow()) {
+/* ***************************************************** */
+
+void BlacklistedFlow::protocolDetected(Flow* f) {
+  if ((f->get_protocol_category() == NDPI_PROTOCOL_CATEGORY_MALWARE) &&
+      !(f->isBlacklistedServer()) && !(f->isBlacklistedClient())) {
     FlowAlertType alert_type = BlacklistedFlowAlert::getClassType();
     u_int8_t c_score, s_score;
-    risk_percentage cli_score_pctg = CLIENT_FAIR_RISK_PERCENTAGE;
-    
-    if(f->isBlacklistedServer())
-      cli_score_pctg = CLIENT_HIGH_RISK_PERCENTAGE; /* High severity for the client as it can be compromised */
+    risk_percentage cli_score_pctg = CLIENT_HIGH_RISK_PERCENTAGE;
 
-    computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
+    computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id), cli_score_pctg,
+                       &c_score, &s_score);
 
-    f->triggerAlertAsync(alert_type, c_score, s_score);
+    FlowAlert* alert = buildAlert(f);
+    alert->setCliSrvScores(c_score, s_score);
+    f->triggerAlert(alert);
   }
 }
 
 /* ***************************************************** */
 
-FlowAlert *BlacklistedFlow::buildAlert(Flow *f) {
-  bool is_server_bl = f->isBlacklistedServer();
-  bool is_client_bl = f->isBlacklistedClient();
-  BlacklistedFlowAlert *alert = new BlacklistedFlowAlert(this, f);
+FlowAlert* BlacklistedFlow::buildAlert(Flow* f) {
+  BlacklistedFlowAlert* alert =
+      new (std::nothrow) BlacklistedFlowAlert(this, f);
 
-  /*
-    When a BLACKLISTED client contacts a normal host, the client is assumed to be the attacker and the server the victim
-    When a normal client contacts a BLACKLISTED server, both peers are considered to be attackers
-    When both peers are blacklisted, both are considered attackers
-  */
-  if(is_client_bl && !is_server_bl)
-    alert->setCliAttacker(), alert->setSrvVictim();
-  else if(!is_client_bl && is_server_bl)
-    alert->setCliAttacker(), alert->setSrvAttacker();
-  else if(is_client_bl && is_server_bl)
-    alert->setCliAttacker(), alert->setSrvAttacker();
-    
   return alert;
 }
 
@@ -74,13 +64,12 @@ FlowAlert *BlacklistedFlow::buildAlert(Flow *f) {
   }
 */
 
-bool BlacklistedFlow::loadConfiguration(json_object *config) {
+bool BlacklistedFlow::loadConfiguration(json_object* config) {
   FlowCheck::loadConfiguration(config); /* Parse parameters in common */
 
   /* Parse additional parameters */
-  
-  return(true);
+
+  return (true);
 }
 
 /* ***************************************************** */
-

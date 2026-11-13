@@ -11,7 +11,7 @@ local rest_utils = require("rest_utils")
 
 --
 -- Read number of active flows per protocol
--- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v2/get/flow/l7/counters.lua
+-- Example: curl -u admin:admin -H "Content-Type: application/json" -d '{"ifid": "1"}' http://localhost:3000/lua/rest/v2/get/flow/l7/iec104.lua
 --
 -- NOTE: in case of invalid login, no error is returned but redirected to login
 --
@@ -22,6 +22,11 @@ local res = {}
 local ifid = _GET["ifid"]
 local flow_key = _GET["flow_key"]
 local flow_hash_id = _GET["flow_hash_id"]
+
+if isEmptyString(flow_key) or isEmptyString(flow_hash_id) then
+   rest_utils.answer(rest_utils.consts.err.missing_parameters, {"Required parameters: flow_key and flow_hash_id"})
+   return
+end
 
 if isEmptyString(ifid) then
    rest_utils.answer(rest_utils.consts.err.invalid_interface)

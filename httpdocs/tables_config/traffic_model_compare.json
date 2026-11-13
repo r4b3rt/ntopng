@@ -1,0 +1,69 @@
+{
+	"id": "traffic_model_compare",
+	"data_url": "lua/pro/rest/v2/get/traffic_model/compare.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": true,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.traffic_model_compare",
+	"default_sort": {
+		"column_id": "flows_new",
+		"sort": 2
+	},
+	"columns": [
+		{
+			"id": "ip",
+			"data_field": "ip",
+			"sortable": true,
+			"min-width": "160px",
+			"class": [
+				"text-nowrap"
+			],
+			"title_i18n": "traffic_model.col.server"
+		},
+		{
+			"id": "name",
+			"data_field": "name",
+			"sortable": false,
+			"min-width": "160px",
+			"class": [
+				"text-nowrap"
+			],
+			"title_i18n": "traffic_model.col.name"
+		},
+		{
+			"id": "status",
+			"data_field": "status",
+			"sortable": true,
+			"min-width": "120px",
+			"class": [
+				"text-center",
+				"text-nowrap"
+			],
+			"title_i18n": "traffic_model.col.status"
+		},
+		{
+			"id": "flows_new",
+			"data_field": "flows_new",
+			"sortable": true,
+			"min-width": "150px",
+			"class": [
+				"text-end",
+				"text-nowrap"
+			],
+			"title_i18n": "traffic_model.col.flows"
+		},
+		{
+			"id": "flows_old",
+			"data_field": "flows_old",
+			"sortable": true,
+			"min-width": "130px",
+			"render_type": "number",
+			"class": [
+				"text-end",
+				"text-nowrap"
+			],
+			"title_i18n": "traffic_model.col.flows_compared"
+		}
+	]
+}

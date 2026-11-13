@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,20 +33,30 @@ class IECInvalidCommandTransitionAlert : public FlowAlert {
 
  public:
   static FlowAlertType getClassType() {
-    return { flow_alert_iec_invalid_command_transition, alert_category_security };
+    return {NDPI_NO_RISK, flow_alert_iec_invalid_command_transition,
+            alert_category_security};
   }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
-  IECInvalidCommandTransitionAlert(FlowCheck *c, Flow *f, struct timeval *_time,
-				   u_int32_t _transitions_m_to_c,
-				   u_int32_t _transitions_c_to_m,
-				   u_int32_t _transitions_c_to_c) : FlowAlert(c, f) {
+  inline u_int32_t get_packet_epoch() { return packet_epoch; };
+  inline u_int32_t get_transitions_m_to_c() { return transitions_m_to_c; };
+  inline u_int32_t get_transitions_c_to_m() { return transitions_c_to_m; };
+  inline u_int32_t get_transitions_c_to_c() { return transitions_c_to_c; };
+
+  IECInvalidCommandTransitionAlert(FlowCheck* c, Flow* f, struct timeval* _time,
+                                   u_int32_t _transitions_m_to_c,
+                                   u_int32_t _transitions_c_to_m,
+                                   u_int32_t _transitions_c_to_c)
+      : FlowAlert(c, f) {
     transitions_m_to_c = _transitions_m_to_c;
     transitions_c_to_m = _transitions_c_to_m;
     transitions_c_to_c = _transitions_c_to_c;
     packet_epoch = _time->tv_sec;
+    setAlertScore(getDefaultScore());
   };
-  ~IECInvalidCommandTransitionAlert() { };
+  ~IECInvalidCommandTransitionAlert() {};
+
+  bool autoAck() const { return false; };
 
   FlowAlertType getAlertType() const { return getClassType(); }
 };

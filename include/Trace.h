@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,19 +24,19 @@
 
 #include "ntop_includes.h"
 
-#define TRACE_LEVEL_ERROR     0
-#define TRACE_LEVEL_WARNING   1
-#define TRACE_LEVEL_NORMAL    2
-#define TRACE_LEVEL_INFO      3
-#define TRACE_LEVEL_DEBUG     6
-#define TRACE_LEVEL_TRACE     9
+#define TRACE_LEVEL_ERROR 0
+#define TRACE_LEVEL_WARNING 1
+#define TRACE_LEVEL_NORMAL 2
+#define TRACE_LEVEL_INFO 3
+#define TRACE_LEVEL_DEBUG 6
+#define TRACE_LEVEL_TRACE 9
 
-#define TRACE_ERROR     TRACE_LEVEL_ERROR, __FILE__, __LINE__
-#define TRACE_WARNING   TRACE_LEVEL_WARNING, __FILE__, __LINE__
-#define TRACE_NORMAL    TRACE_LEVEL_NORMAL, __FILE__, __LINE__
-#define TRACE_INFO      TRACE_LEVEL_INFO, __FILE__, __LINE__
-#define TRACE_DEBUG     TRACE_LEVEL_DEBUG, __FILE__, __LINE__
-#define TRACE_TRACE     TRACE_LEVEL_TRACE, __FILE__, __LINE__
+#define TRACE_ERROR TRACE_LEVEL_ERROR, __FILE__, __LINE__
+#define TRACE_WARNING TRACE_LEVEL_WARNING, __FILE__, __LINE__
+#define TRACE_NORMAL TRACE_LEVEL_NORMAL, __FILE__, __LINE__
+#define TRACE_INFO TRACE_LEVEL_INFO, __FILE__, __LINE__
+#define TRACE_DEBUG TRACE_LEVEL_DEBUG, __FILE__, __LINE__
+#define TRACE_TRACE TRACE_LEVEL_TRACE, __FILE__, __LINE__
 
 #define MAX_TRACE_LEVEL 9
 #define TRACE_DEBUGGING MAX_TRACE_LEVEL
@@ -48,10 +48,11 @@ class Redis;
 
 class Trace {
  private:
-  char *logFile;
-  FILE *logFd;
-  Redis *traceRedis;
+  char* logFile;
+  FILE* logFd;
+  Redis* traceRedis;
   int numLogLines;
+  bool dontFreeRedis;
   volatile u_int8_t traceLevel;
   Mutex rotate_mutex;
   void open_log();
@@ -64,14 +65,18 @@ class Trace {
   ~Trace();
 
   void init();
-  void initRedis(const char *redis_host, const char *redis_password,
-		 u_int16_t redis_port, u_int8_t _redis_db_id);
+  void initRedis(const char* redis_host, const char* redis_password,
+                 u_int16_t redis_port, u_int8_t _redis_db_id,
+                 const char* tls_ca_cert = NULL, const char* tls_cert = NULL,
+                 const char* tls_key = NULL, bool tls_skip_verify = false);
+  void setRedis(Redis* r);
   void rotate_logs(bool forceRotation);
-  void set_log_file(const char *log_file);
+  void set_log_file(const char* log_file);
   void set_trace_level(u_int8_t id);
-  inline u_int8_t get_trace_level() { return(traceLevel); };
-  void traceEvent(int eventTraceLevel, const char* file, const int line, const char * format, ...);
+  inline u_int8_t get_trace_level() { return (traceLevel); };
+  void traceEvent(int eventTraceLevel, const char* file, const int line,
+                  const char* format, ...);
+  void logEvent(int eventTraceLevel, char* log_line);
 };
-
 
 #endif /* _TRACE_H_ */

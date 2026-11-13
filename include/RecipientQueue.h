@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2014-22 - ntop.org
+ * (C) 2014-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,7 +19,6 @@
  *
  */
 
-
 #ifndef _RECIPIENT_QUEUES_
 #define _RECIPIENT_QUEUES_
 
@@ -28,14 +27,26 @@
 class RecipientQueue {
  private:
   u_int16_t recipient_id;
+  bool skip_alerts;
+  bool match_alert_id;
 
-  AlertFifoQueue *queue;
+  AlertFifoQueue* queue;
+
+  /* Counters for the number of enqueues */
+  u_int64_t enqueued;
 
   /* Counters for the number of drops occurred when enqueuing */
   u_int64_t drops;
 
-  /* Counters for the number of enqueues */
-  time_t uses;
+  /* Counters for the number of alerts filtered out (e.g. silenced) */
+  u_int64_t filtered_out;
+
+  /* Counters for the number of alerts delivered */
+  u_int64_t delivered;
+
+  /* Counters for the number of alerts not delivered due to an endpoint failure
+   */
+  u_int64_t delivery_failures;
 
   /* Timestamp of the last dequeue, regardless of queue priority */
   time_t last_use;
@@ -43,78 +54,186 @@ class RecipientQueue {
   /* Minimum severity for notifications enqueued to this recipient */
   AlertLevel minimum_severity;
 
-  /* Only enable enqueue/dequeue for notifications falling into these categories */
-  Bitmap128 enabled_categories; /* MUST be large enough to contain MAX_NUM_SCRIPT_CATEGORIES */
+  /* Only enable enqueue/dequeue for notifications falling into these categories
+   */
+  Bitmap128 enabled_categories; /* MUST be large enough to contain
+                                   MAX_NUM_SCRIPT_CATEGORIES */
+
+  /* Only enable enqueue/dequeue for notifications falling into these entities
+   */
+  Bitmap128 enabled_entities; /* MUST be large enough to contain
+                                 ALERT_ENTITY_MAX_NUM_ENTITIES */
+
+  Bitmap128 enabled_flow_alert_types; /* MUST be large enough to contain
+                                 FlowAlertTypeEnum */
+
+  Bitmap128 enabled_host_alert_types; /* MUST be large enough to contain
+                                 HostAlertID */
+
+  Bitmap128
+      enabled_other_alert_types; /* MUST be large enough to contain
+                           Other alert IDs defined in other_alert_keys.lua */
 
   /* MUST be large enough to contain MAX_NUM_HOST_POOLS */
-  Bitmap128 enabled_host_pools;
+  Bitmap4096 enabled_host_pools;
+
+  /* Tags bitmap (all zero = no filter) */
+  Bitmap64 enabled_tags;
+
+  bool doDebug(const AlertFifoItem* const notification);
 
  public:
   RecipientQueue(u_int16_t recipient_id);
   ~RecipientQueue();
 
   /**
-  * @brief Dequeues a notification from a `recipient_id` queue
-  * @param notification The dequeued notification
-  *
-  * @return Boolean, true if the dequeue was successful and `notification` is populated correctly, false otherwise
-  */
-  bool dequeue(AlertFifoItem *notification);
-  
-  /**
-  * @brief Enqueues a notification to a `recipient_id` queue
-  * @param recipient_id An integer recipient identifier
-  * @param notification A string containing the notification
-  *
-  * @return True if the enqueue succeeded, false otherwise
-  */
-  bool enqueue(const AlertFifoItem* const notification, AlertEntity alert_entity);
-  
-  /**
-  * @brief Sets the minimum severity for notifications to use this recipient
-  * @param minimum_severity The minimum severity for notifications to use this recipient
-  *
-  * @return
-  */
-  inline void setMinimumSeverity(AlertLevel _minimum_severity) { minimum_severity = _minimum_severity; };
-  
-  /**
-  * @brief Sets enabled notification categories to use this recipient
-  * @param enabled_categories A bitmap of notification categories to use this recipient
-  *
-  * @return
-  */
-  inline void setEnabledCategories(Bitmap128 _enabled_categories) { enabled_categories = _enabled_categories; };
+   * @brief Dequeues a notification from a `recipient_id` queue
+   *
+   * @return AlertFifoItem on success, NULL if queue is empty
+   */
+  AlertFifoItem* dequeue();
 
   /**
-  * @brief Sets enabled host pools to use this recipient
-  * @param enabled_host_pools
-  *
-  * @return
-  */
-  inline void setEnabledHostPools(Bitmap128 _enabled_pools)       { enabled_host_pools = _enabled_pools; };
-  
+   * @brief Enqueues a notification to a `recipient_id` queue
+   * @param recipient_id An integer recipient identifier
+   * @param notification A string containing the notification
+   *
+   * @return True if the enqueue succeeded, false otherwise
+   */
+  bool enqueue(const AlertFifoItem* const notification);
+
   /**
-   * @brief Returns queue status (drops and uses)
+   * @brief Sets the minimum severity for notifications to use this recipient
+   * @param minimum_severity The minimum severity for notifications to use this
+   * recipient
+   *
+   * @return
+   */
+  inline void setMinimumSeverity(AlertLevel _minimum_severity) {
+    minimum_severity = _minimum_severity;
+  };
+
+  /**
+   * @brief Sets enabled notification categories to use this recipient
+   * @param enabled_categories A bitmap of notification categories to use this
+   * recipient
+   *
+   * @return
+   */
+  inline void setEnabledCategories(Bitmap128 _enabled_categories) {
+    enabled_categories = _enabled_categories;
+  };
+
+  /**
+   * @brief Sets enabled notification entities to use this recipient
+   * @param enabled_entities A bitmap of notification entities to use this
+   * recipient
+   *
+   * @return
+   */
+  inline void setEnabledEntities(Bitmap128 _enabled_entities) {
+    enabled_entities = _enabled_entities;
+  };
+
+  /**
+   * @brief Sets enabled host pools to use this recipient
+   * @param enabled_host_pools
+   *
+   * @return
+   */
+  inline void setEnabledHostPools(Bitmap4096 _enabled_pools) {
+    enabled_host_pools = _enabled_pools;
+  };
+
+  /**
+   * @brief Sets enabled tag bitmap for this recipient (0 = no filter)
+   * @param _enabled_tags A tag bitmap
+   *
+   * @return
+   */
+  inline void setEnabledTags(Bitmap64 _enabled_tags) {
+    enabled_tags = _enabled_tags;
+  };
+
+  /**
+   * @brief Sets enabled flow alert types to use this recipient
+   * @param enabled_flow_alert_types
+   *
+   * @return
+   */
+  inline void setEnabledFlowAlertTypes(Bitmap128 _enabled_flow_alert_types) {
+    enabled_flow_alert_types = _enabled_flow_alert_types;
+  };
+
+  /**
+   * @brief Sets enabled host alert types to use this recipient
+   * @param enabled_host_alert_types
+   *
+   * @return
+   */
+  inline void setEnabledHostAlertTypes(Bitmap128 _enabled_host_alert_types) {
+    enabled_host_alert_types = _enabled_host_alert_types;
+  };
+
+  /**
+   * @brief Sets enabled other alert types to use this recipient
+   * @param enabled_other_alert_types
+   *
+   * @return
+   */
+  inline void setEnabledOtherAlertTypes(Bitmap128 _enabled_other_alert_types) {
+    enabled_other_alert_types = _enabled_other_alert_types;
+  };
+
+  /**
+   * @brief Sets alerts to be ignored
+   * @param skip_alerts
+   *
+   * @return
+   */
+  inline void setSkipAlerts(bool _skip_alerts) { skip_alerts = _skip_alerts; };
+
+  /**
+   * @brief Toggle match on alert_id only (ignore severity, category, etc)
+   * @param match_alert_id
+   *
+   * @return
+   */
+  inline void toggleAlertIDMatch(bool _match_alert_id) {
+    match_alert_id = _match_alert_id;
+  };
+
+  /**
+   * @brief Returns queue status (drops and enqueued)
    * @param vm A Lua VM instance
    *
    * @return
    */
   void lua(lua_State* vm);
-  
+
   /**
    * @brief Returns true if the recipient has no notifications enqueued
    *
    * @return A boolean
    */
   bool empty();
-  
+
   /**
    * @brief Returns queue last use
    *
    * @return An epoch with the last use, or 0 if never used.
    */
   inline time_t get_last_use() const { return last_use; };
+
+  /**
+   * @brief Inc recipient stats (used by lua recipients)
+   */
+  inline void incStats(u_int64_t _delivered, u_int64_t _filtered_out,
+                       u_int64_t _delivery_failures) {
+    delivered += _delivered;
+    filtered_out += _filtered_out;
+    delivery_failures += _delivery_failures;
+  }
 };
 
 #endif /* _RECIPIENT_QUEUES_ */

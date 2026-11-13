@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local alert_entities = require "alert_entities"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -19,10 +21,17 @@ local alert_broadcast_domain_too_large = classes.class(alert)
 
 alert_broadcast_domain_too_large.meta = {
    alert_key = other_alert_keys.alert_broadcast_domain_too_large,
-   i18n_title = "alerts_dashboard.broadcast_domain_too_large",
+   i18n_title = "broadcast_domain_too_large_title",
    icon = "fas fa-fw fa-sitemap",
    entities = {
       alert_entities.mac
+   },
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.discovery,
+      mitre_technique = mitre.technique.system_network_conf_discovery,
+      mitre_id = "T1016"
    },
 }
 

@@ -1,21 +1,21 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
-
+local template = require "template_utils"
 local system_setup_ui_utils = require "system_setup_ui_utils"
 require "lua_utils"
 require "prefs_utils"
 prefsSkipRedis(true)
 
-if not (ntop.isnEdge() or ntop.isAppliance()) or not isAdministrator() then
+if not ((ntop.isnEdge and ntop.isnEdge()) or ntop.isAppliance()) or not isAdministrator() then
    return
 end
 
 local sys_config
-if ntop.isnEdge() then
+if ntop.isnEdge and ntop.isnEdge() then
    package.path = dirs.installdir .. "/pro/scripts/lua/nedge/modules/system_config/?.lua;" .. package.path
    sys_config = require("nf_config"):create(true)
 else -- ntop.isAppliance()
@@ -27,13 +27,25 @@ system_setup_ui_utils.process_apply_discard_config(sys_config)
 
 local mode = sys_config:getOperatingMode()
 
-if (_POST["lan_interfaces"] ~= nil) and (_POST["wan_interfaces"] ~= nil) then
+if (_POST["rescan_interfaces"] ~= nil) then
+    sys_config:rescanInterfaces()
+
+elseif (_POST["lan_interfaces"] ~= nil) and (_POST["wan_interfaces"] ~= nil) then
   sys_config:setLanWanIfaces(split(_POST["lan_interfaces"], ","), split(_POST["wan_interfaces"], ","))
 
   if (mode == "routing") then
     -- Ensure we are on static mode on the lan inteface
-    local lan_iface = sys_config:getLanInterface()
-    sys_config:setInterfaceMode(lan_iface, "static")
+    local lan_ifaces = sys_config:getLanInterfaces()
+    for _, lan_iface in ipairs(lan_ifaces) do
+      sys_config:setInterfaceMode(lan_iface, "static")
+    end
+
+    -- Add to the list of gateways if not already present
+    local wan_ifaces = sys_config:getWanInterfaces()
+    for _, wan_iface in ipairs(wan_ifaces) do
+      sys_config:addGateway(wan_iface, wan_iface)
+    end
+
   end
 
   sys_config:save()
@@ -67,7 +79,8 @@ local min_wan_ifaces = "1"
 local max_lan_ifaces = "1"
 local max_wan_ifaces = ""
 if mode == "routing" then
-  -- nothing to change
+  -- testing
+  max_lan_ifaces = ""
 elseif mode == "bridging" then
   -- temporary limits - we need to support multiple LAN interfaces in C code
   max_wan_ifaces = "1"
@@ -96,7 +109,7 @@ print_page_body = function()
       <input name="lan_interfaces" type="hidden">
       <input name="wan_interfaces" type="hidden">
 
-      <div class="form-group mb-3" style="width:40%; margin-left:5%; display:inline-block;">
+      <div class="mb-3" style="width:40%; margin-left:5%; display:inline-block;">
         <label class='form-label' for="lan_ifaces">]] print(lan_label) print[[</label>
         <select id="lan_ifaces" class="form-select" name="lan_ifaces" style="min-height: 150px;" multiple>]]
 
@@ -106,7 +119,7 @@ print_page_body = function()
 
   print[[</select>
       </div>
-      <div class="form-group mb-3" style="width:40%; margin-right:5%; display:inline-block; float:right;">
+      <div class="mb-3" style="width:40%; margin-right:5%; display:inline-block; float:right;">
         <label class='form-label' for="wan_ifaces" >]] print(wan_label) print[[</label>
         <select id="wan_ifaces" class="form-select" name="wan_ifaces" style="min-height: 150px;" multiple>]]
 
@@ -201,9 +214,31 @@ print_page_body = function()
     });
   </script>
 ]]
+  print('<tr><th colspan=2 style="text-align:right;">')
+  print('<button class="btn btn-danger" type="button" onclick="$(\'#RescanInterfacesDialog\').modal(\'show\');" style="width:200px; float:left;">'..i18n("nedge.rescan_interfaces")..'</button>')
+  print('<button type="submit" class="btn btn-primary" style="width:115px" disabled="disabled">'..i18n("save")..'</button>')
+  print('</th></tr>')
 
-  printSaveButton()
 end
 
 system_setup_ui_utils.print_setup_page(print_page_body, sys_config)
 
+print(
+   template.gen("modal_confirm_dialog.html", {
+		   dialog={
+		      id      = "RescanInterfacesDialog",
+		      action  = "$('#RescanInterfacesForm').submit()",
+		      title   = i18n("nedge.rescan_interfaces"),
+		      message = i18n("nedge.rescan_interfaces_msg"),
+		      confirm = i18n("nedge.rescan_and_restart_self"),
+		      confirm_button = "btn-danger",
+		   }
+   })
+  )
+
+  print[[
+  <form id="RescanInterfacesForm" method="POST">
+    <input name="csrf" value="]] print(ntop.getRandomCSRFValue()) print[[" type="hidden" />
+    <input name="rescan_interfaces" value="" type="hidden" />
+  </form>
+  ]]

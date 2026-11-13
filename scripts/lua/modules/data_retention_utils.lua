@@ -1,38 +1,142 @@
 --
--- (C) 2014-22 - ntop.org
+-- (C) 2014-26 - ntop.org
 --
-
-local dirs = ntop.getDirs()
-package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
-
-
 local DEFAULT_DATA_RETENTION_DAYS = 30
+local DEFAULT_AGGREGATED_ASN_DATA_RETENTION_DAYS = 60
+local DEFAULT_AGGREGATED_FLOWS_DATA_RETENTION_DAYS = 60
+local DEFAULT_VS_REPORTS_DATA_RETENTION_DAYS = 30
+local DEFAULT_TRAFFIC_MODEL_DATA_RETENTION_DAYS = 30
+local DEFAULT_WAZUH_ALERTS_DATA_RETENTION_DAYS = 365
+local DEFAULT_SYSLOG_EVENTS_DATA_RETENTION_DAYS = 30
 local DEFAULT_DATA_RETENTION_DAYS_KEY = "ntopng.prefs.data_retention_days"
-local FLOWS_AND_ALERTS_DATA_RETENTION_DAYS_KEY = "ntopng.prefs.flows_and_alerts_data_retention_days"
-local TS_AND_STATS_DATA_RETENTION_DAYS_KEY = "ntopng.prefs.ts_and_stats_data_retention_days"
+local FLOWS_AND_ALERTS_DATA_RETENTION_DAYS_KEY =
+    "ntopng.prefs.flows_and_alerts_data_retention_days"
+local AGGREGATED_FLOWS_DATA_RETENTION_DAYS_KEY =
+    "ntopng.prefs.aggregated_flows_data_retention_days"
+local AGGREGATED_ASN_DATA_RETENTION_DAYS_KEY =
+    "ntopng.prefs.aggregated_asn_data_retention_days"
+local VS_REPORT_RETENTION_DAYS_KEY =
+    "ntopng.prefs.vs_reports_retention_days"
+local TS_AND_STATS_DATA_RETENTION_DAYS_KEY =
+    "ntopng.prefs.ts_and_stats_data_retention_days"
+local WAZUH_ALERTS_DATA_RETENTION_DAYS_KEY =
+    "ntopng.prefs.wazuh_alerts_data_retention_days"
+local TRAFFIC_MODEL_RETENTION_DAYS_KEY = "ntopng.prefs.traffic_model_retention_days"
+local CLICKHOUSE_MAX_SIZE_GB_KEY = "ntopng.prefs.clickhouse_max_size_gb"
+local SYSLOG_EVENTS_RETENTION_DAYS_KEY = "ntopng.prefs.syslog_events_retention_days"
 
 local data_retention_utils = {}
 
 -- ########################################################
 
 function data_retention_utils.getDefaultRetention()
-  return DEFAULT_DATA_RETENTION_DAYS
+    return DEFAULT_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getAggregatedFlowsDataRetention()
+    return DEFAULT_AGGREGATED_FLOWS_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getAggregatedAsnDataRetention()
+    return DEFAULT_AGGREGATED_ASN_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getAggregatedVSReportRetention()
+    return DEFAULT_VS_REPORTS_DATA_RETENTION_DAYS
 end
 
 -- ########################################################
 
 function data_retention_utils.getFlowsAndAlertsDataRetentionDays()
-  local data_retention = ntop.getCache(FLOWS_AND_ALERTS_DATA_RETENTION_DAYS_KEY) or ntop.getCache(DEFAULT_DATA_RETENTION_DAYS_KEY) 
+    local data_retention = ntop.getCache(
+                               FLOWS_AND_ALERTS_DATA_RETENTION_DAYS_KEY) or
+                               ntop.getCache(DEFAULT_DATA_RETENTION_DAYS_KEY)
 
-  return tonumber(data_retention) or data_retention_utils.getDefaultRetention()
+    return tonumber(data_retention) or
+               data_retention_utils.getDefaultRetention()
+end
+
+-- ########################################################
+
+function data_retention_utils.getAggregatedFlowsRetentionDays()
+    local data_retention = ntop.getCache(
+                               AGGREGATED_FLOWS_DATA_RETENTION_DAYS_KEY)
+    -- aggregated data is at least one day more that non-aggregated data
+    return tonumber(data_retention) or
+               (data_retention_utils.getAggregatedFlowsDataRetention() + 1)
+end
+
+-- ########################################################
+
+function data_retention_utils.getAggregatedAsnRetentionDays()
+    local data_retention = ntop.getCache(AGGREGATED_ASN_DATA_RETENTION_DAYS_KEY)
+    -- aggregated data is at least one day more that non-aggregated data
+    return tonumber(data_retention) or
+               (data_retention_utils.getAggregatedAsnDataRetention() + 1)
+end
+
+-- ########################################################
+
+function data_retention_utils.getVSReportRetentionDays()
+    local data_retention = ntop.getCache(VS_REPORT_RETENTION_DAYS_KEY)
+    return tonumber(data_retention) or
+               (data_retention_utils.getAggregatedVSReportRetention())
 end
 
 -- ########################################################
 
 function data_retention_utils.getTSAndStatsDataRetentionDays()
-  local data_retention = ntop.getCache(TS_AND_STATS_DATA_RETENTION_DAYS_KEY) or ntop.getCache(DEFAULT_DATA_RETENTION_DAYS_KEY) 
+    local data_retention =
+        ntop.getCache(TS_AND_STATS_DATA_RETENTION_DAYS_KEY) or
+            ntop.getCache(DEFAULT_DATA_RETENTION_DAYS_KEY)
 
-  return tonumber(data_retention) or data_retention_utils.getDefaultRetention()
+    return tonumber(data_retention) or
+               data_retention_utils.getDefaultRetention()
+end
+
+-- ########################################################
+
+-- Days of the daily Traffic Model kept (traffic_model_daily_*, server_model_daily_*)
+function data_retention_utils.getTrafficModelRetentionDays()
+    local days = tonumber(ntop.getCache(TRAFFIC_MODEL_RETENTION_DAYS_KEY))
+
+    if days and days >= 1 then
+        return days
+    end
+
+    return DEFAULT_TRAFFIC_MODEL_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getWazuhAlertsDataRetention()
+    return DEFAULT_WAZUH_ALERTS_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getWazuhAlertsRetentionDays()
+    local data_retention = ntop.getCache(WAZUH_ALERTS_DATA_RETENTION_DAYS_KEY)
+    return tonumber(data_retention) or data_retention_utils.getWazuhAlertsDataRetention()
+end
+
+function data_retention_utils.getSyslogEventsRetentionDays()
+    local data_retention = ntop.getCache(SYSLOG_EVENTS_RETENTION_DAYS_KEY)
+    return tonumber(data_retention) or DEFAULT_SYSLOG_EVENTS_DATA_RETENTION_DAYS
+end
+
+-- ########################################################
+
+function data_retention_utils.getClickHouseMaxSizeBytes()
+    local gb = tonumber(ntop.getCache(CLICKHOUSE_MAX_SIZE_GB_KEY)) or 0
+    if gb <= 0 then return 0 end
+    return gb*1024*1024*1024
 end
 
 -- ########################################################

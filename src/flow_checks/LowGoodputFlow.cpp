@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,57 +24,56 @@
 
 /* ***************************************************** */
 
-void LowGoodputFlow::checkLowGoodput(Flow *f) {
+void LowGoodputFlow::checkLowGoodput(Flow* f) {
   FlowAlertType alert_type = LowGoodputFlowAlert::getClassType();
   u_int8_t c_score, s_score;
-  risk_percentage cli_score_pctg = CLIENT_FAIR_RISK_PERCENTAGE; 
+  risk_percentage cli_score_pctg = CLIENT_FAIR_RISK_PERCENTAGE;
 
-  if(f->getInterface()->isSampledTraffic()) return; 
-  if(!f->isTCP())                           return; /* TCP only                      */
-  if(!f->isThreeWayHandshakeOK())           return; /* Three way handshake completed */
-  if(f->get_packets() <= 3)                 return; /* Minimum number of packets     */
-  if(f->get_goodput_ratio() > 60)           return; /* Goodput less than 60%         */
+  if (f->getInterface()->isSampledTraffic()) return;
+  if (!f->isTCP()) return;                 /* TCP only                      */
+  if (!f->isThreeWayHandshakeOK()) return; /* Three way handshake completed */
+  if (f->get_packets() <= 3) return;       /* Minimum number of packets     */
+  if (f->get_goodput_ratio() > 60) return; /* Goodput less than 60%         */
 
-  switch(f->get_detected_protocol().app_protocol) {
-  case NDPI_PROTOCOL_MDNS:
-  case NDPI_PROTOCOL_NTOP:
-  case NDPI_PROTOCOL_SIGNAL:
-  case NDPI_PROTOCOL_QQ:
-  case NDPI_PROTOCOL_IRC:
-  case NDPI_PROTOCOL_TELNET:
-  case NDPI_PROTOCOL_SSH:
-  case NDPI_PROTOCOL_WHATSAPP:
-  case NDPI_PROTOCOL_WHATSAPP_CALL:
-  case NDPI_PROTOCOL_WHATSAPP_FILES:
-  case NDPI_PROTOCOL_TELEGRAM:
-  case NDPI_PROTOCOL_KAKAOTALK:
-  case NDPI_PROTOCOL_KAKAOTALK_VOICE:
-  case NDPI_PROTOCOL_WECHAT:
-    return; /* Exclusion list */
-  default:
-    break; /* Continue with the check */
+  switch (f->get_detected_protocol().proto.app_protocol) {
+    case NDPI_PROTOCOL_MDNS:
+    case NDPI_PROTOCOL_NTOP:
+    case NDPI_PROTOCOL_SIGNAL:
+    case NDPI_PROTOCOL_QQ:
+    case NDPI_PROTOCOL_IRC:
+    case NDPI_PROTOCOL_TELNET:
+    case NDPI_PROTOCOL_SSH:
+    case NDPI_PROTOCOL_WHATSAPP:
+    case NDPI_PROTOCOL_WHATSAPP_CALL:
+    case NDPI_PROTOCOL_WHATSAPP_FILES:
+    case NDPI_PROTOCOL_TELEGRAM:
+    case NDPI_PROTOCOL_KAKAOTALK:
+    case NDPI_PROTOCOL_KAKAOTALK_VOICE:
+    case NDPI_PROTOCOL_WECHAT:
+      return; /* Exclusion list */
+    default:
+      break; /* Continue with the check */
   };
 
-  computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
+  computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id), cli_score_pctg,
+                     &c_score, &s_score);
 
-  f->triggerAlertAsync(alert_type, c_score, s_score);
+  FlowAlert* alert = buildAlert(f);
+  alert->setCliSrvScores(c_score, s_score);
+  f->triggerAlert(alert);
 }
 
 /* ***************************************************** */
 
-void LowGoodputFlow::periodicUpdate(Flow *f) {
-  checkLowGoodput(f);
-}
+void LowGoodputFlow::periodicUpdate(Flow* f) { checkLowGoodput(f); }
 
 /* ***************************************************** */
 
-void LowGoodputFlow::flowEnd(Flow *f) {
-  checkLowGoodput(f);
-}
+void LowGoodputFlow::flowEnd(Flow* f) { checkLowGoodput(f); }
 
 /* ***************************************************** */
 
-FlowAlert *LowGoodputFlow::buildAlert(Flow *f) {
+FlowAlert* LowGoodputFlow::buildAlert(Flow* f) {
   return new LowGoodputFlowAlert(this, f);
 }
 

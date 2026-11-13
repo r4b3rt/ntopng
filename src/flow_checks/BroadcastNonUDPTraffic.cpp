@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,43 +24,53 @@
 
 /* ***************************************************** */
 
-void BroadcastNonUDPTraffic::flowBegin(Flow *f) {
-  const IpAddress *ip_addr = f->get_srv_ip_addr();
-  Mac *mac_addr = f->get_srv_host() ? f->get_srv_host()->getMac() : NULL;
-  
-  if(ip_addr || mac_addr) {
+void BroadcastNonUDPTraffic::flowBegin(Flow* f) {
+  const IpAddress* ip_addr = f->get_srv_ip_addr();
+  Mac* mac_addr = f->get_srv_host() ? f->get_srv_host()->getMac() : NULL;
+
+  if (ip_addr || mac_addr) {
     bool launch_alert = false;
 
-    if((ip_addr) && (ip_addr->isBroadcastAddress()) && (f->get_protocol() != IPPROTO_UDP /* The protocol MUST not be UDP*/))
+    if ((ip_addr) && (ip_addr->isBroadcastAddress()) &&
+        (f->get_protocol() != IPPROTO_UDP /* The protocol MUST not be UDP*/))
       launch_alert = true;
-    
-    if((mac_addr) && (mac_addr->isBroadcast()) && (f->get_protocol() != IPPROTO_UDP /* The protocol MUST not be UDP*/))
+
+    if ((mac_addr) && (mac_addr->isBroadcast()) &&
+        (f->get_protocol() != IPPROTO_UDP /* The protocol MUST not be UDP*/))
       launch_alert = true;
-    
-    /* 
-     * This alert has to be triggered when we have traffic towards Broadcast addresses
-     * and the l4 protocol is not UDP protocol (possible device scan in a network)
+
+    /*
+     * This alert has to be triggered when we have traffic towards Broadcast
+     * addresses and the l4 protocol is not UDP protocol (possible device scan
+     * in a network)
      */
-    if(launch_alert) {
+    if (launch_alert) {
       FlowAlertType alert_type = BroadcastNonUDPTrafficAlert::getClassType();
       u_int8_t c_score, s_score;
 
       risk_percentage cli_score_pctg = CLIENT_HIGH_RISK_PERCENTAGE;
 
-      computeCliSrvScore(alert_type, cli_score_pctg, &c_score, &s_score);
+      computeCliSrvScore(ntop->getFlowAlertScore(alert_type.id), cli_score_pctg,
+                         &c_score, &s_score);
 
-      f->triggerAlertAsync(alert_type, c_score, s_score);
+      FlowAlert* alert = buildAlert(f);
+      alert->setCliSrvScores(c_score, s_score);
+      f->triggerAlert(alert);
     }
-  } 
+  }
 }
 
 /* ***************************************************** */
 
-FlowAlert *BroadcastNonUDPTraffic::buildAlert(Flow *f) {
-  BroadcastNonUDPTrafficAlert *alert = new BroadcastNonUDPTrafficAlert(this, f);
+FlowAlert* BroadcastNonUDPTraffic::buildAlert(Flow* f) {
+  BroadcastNonUDPTrafficAlert* alert =
+      new (std::nothrow) BroadcastNonUDPTrafficAlert(this, f);
 
-  /* The remote client is considered the attacker. The victim is the local server */
-  alert->setCliAttacker();
+  if (alert) {
+    /* The remote client is considered the attacker. The victim is the local
+     * server */
+    alert->setCliAttacker();
+  }
 
   return alert;
 }

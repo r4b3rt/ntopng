@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 -- This file contains flow related constats
 
@@ -74,11 +74,13 @@ flow_consts.flow_fields_description = {
    ["IN_DST_MAC"] = i18n("flow_fields_description.in_dst_mac"),
    ["OUT_DST_MAC"] = i18n("flow_fields_description.out_dst_mac"),
    ["APPLICATION_ID"] = i18n("flow_fields_description.application_id"),
+   ["APPLICATION_NAME"] = i18n("flow_fields_description.application_name"),
    ["PACKET_SECTION_OFFSET"] = i18n("flow_fields_description.packet_section_offset"),
    ["SAMPLED_PACKET_SIZE"] = i18n("flow_fields_description.sampled_packet_size"),
    ["SAMPLED_PACKET_ID"] = i18n("flow_fields_description.sampled_packet_id"),
    ["EXPORTER_IPV4_ADDRESS"] = i18n("flow_fields_description.exporter_ipv4_address"),
    ["EXPORTER_IPV6_ADDRESS"] = i18n("flow_fields_description.exporter_ipv6_address"),
+   ["EXPORTER_SW_REVISION"] = i18n("flow_fields_description.exporter_sw_revision"),
    ["FLOW_END_REASON"] = i18n("flow_fields_description.flow_end_reason"),
    ["FLOW_ID"] = i18n("flow_fields_description.flow_id"),
    ["FLOW_START_SEC"] = i18n("flow_fields_description.flow_start_sec"),
@@ -96,8 +98,8 @@ flow_consts.flow_fields_description = {
    ["ICMP_IPV4_CODE"] = i18n("flow_fields_description.icmp_ipv4_code"),
    ["POST_NAT_SRC_IPV4_ADDR"] = i18n("flow_fields_description.post_nat_src_ipv4_addr"),
    ["POST_NAT_DST_IPV4_ADDR"] = i18n("flow_fields_description.post_nat_dst_ipv4_addr"),
-   ["POST_NAPT_SRC_TRANSPORT_PORT"] = i18n("flow_fields_description.post_napt_src_transport_port"),
-   ["POST_NAPT_DST_TRANSPORT_PORT"] = i18n("flow_fields_description.post_napt_dst_transport_port"),
+   ["POST_NAT_SRC_TRANSPORT_PORT"] = i18n("flow_fields_description.post_nat_src_transport_port"),
+   ["POST_NAT_DST_TRANSPORT_PORT"] = i18n("flow_fields_description.post_nat_dst_transport_port"),
    ["OBSERVATION_POINT_TYPE"] = i18n("flow_fields_description.observation_point_type"),
    ["OBSERVATION_POINT_ID"] = i18n("flow_fields_description.observation_point_id"),
    ["SELECTOR_ID"] = i18n("flow_fields_description.selector_id"),
@@ -109,7 +111,11 @@ flow_consts.flow_fields_description = {
    ["PACKETS_SELECTED"] = i18n("flow_fields_description.packets_selected"),
    ["SELECTOR_NAME"] = i18n("flow_fields_description.selector_name"),
    ["APPLICATION_NAME"] = i18n("flow_fields_description.application_name"),
+   ["APP_NAME"] = i18n("flow_fields_description.application_name"),
    ["USER_NAME"] = i18n("flow_fields_description.user_name"),
+   ["APP_NAME"] = i18n("flow_fields_description.application_name"),
+   ["WLAN_SSID"] = i18n("flow_fields_description.wlan_ssid"),
+   ["WTP_MAC_ADDRESS"] = i18n("flow_fields_description.wtp_mac_address"),
    ["SRC_FRAGMENTS"] = i18n("flow_fields_description.src_fragments"),
    ["DST_FRAGMENTS"] = i18n("flow_fields_description.dst_fragments"),
    ["CLIENT_NW_LATENCY_MS"] = i18n("flow_fields_description.client_nw_latency_ms"),
@@ -160,7 +166,6 @@ flow_consts.flow_fields_description = {
    ["SSL_SERVER_NAME"] = i18n("flow_fields_description.tls_server_name"),
    ["BITTORRENT_HASH"] = i18n("flow_fields_description.bittorrent_hash"),
    ["FLOW_USER_NAME"] = i18n("flow_fields_description.flow_user_name"),
-   ["FLOW_SERVER_NAME"] = i18n("flow_fields_description.flow_server_name"),
    ["PLUGIN_NAME"] = i18n("flow_fields_description.script_name"),
    ["UNTUNNELED_IPV6_SRC_ADDR"] = i18n("flow_fields_description.untunneled_ipv6_src_addr"),
    ["UNTUNNELED_IPV6_DST_ADDR"] = i18n("flow_fields_description.untunneled_ipv6_dst_addr"),
@@ -189,28 +194,12 @@ flow_consts.flow_fields_description = {
    ["PAYLOAD_HASH"] = i18n("flow_fields_description.payload_hash"),
    ["SRC_AS_MAP"] = i18n("flow_fields_description.src_as_map"),
    ["DST_AS_MAP"] = i18n("flow_fields_description.dst_as_map"),
+   -- ["TCP_STATS_SRC_TO_DST"] = i18n("flow_fields_description.tcp_stats_src_to_dst"),
+   -- ["TCP_STATS_DST_TO_SRC"] = i18n("flow_fields_description.tcp_stats_dst_to_src"),
 
    -- BGP Update Listener
-   ["SRC_AS_PATH_1"] = i18n("flow_fields_description.src_as_path_1"),
-   ["SRC_AS_PATH_2"] = i18n("flow_fields_description.src_as_path_2"),
-   ["SRC_AS_PATH_3"] = i18n("flow_fields_description.src_as_path_3"),
-   ["SRC_AS_PATH_4"] = i18n("flow_fields_description.src_as_path_4"),
-   ["SRC_AS_PATH_5"] = i18n("flow_fields_description.src_as_path_5"),
-   ["SRC_AS_PATH_6"] = i18n("flow_fields_description.src_as_path_6"),
-   ["SRC_AS_PATH_7"] = i18n("flow_fields_description.src_as_path_7"),
-   ["SRC_AS_PATH_8"] = i18n("flow_fields_description.src_as_path_8"),
-   ["SRC_AS_PATH_9"] = i18n("flow_fields_description.src_as_path_9"),
-   ["SRC_AS_PATH_10"] = i18n("flow_fields_description.src_as_path_10"),
-   ["DST_AS_PATH_1"] = i18n("flow_fields_description.dst_as_path_1"),
-   ["DST_AS_PATH_2"] = i18n("flow_fields_description.dst_as_path_2"),
-   ["DST_AS_PATH_3"] = i18n("flow_fields_description.dst_as_path_3"),
-   ["DST_AS_PATH_4"] = i18n("flow_fields_description.dst_as_path_4"),
-   ["DST_AS_PATH_5"] = i18n("flow_fields_description.dst_as_path_5"),
-   ["DST_AS_PATH_6"] = i18n("flow_fields_description.dst_as_path_6"),
-   ["DST_AS_PATH_7"] = i18n("flow_fields_description.dst_as_path_7"),
-   ["DST_AS_PATH_8"] = i18n("flow_fields_description.dst_as_path_8"),
-   ["DST_AS_PATH_9"] = i18n("flow_fields_description.dst_as_path_9"),
-   ["DST_AS_PATH_10"] = i18n("flow_fields_description.dst_as_path_10"),
+   ["SRC_BGP_INFO"] = i18n("flow_fields_description.src_bgp_info"),
+   ["DST_BGP_INFO"] = i18n("flow_fields_description.dst_bgp_info"),
 
    -- DHCP Protocol
    ["DHCP_CLIENT_MAC"] = i18n("flow_fields_description.dhcp_client_mac"),
@@ -462,7 +451,9 @@ flow_consts.flow_fields_description = {
    ["SIP_REASON_CAUSE"] = i18n("flow_fields_description.sip_reason_cause"),
    ["SIP_C_IP"] = i18n("flow_fields_description.sip_c_ip"),
    ["SIP_CALL_STATE"] = i18n("flow_fields_description.sip_call_state"),
-
+   ["SIP_UAC"] = i18n("flow_fields_description.sip_uac"),
+   ["SIP_UAS"] = i18n("flow_fields_description.sip_uas"),
+   
    -- SMTP Protocol
    ["SMTP_MAIL_FROM"] = i18n("flow_fields_description.smtp_mail_from"),
    ["SMTP_RCPT_TO"] = i18n("flow_fields_description.smtp_rcpt_to"),
@@ -511,9 +502,11 @@ flow_consts.flow_fields_description = {
    ['DEVICE_NAME']    = i18n("flow_fields_description.device_name"),
    
    -- Misc
-   ["COMMUNITY_ID"] = i18n("flow_fields_description.community_id"),
-   ["FLOW_VERDICT"] = i18n("flow_fields_description.flow_verdict"),
+   ["COMMUNITY_ID"]  = i18n("flow_fields_description.community_id"),
+   ["FLOW_VERDICT"]  = i18n("flow_fields_description.flow_verdict"),
    ["L7_RISK_SCORE"] = i18n("flow_fields_description.l7_risk_score"),
+   ["L7_INFO"]       = i18n("flow_fields_description.l7_info"),
+   ["NPROBE_INSTANCE_NAME"] = i18n("flow_fields_description.nprobe_instance_name"),
    
    -- Numeric fields not handled by nProbe
    ["25"]  =  i18n("flow_fields_description.ip_lenght_minimum"),
@@ -1004,6 +997,50 @@ flow_consts.mobile_country_code = {
    ["421"] = "Yemen (Republic of)",
    ["645"] = "Zambia (Republic of)",
    ["648"] = "Zimbabwe (Republic of)",
+}
+
+-- ################################################################################
+
+-- IMPORTANT: keep it in sync with Flow::ConnectionStates
+
+flow_consts.minor_connection_states = {
+   ["NO_STATE"] = 0,
+   ["S0"] =       1,
+   ["S1"] =       2,
+   ["SF"] =       3,
+   ["REJ"] =      4,
+   ["S2"] =       5,
+   ["S3"] =       6,
+   ["RSTO"] =     7,
+   ["RSTR"] =     8,
+   ["RSTOS0"] =   9,
+   ["RSTRH"] =    10,
+   ["SH"] =       11,
+   ["SHR"] =      12,
+   ["OTH"] =      13
+}
+
+flow_consts.major_connection_states = {
+   ["NO_STATE"]    = 0,
+   ["ATTEMPTED"]   = 1,
+   ["ESTABLISHED"] = 2,
+   ["CLOSED"]      = 3
+}
+
+-- keep in sync with enum DropReason in include/ntop_typedefs.h 
+flow_consts.drop_reason = {
+   [ 0] = { i18n_label = "drop_reason.user_action" },
+   [ 1] = { i18n_label = "drop_reason.user_action" },
+   [ 2] = { i18n_label = "drop_reason.probe_verdict" },
+   [ 3] = { i18n_label = "drop_reason.blacklisted_flow" },
+   [ 4] = { i18n_label = "drop_reason.quota_exceeded" },
+   [ 5] = { i18n_label = "drop_reason.drop_cli" },
+   [ 6] = { i18n_label = "drop_reason.drop_srv" },
+   [ 7] = { i18n_label = "drop_reason.cli_shaper" },
+   [ 8] = { i18n_label = "drop_reason.srv_shaper" },
+   [ 9] = { i18n_label = "drop_reason.dev_not_allow_proto_cli" },
+   [10] = { i18n_label = "drop_reason.dev_not_allow_proto_srv" },
+   [11] = { i18n_label = "drop_reason.flow_size_exceeded" },
 }
 
 return flow_consts

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -13,6 +13,8 @@ local alert_creators = require "alert_creators"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -25,6 +27,13 @@ host_alert_icmp_flood.meta = {
   i18n_title = "alerts_dashboard.icmp_flood",
   icon = "fas fa-fw fa-life-ring",
   has_attacker = true,
+
+  -- Mitre Att&ck Matrix values
+  mitre_values = {
+    mitre_tactic = mitre.tactic.impact,
+    mitre_technique = mitre.technique.network_ddos,
+    mitre_sub_technique = mitre.sub_technique.direct_network_flood,
+    mitre_id = "T1498.001"},
 }
 
 -- ##############################################

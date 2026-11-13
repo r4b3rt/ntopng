@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,10 +26,10 @@
 
 class FlowHits : public HostCheck {
  private:
-
  protected:
-  void triggerFlowHitsAlert(Host *h, HostAlert *engaged_alert, bool attacker,
-    u_int16_t hits, u_int64_t threshold, risk_percentage cli_pctg);
+  void triggerFlowHitsAlert(Host* h, HostAlert* engaged_alert, bool attacker,
+                            u_int16_t hits, u_int64_t threshold,
+                            risk_percentage cli_pctg);
 
   u_int64_t threshold;
 
@@ -37,9 +37,11 @@ class FlowHits : public HostCheck {
   FlowHits();
   ~FlowHits() {};
 
-  virtual FlowHitsAlert *allocAlert(Host *h, risk_percentage cli_pctg, u_int16_t hits, u_int64_t threshold, bool attacker) = 0;
+  virtual FlowHitsAlert* allocAlert(Host* h, risk_percentage cli_pctg,
+                                    u_int16_t hits, u_int64_t threshold,
+                                    bool attacker) = 0;
 
-  bool loadConfiguration(json_object *config);  
+  bool loadConfiguration(json_object* config);
 };
 
 #endif

@@ -1,0 +1,83 @@
+{
+	"id": "syslog_rules",
+	"data_url": "lua/pro/rest/v2/get/syslog/rules.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "syslog_rules.empty_rules",
+	"default_sort": {
+		"column_id": "comment",
+		"sort": 1
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": ["text-nowrap", "text-center"],
+			"render_v_node_type": "button_list",
+			"button_def_array": [
+				{
+					"id": "edit",
+					"icon": "fas fa-edit",
+					"title_i18n": "edit",
+					"class": [],
+					"event_id": "click_button_edit"
+				},
+				{
+					"id": "delete",
+					"icon": "fas fa fa-trash",
+					"title_i18n": "delete",
+					"class": [],
+					"event_id": "click_button_delete"
+				}
+			]
+		},
+		{
+			"title_i18n": "syslog_rules.enabled",
+			"data_field": "enabled",
+			"sortable": true,
+			"min-width": "80px",
+			"class": ["text-nowrap", "text-center"]
+		},
+		{
+			"title_i18n": "syslog_rules.severity",
+			"data_field": "min_severity",
+			"sortable": true,
+			"min-width": "120px",
+			"class": ["text-nowrap"]
+		},
+		{
+			"title_i18n": "syslog_rules.discard",
+			"data_field": "discard",
+			"sortable": true,
+			"min-width": "80px",
+			"class": ["text-nowrap", "text-center"]
+		},
+		{
+			"title_i18n": "syslog_rules.source",
+			"data_field": "source",
+			"sortable": true,
+			"min-width": "150px",
+			"class": ["text-nowrap"]
+		},
+		{
+			"title_i18n": "syslog_rules.pattern",
+			"data_field": "pattern",
+			"sortable": true,
+			"min-width": "220px",
+			"class": ["text-nowrap"]
+		},
+		{
+			"title_i18n": "comment",
+			"data_field": "comment",
+			"sortable": true,
+			"min-width": "180px",
+			"class": ["text-nowrap"]
+		}
+	]
+}

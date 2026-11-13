@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,10 @@
 
 /* **************************************************** */
 
-FlowChecksExecutor::FlowChecksExecutor(FlowChecksLoader *fcl, NetworkInterface *_iface) {
+FlowChecksExecutor::FlowChecksExecutor(FlowChecksLoader* fcl,
+                                       NetworkInterface* _iface) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
   iface = _iface;
   loadFlowChecks(fcl);
 };
@@ -31,30 +34,35 @@ FlowChecksExecutor::FlowChecksExecutor(FlowChecksLoader *fcl, NetworkInterface *
 /* **************************************************** */
 
 FlowChecksExecutor::~FlowChecksExecutor() {
-  if(protocol_detected) delete protocol_detected;
-  if(periodic_update)   delete periodic_update;
-  if(flow_end)          delete flow_end;
-  if(flow_begin)        delete flow_begin;
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[delete] %s", __FILE__);
+  if (protocol_detected) delete protocol_detected;
+  if (periodic_update) delete periodic_update;
+  if (flow_end) delete flow_end;
+  if (flow_begin) delete flow_begin;
 };
 
 /* **************************************************** */
 
-void FlowChecksExecutor::loadFlowChecks(FlowChecksLoader *fcl) {
+void FlowChecksExecutor::loadFlowChecks(FlowChecksLoader* fcl) {
   protocol_detected = fcl->getProtocolDetectedChecks(iface);
-  periodic_update   = fcl->getPeriodicUpdateChecks(iface);
-  flow_end          = fcl->getFlowEndChecks(iface);
-  flow_begin        = fcl->getFlowBeginChecks(iface);
+  periodic_update = fcl->getPeriodicUpdateChecks(iface);
+  flow_end = fcl->getFlowEndChecks(iface);
+  flow_begin = fcl->getFlowBeginChecks(iface);
 }
 
 /* **************************************************** */
 
-FlowAlert *FlowChecksExecutor::execChecks(Flow *f, FlowChecks c) {
-  FlowAlertType predominant_alert = f->getPredominantAlert();
-  FlowCheck *predominant_check = NULL;
-  std::list<FlowCheck*> *checks = NULL;
-  FlowAlert *alert = NULL;
+void FlowChecksExecutor::execChecks(Flow* f, FlowChecks c) {
+  std::list<FlowCheck*>* checks = NULL;
+#ifdef CHECKS_PROFILING
+  u_int64_t t1, t2;
+#endif
 
   switch (c) {
+    case flow_check_flow_begin:
+      checks = flow_begin;
+      break;
     case flow_check_protocol_detected:
       checks = protocol_detected;
       break;
@@ -64,49 +72,46 @@ FlowAlert *FlowChecksExecutor::execChecks(Flow *f, FlowChecks c) {
     case flow_check_flow_end:
       checks = flow_end;
       break;
-    case flow_check_flow_begin:
-      checks = flow_begin;
-      break;
     default:
-      return NULL;
+      return;
   }
 
-  for(list<FlowCheck*>::iterator it = checks->begin(); it != checks->end(); ++it) {
+  for (list<FlowCheck*>::iterator it = checks->begin(); it != checks->end();
+       ++it) {
+    FlowCheck* fc = (*it);
+
+#ifdef CHECKS_PROFILING
+    t1 = Utils::getTimeNsec();
+#endif
+
+    // ntop->getTrace()->traceEvent(TRACE_ERROR, "[state: %u] %s", c,
+    // fc->getName().c_str());
+
     switch (c) {
+      case flow_check_flow_begin:
+        fc->flowBegin(f);
+        break;
       case flow_check_protocol_detected:
-        (*it)->protocolDetected(f);
+        fc->protocolDetected(f);
         break;
       case flow_check_periodic_update:
-        (*it)->periodicUpdate(f);
+        fc->periodicUpdate(f);
         break;
       case flow_check_flow_end:
-        (*it)->flowEnd(f);
-        break;
-      case flow_check_flow_begin:
-        (*it)->flowBegin(f);
+        fc->flowEnd(f);
         break;
       default:
-	break;
+        break;
     }
-    
-    /* Check if the check triggered a predominant alert */
-    if (f->getPredominantAlert().id != predominant_alert.id) {
-      predominant_alert = f->getPredominantAlert();
-      predominant_check = (*it);
-    }
+
+#ifdef CHECKS_PROFILING
+    t2 = Utils::getTimeNsec();
+
+    fc->incStats(t2 - t1);
+#endif
   }
 
-  /* Do NOT allocate any alert, there is nothing left to do as flow alerts don't have to be emitted */
-  if(ntop->getPrefs()->dontEmitFlowAlerts()) return(NULL);
-
-  if (predominant_check) {
-    /* Allocate the alert */
-    alert = predominant_check->buildAlert(f);
-
-    f->setPredominantAlertInfo(alert);
-  }
-
-  return alert;
+  f->flushAlerts();
 }
 
 /* **************************************************** */

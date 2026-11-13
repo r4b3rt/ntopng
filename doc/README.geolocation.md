@@ -6,7 +6,7 @@ ntopng includes Geolocation support provided by the following companies
 
 ntopng geolocation is based on a database file stored locally with no cloud access whatsoever.
 
-You can choose to install the free (albeith not very accurate) GeoIP databases or the commercial ones.
+You can choose to install the free (albeit not very accurate) GeoIP databases or the commercial ones.
 By default the `ntopng-data` includes the DB-IP databases that are released under the Creative Commons Attribution License.
 
 Please install the `ntopng-data` package to enable geolocation in ntopng, this unless you already have geolocation databases installed.
@@ -38,12 +38,24 @@ If you prefer to handle updates manually, you may skip `ntopng-data` installatio
 
 Since the `geoipupdate` package is not available on Raspberry Pi, the MaxMind database should be downloaded and installed manually on this platform. Please check the next section for further instructions.
 
+## How to use MaxMind instead of DB-IP ?
+
+The simplest solution is to install `ntopng-data`. However if this is not possible please do (as root):
+- sudo su
+- cd /usr/share/ntopng/httpdocs/geoip/
+- mkdir backup
+- mv *mmdb backup
+- ln -s /var/lib/GeoIP/GeoLite2-City.mmdb .
+- ln -s /var/lib/GeoIP/GeoLite2-ASN.mmdb .
+- service ntopng restart
+
+
 ## Using geolocation when `ntopng-data` is not available
 
 In case package `ntopng-data` or `geoipupdate` is not available on your platform:
 
 0. Manually download database files
-   - DB-IP: `dbip-city-lite`, `dbip-asn-lite`, and `dbip-country-lite` (https://db-ip.com/db/) databases
+   - DB-IP: `dbip-city-lite`, `dbip-asn-lite`, and `dbip-country-lite` (https://db-ip.com/db/) databases in MMDB format
    - MaxMind: `GeoLite2-ASN.mmdb` and `GeoLite2-City.mmdb` from the "GeoIP2 / GeoLite2" > "Download Files" section of your MaxMind account page
    
 1. Then place the downloaded files under a specifiy folder which depends on the platform:

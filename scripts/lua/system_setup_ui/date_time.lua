@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -11,12 +11,12 @@ require "prefs_utils"
 local tz_utils = require("tz_utils")
 prefsSkipRedis(true)
 
-if not (ntop.isnEdge() or ntop.isAppliance()) or not isAdministrator() then
+if not ((ntop.isnEdge and ntop.isnEdge()) or ntop.isAppliance()) or not isAdministrator() then
    return
 end
 
 local sys_config
-if ntop.isnEdge() then
+if ntop.isnEdge and ntop.isnEdge() then
    package.path = dirs.installdir .. "/pro/scripts/lua/nedge/modules/system_config/?.lua;" .. package.path
    sys_config = require("nf_config"):create(true)
 else -- ntop.isAppliance()
@@ -92,9 +92,8 @@ local print_page_body = function()
       field = "ntp_sync_enabled",
       default = ternary(date_time_config.ntp_sync.enabled, "1", "0"),
       to_switch = dateTimeElementsToSwitch,
-      pref = "",
-      redis_prefix = "",
       reverse_switch = true,
+      local_store = true, -- do not store on redis
    })
 
    local showEnabled = ternary(date_time_config.ntp_sync.enabled, false, true)

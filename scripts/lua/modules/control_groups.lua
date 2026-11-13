@@ -1,5 +1,5 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
 -- Module to keep things in common across control_groups of various type
 
@@ -106,7 +106,7 @@ local function _lock()
    for i = 1, max_lock_attempts do
       local value_set = ntop.setnxCache(lock_key, "1", max_lock_duration)
 
-      if value_set then
+      if ntop.getCache(lock_key) == "1" then
 	 return true -- lock acquired
       end
 

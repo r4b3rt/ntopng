@@ -1,0 +1,330 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+-- MCP (Model Context Protocol) server for ntopng LLM tools.
+-- Transport : MCP 2025-03-26 Streamable HTTP
+-- Auth      : HTTP Basic Auth  "Authorization: Basic base64(user:pass)"
+--             HTTP Token Auth  "Authorization: Token <api-token>"
+
+--
+-- POST /lua/rest/v2/exec/llm/mcp.lua          (JSON-RPC 2.0 body)
+-- GET  /lua/rest/v2/exec/llm/mcp.lua          (server health / discovery)
+-- Optional query param: ?ifid=<interface_id>   (default: 0)
+
+-- Must be set before http_lint runs (parsePOSTpayload checks this flag).
+-- If set too late, http_lint decodes _POST["payload"] into a table and
+-- json.decode(payload) receives a table instead of a string.
+ignore_post_payload_parse = true  -- luacheck: ignore
+pragma_once_http_lint      = true  -- luacheck: ignore
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+
+
+local json        = require("dkjson")
+local rest_utils  = require("rest_utils")
+
+-- Pro paths: only add if nAnalyst is available
+local page_utils  = require("page_utils")
+require "check_redis_prefs"
+
+if isnAnalystAvailable() then
+   package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;"     .. package.path
+   package.path = dirs.installdir .. "/pro/scripts/lua/modules/llm/?.lua;" .. package.path
+end
+
+-- Helpers
+local function send_json(body, status_code)
+   rest_utils.sendHTTPContentTypeHeader("application/json", nil, nil, nil, status_code)
+   if body and body ~= "" then print(body) end
+end
+
+-- Encode empty object
+local function empty_object()
+   return setmetatable({}, { __jsontype = "object" })
+end
+
+-- Metatable passed to json.decode so decoded empty objects re-encode as {}.
+local OBJECT_META = { __jsontype = "object" }
+
+local function rpc_ok(id, result)
+   if id == nil then id = json.null end
+   return json.encode({ jsonrpc = "2.0", id = id, result = result })
+end
+
+-- Per JSON-RPC 2.0, "id" must be present in an error response (null when unknown).
+local function rpc_err(id, code, message)
+   if id == nil then id = json.null end
+   return json.encode({ jsonrpc = "2.0", id = id,
+      error = { code = code, message = message } })
+end
+
+-- Authentication Checks
+local current_user = (_SESSION and _SESSION["user"]) or ""
+if current_user == "" then
+   send_json(rpc_err(nil, -32001, "Unauthorized: valid credentials required"), 401)
+   return
+end
+
+if not isAdministrator() then
+   send_json(rpc_err(nil, -32003, "Forbidden: administrator role required"), 403)
+   return
+end
+
+
+-- Load LLM tools, start by loading community tools, if nAnalyst is available load pro tools
+local _tools_mod = nil
+
+local function get_tools()
+   if _tools_mod then return _tools_mod, nil end
+   
+   -- Community tools: scripts/lua/modules/llm/tools.lua
+   package.path = dirs.installdir .. "/scripts/lua/modules/llm/?.lua;" .. package.path
+   local ok, mod = pcall(function() return require("tools") end)
+   if not ok then
+      return nil, "ntopng LLM tools not available: " .. tostring(mod)
+   end
+
+   -- nAnalyst tools: pro/scripts/lua/modules/llm/pro_tools.lua
+   -- nAnalyst is included from Enterprise M upward (no standalone SKU). pro_tools
+   -- itself enforces each tool's min_edition gate (M / L / XL), so loading it
+   -- whenever nAnalyst is available is correct — lower editions simply register
+   -- fewer tools.
+   if isnAnalystAvailable() then
+      local ok2, pro_tools = pcall(function() return require("pro_tools") end)
+      if ok2 and pro_tools then
+         mod = pro_tools
+      else
+         tprint("[mcp] pro_tools load failed (using community tools): " .. tostring(pro_tools))
+      end
+   end
+
+   _tools_mod = mod
+   return mod, nil
+end
+
+-- MCP initialize
+local _system_prompt = nil
+
+local function get_system_prompt()
+   if _system_prompt then return _system_prompt end
+
+   -- Community tools: scripts/lua/modules/llm/tools.lua
+   package.path = dirs.installdir .. "/scripts/lua/modules/llm/?.lua;" .. package.path
+   local tools = require("tools")
+   _system_prompt = tools.IDENTITY
+
+   -- If nAnalyst available, load pro system prompt (extends community with SQL rules)
+   if isnAnalystAvailable() then
+      local ok, prompts = pcall(function() return require("prompts") end)
+      if ok and prompts and prompts.system_prompt then
+         _system_prompt = prompts.system_prompt(false)
+      end
+   end
+   
+   return _system_prompt
+end
+
+local function handle_initialize(id, _params)
+   return rpc_ok(id, {
+      protocolVersion = "2025-03-26",
+      capabilities    = { tools = { listChanged = false } },
+      serverInfo      = { name = "ntopng-mcp", version = "1.0" },
+      instructions    = get_system_prompt(),
+   })
+end
+
+-- MCP method: tools/list -> Exposes every entry in tools._registry as an MCP tool.
+local function handle_tools_list(id, _params)
+   local tools, err = get_tools()
+   if not tools then return rpc_err(id, -32603, err) end
+
+   local list = {}
+   for name, entry in pairs(tools._registry) do
+      list[#list + 1] = {
+         name        = name,
+         description = entry.description,
+         inputSchema = entry.parameters,
+         annotations = {
+            readOnlyHint        = (entry.read_only == true),
+            destructiveHint     = false,
+            requiresClickHouse  = (entry.requires_clickhouse == true),
+            licenseRequired     = entry.license_required,
+         },
+      }
+   end
+
+   table.sort(list, function(a, b) return a.name < b.name end)
+   return rpc_ok(id, { tools = list })
+end
+
+-- MCP method: tools/call -> Dispatches to tools.dispatch(name, arguments).
+local function handle_tools_call(id, params)
+   if type(params) ~= "table" then
+      return rpc_err(id, -32602, "params must be an object")
+   end
+
+   local tool_name = params.name
+   local arguments = params.arguments or {}
+
+   if type(tool_name) ~= "string" or tool_name == "" then
+      return rpc_err(id, -32602, "params.name is required")
+   end
+
+   local tools, err = get_tools()
+   if not tools then return rpc_err(id, -32603, err) end
+
+   if type(arguments) ~= "table" then
+      return rpc_err(id, -32602, "params.arguments must be an object")
+   end
+
+   -- call tool: arguments follow the tool's inputSchema
+   local result, tool_err, artifact = tools.dispatch(tool_name, arguments)
+
+   -- Tool execution failures are reported inside the result with isError=true
+   local is_error = (tool_err ~= nil and result == nil)
+   local text = result or ""
+   if tool_err then
+      if is_error then
+         text = tostring(tool_err)
+      else
+         text = text .. "\n[tool warning: " .. tostring(tool_err) .. "]"
+      end
+   end
+
+   local mcp_content = { { type = "text", text = text } }
+
+   -- Artifact such as chart. Embed it as a tagged text block so MCP clients can parse it if desired.
+   if artifact then
+      mcp_content[#mcp_content + 1] = {
+         type = "text",
+         text = "NTOPNG_ARTIFACT:" .. json.encode(artifact),
+      }
+   end
+
+   return rpc_ok(id, {
+      content = mcp_content,
+      isError = is_error,
+   })
+end
+
+-- JSON-RPC 2.0 dispatcher
+local method_handlers = {
+   ["initialize"]               = handle_initialize,
+   ["tools/list"]               = handle_tools_list,
+   ["tools/call"]               = handle_tools_call,
+   ["ping"]                     = function(id, _) return rpc_ok(id, empty_object()) end,
+   
+   -- Notifications: no id, no response expected
+   ["notifications/initialized"] = function(_, _) return nil end,
+   ["notifications/cancelled"]   = function(_, _) return nil end,
+}
+
+local function dispatch_request(req)
+   if type(req) ~= "table" then
+      return rpc_err(nil, -32600, "invalid request")
+   end
+
+   local req_id = req.id
+   local method = req.method
+   local params = req.params
+
+   -- Client responses (no method, has result/error) are not requests: ignore
+   if method == nil and (req.result ~= nil or req.error ~= nil) then
+      return nil
+   end
+
+   if req.jsonrpc ~= "2.0" or type(method) ~= "string"
+      or (params ~= nil and type(params) ~= "table") then
+      return rpc_err(req_id, -32600, "invalid request")
+   end
+
+   local handler = method_handlers[method]
+   if not handler then
+      -- Unknown method: only respond if there is an id, not a notification
+      if req_id ~= nil then
+         return rpc_err(req_id, -32601, "method not found: " .. tostring(method))
+      end
+      return nil
+   end
+
+   local resp = handler(req_id, params)
+
+   -- A request without an id is a notification: never send a response
+   if req_id == nil then return nil end
+
+   return resp
+end
+
+-------------------------------------------------------------------
+-- Entry point
+local http_method = (_SERVER and _SERVER["REQUEST_METHOD"]) or "GET"
+
+-- GET -> health / discovery 
+if http_method == "GET" then
+   -- MCP Streamable HTTP: a GET asking for an SSE stream must get 405 when the server
+   -- offers none, otherwise the client reconnects in a loop (about once per second)
+   if string.find(_SERVER["Accept"] or "", "text/event-stream", 1, true) then
+      send_json(rpc_err(nil, -32000, "SSE stream not supported, use POST"), 405)
+      return
+   end
+
+   local tools, _ = get_tools()
+   local tool_count = 0
+
+   if tools then
+      for _ in pairs(tools._registry) do tool_count = tool_count + 1 end
+   end
+
+   send_json(json.encode({
+      server          = "ntopng-mcp",
+      protocol        = "2025-03-26",
+      authenticated_as = current_user,
+      tools_available = tool_count,
+   }))
+   return
+end
+
+-- POST -> JSON-RPC 2.0
+local payload = _POST and _POST["payload"]
+if not payload or payload == "" then
+   send_json(rpc_err(nil, -32700, "empty request body; "
+      .. "POST Content-Type must be application/json"), 400)
+   return
+end
+
+local request, _, parse_err = json.decode(payload, 1, nil, OBJECT_META)
+if request == nil then
+   send_json(rpc_err(nil, -32700, "JSON parse error: " .. tostring(parse_err)), 400)
+   return
+end
+
+-- Batch request: array of JSON-RPC objects
+if type(request) == "table" and request[1] == nil and next(request) == nil then
+   -- Empty batch "[]" (or empty object) is an invalid request
+   send_json(rpc_err(nil, -32600, "invalid request"), 400)
+   return
+end
+
+if type(request) == "table" and request[1] ~= nil then
+   local responses = {}
+
+   for _, req in ipairs(request) do
+      local resp_str = dispatch_request(req)
+      if resp_str then
+         local obj = json.decode(resp_str, 1, nil, OBJECT_META)
+         if obj then responses[#responses + 1] = obj end
+      end
+   end
+   
+   -- If all were notifications there is nothing to return
+   send_json(#responses > 0 and json.encode(responses) or "")
+   return
+end
+
+local resp_str = dispatch_request(request)
+if not resp_str then
+   rest_utils.sendHTTPContentTypeHeader("application/json", nil, nil, nil, 202)
+else
+   send_json(resp_str)
+end

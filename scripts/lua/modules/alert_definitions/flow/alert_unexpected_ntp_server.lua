@@ -1,14 +1,14 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
-
 -- ##############################################
-
 local flow_alert_keys = require "flow_alert_keys"
 -- Import the classes library.
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -17,11 +17,23 @@ local alert_unexpected_ntp_server = classes.class(alert)
 -- ##############################################
 
 alert_unexpected_ntp_server.meta = {
-   alert_key = flow_alert_keys.flow_alert_unexpected_ntp_server,
-   i18n_title = "flow_alerts_explorer.alert_unexpected_ntp_title",
-   icon = "fas fa-fw fa-exclamation",
+    alert_key = flow_alert_keys.flow_alert_unexpected_ntp_server,
+    i18n_title = "flow_alerts_explorer.alert_unexpected_ntp_title",
+    icon = "fas fa-fw fa-exclamation",
 
-   has_attacker = true,
+    -- Mitre Att&ck Matrix values
+    mitre_values = {
+        mitre_tactic = mitre.tactic.impact,
+        mitre_technique = mitre.technique.network_ddos,
+        mitre_sub_technique = mitre.sub_technique.reflection_amplification,
+        mitre_id = "T1498.002"
+    },
+
+    has_attacker = true,
+
+    -- Triggered by the servers not in this list of the Network Configuration (network_config_utils.servers):
+    -- the host of the alert is the client contacting the server
+    network_config_list = "ntp_list"
 }
 
 -- ##############################################
@@ -31,8 +43,8 @@ alert_unexpected_ntp_server.meta = {
 -- @param another_flow_param The second alert param
 -- @return A table with the alert built
 function alert_unexpected_ntp_server:init()
-   -- Call the parent constructor
-   self.super:init()
+    -- Call the parent constructor
+    self.super:init()
 end
 
 -- #######################################################
@@ -43,7 +55,13 @@ end
 -- @param alert_type_params Table `alert_type_params` as built in the `:init` method
 -- @return A human-readable string
 function alert_unexpected_ntp_server.format(ifid, alert, alert_type_params)
-    return(i18n("flow_alerts_explorer.status_unexpected_ntp_description", { server=alert.srv_ip} ))
+    return (i18n("flow_alerts_explorer.status_unexpected_ntp_description", {
+        server = hostinfo2label({
+            ip = alert.srv_ip,
+            vlan = alert.vlan_id,
+            name = alert.srv_name
+        }, true, false, true)
+    }))
 end
 
 -- #######################################################

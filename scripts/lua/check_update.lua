@@ -1,5 +1,5 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -7,9 +7,9 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 require "lua_utils"
 local json = require("dkjson")
+local rest_utils      = require "rest_utils"
+local auth            = require "auth"
 local info = ntop.getInfo() 
-
-sendHTTPHeader('application/json')
 
 if not isAdministratorOrPrintErr() then
   return
@@ -87,11 +87,8 @@ else
     -- Check for failures
     local update_failure = ntop.getCache(update_failure_key)
 
-    -- Allow updates with no license in forced Community mode
     if not isEmptyString(update_failure) then
-      if update_failure == "no-license" and ntop.isForcedCommunity() then
-        update_failure = nil
-      elseif update_failure == "upgrade-failure" and isEmptyString(new_version) then
+      if update_failure == "upgrade-failure" and isEmptyString(new_version) then
         update_failure = nil -- Manual update after a failure?
       end
     end
@@ -112,4 +109,4 @@ res = {
   version = new_version,
 }
 
-print(json.encode(res, nil, 1))
+rest_utils.answer(rest_utils.consts.success.ok, res)

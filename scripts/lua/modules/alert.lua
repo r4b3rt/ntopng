@@ -1,17 +1,26 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
-
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 -- Import the classes library.
 local classes = require "classes"
 local alert_severities = require "alert_severities"
+local alert_granularities = require "alert_granularities"
 
 -- ##############################################
 
 local Alert = classes.class()
+
+-- ##############################################
+
+-- Issues (Enterprise XXL+, see doc/developers/README.issues.md): alerts are grouped
+-- into issues (by entity, entity value, alert type and subtype) according to these
+-- optional settings of the alert definitions, read once at startup:
+-- - meta.issue = false: the alert does not open issues (e.g. informational alerts)
+-- - meta.issue_resolve_policy = "on_release" | "quiet_period" | "manual": how the
+--   issue is resolved (default: on_release for engaged alerts, quiet_period otherwise)
 
 -- ##############################################
 
@@ -21,136 +30,228 @@ end
 -- ##############################################
 
 function Alert:format()
-   --tprint("base format")
+    -- tprint("base format")
+end
+
+-- ##############################################
+
+-- @brief Function called to set standard information:
+--        - score
+--        - subtype
+--        - granularity
+--        Those information could be set using standard functions
+--        like set_score() or set_granularity
+function Alert:set_info(params)
+    local script = params.check
+    if (not self.score or self.score == 0) and (script) then
+        self.score = ntop.mapSeverityToScore(script.severity.severity_id or 0 --[[ no score ]] )
+    elseif (script == nil) then
+        self.score = ntop.mapSeverityToScore(0 --[[ no score ]])
+	--        traceError(TRACE_ERROR, TRACE_CONSOLE, string.format("No script detected for entity %s, granularity: %s", params.entity_info.name, params.granularity))
+	--        tprint(debug.traceback())
+    end
+
+    if params.entity_info then
+        self.subtype = params.entity_info.name or ""
+    end
+
+    self.granularity = alert_granularities[params.granularity]
+end
+
+-- ##############################################
+
+function Alert:set_alert_type_params(alert_type_params)
+    if (alert_type_params) and (table.len(alert_type_params) > 0) then
+        self.alert_type_params = alert_type_params
+        return true
+    end
+    return false
 end
 
 -- ##############################################
 
 function Alert:_build_type_info()
-   local type_info =  {
-      -- Keys necessary for the engine
-      alert_type = self.meta,
-      subtype = self.subtype,
-      granularity = self.granularity,
-      score = self.score,
-      device_type = self.device_type,
-      device_name = self.device_name,
-      -- Stuff added in subclasses :init
-      alert_type_params = self.alert_type_params or {}
-   }
+    local type_info = {
+        -- Keys necessary for the engine
+        alert_type = self.meta,
+        alert_category = self.category,
+        subtype = self.subtype,
+        granularity = self.granularity,
+        score = self.score,
+        require_attention = self.require_attention,
+        is_attacker = self.is_attacker,
+        is_victim = self.is_victim,
+        device_type = self.device_type,
+        device_name = self.device_name,
+        -- Stuff added in subclasses :init
+        alert_type_params = self.alert_type_params or {}
+    }
 
-   -- Add the attacker to the alert params (if present)
-   if self.attacker then
-      type_info.alert_type_params.attacker = self.attacker
-   end
+    -- Add the attacker to the alert params (if present)
+    if self.attacker then
+        type_info.alert_type_params.attacker = self.attacker
+    end
 
-   -- Add the victim to the alert params (if present)
-   if self.victim then
-      type_info.alert_type_params.victim = self.victim
-   end
+    -- Add the victim to the alert params (if present)
+    if self.victim then
+        type_info.alert_type_params.victim = self.victim
+    end
 
-   return type_info
+    return type_info
 end
 
 -- ##############################################
 
 function Alert:_check_alert_data()
-   if self == nil then
-      return true
-   end
+    if self == nil then
+        return true
+    end
 
-   if self.meta.has_victim and not self.victim then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "alert.alert_error.configuration.no_victim")
-      return false
-   end
+    if self.meta.has_victim and not self.victim then
+        traceError(TRACE_ERROR, TRACE_CONSOLE, "alert.alert_error.configuration.no_victim")
+        return false
+    end
 
-   if self.meta.has_attacker and not self.attacker then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "alert.alert_error.configuration.no_attacker")
-      return false
-   end
+    if self.meta.has_attacker and not self.attacker then
+        traceError(TRACE_ERROR, TRACE_CONSOLE, "alert.alert_error.configuration.no_attacker")
+        return false
+    end
 
-   return true
+    return true
 end
 
 -- ##############################################
 
 function Alert:trigger(entity_info, when, cur_alerts)
-   local alerts_api = require "alerts_api"
+    local alerts_api = require "alerts_api"
 
-   if not self._check_alert_data() then
-      return
-   end
+    if not self._check_alert_data() then
+        return
+    end
 
-   return alerts_api.trigger(entity_info, self:_build_type_info(), nil, cur_alerts)
+    return alerts_api.trigger(entity_info, self:_build_type_info(), nil, cur_alerts)
 end
 
 -- ##############################################
 
 function Alert:release(entity_info, when, cur_alerts)
-   local alerts_api = require "alerts_api"
+    local alerts_api = require "alerts_api"
 
-   if not self._check_alert_data() then
-      return
-   end
+    if not self._check_alert_data() then
+        return
+    end
 
-   return alerts_api.release(entity_info, self:_build_type_info(), nil, cur_alerts)
+    return alerts_api.release(entity_info, self:_build_type_info(), nil, cur_alerts)
 end
 
 -- ##############################################
 
 function Alert:store(entity_info)
-   local alerts_api = require "alerts_api"
+    local alerts_api = require "alerts_api"
 
-   if not self._check_alert_data() then
-      return
-   end
+    if not self._check_alert_data() then
+        return false
+    end
 
-   return alerts_api.store(entity_info, self:_build_type_info())
+    return alerts_api.store(entity_info, self:_build_type_info())
+end
+
+-- ##############################################
+
+function Alert:set_category(category)
+    self.category = category
+end
+
+-- ##############################################
+
+function Alert:set_require_attention()
+    self.require_attention = true
 end
 
 -- ##############################################
 
 function Alert:set_score(score)
-   self.score = tonumber(score)
+    self.score = tonumber(score)
 end
 
---@brief Methods to set score defaults, keep them in sync with
+-- @brief Methods to set score defaults, keep them in sync with
 -- ntop_defines.h
-function Alert:set_score_notice()  self.score = ntop.mapSeverityToScore(alert_severities.notice.severity_id) end
-function Alert:set_score_warning() self.score = ntop.mapSeverityToScore(alert_severities.warning.severity_id) end
-function Alert:set_score_error()   self.score = ntop.mapSeverityToScore(alert_severities.error.severity_id) end
+function Alert:set_score_notice()
+    self.score = ntop.mapSeverityToScore(alert_severities.notice.severity_id)
+end
+function Alert:set_score_warning()
+    self.score = ntop.mapSeverityToScore(alert_severities.warning.severity_id)
+end
+function Alert:set_score_error()
+    self.score = ntop.mapSeverityToScore(alert_severities.error.severity_id)
+end
+function Alert:set_score_critical()
+    self.score = ntop.mapSeverityToScore(alert_severities.critical.severity_id)
+end
+function Alert:set_score_emergency()
+    self.score = ntop.mapSeverityToScore(alert_severities.emergency.severity_id)
+end
 
 -- ##############################################
 
 function Alert:set_subtype(subtype)
-   self.subtype = subtype
+    self.subtype = subtype
+end
+
+-- ##############################################
+
+function Alert:get_subtype()
+    return self.subtype
 end
 
 -- ##############################################
 
 function Alert:set_granularity(granularity)
-   local alert_consts = require "alert_consts"
-
-   self.granularity = alert_consts.alerts_granularities[granularity]
-   if(self.granularity == nil) then
-      print("[ERROR] Unknown granularity\n")
-      tprint(granularity)
-      print(debug.traceback())
-   end
+    self.granularity = alert_granularities[granularity]
+    if (self.granularity == nil) then
+        print("[ERROR] Unknown granularity\n")
+        tprint(granularity)
+        print(debug.traceback())
+    end
 end
 
 -- ##############################################
 
---@brief Functions to set L2-related data, e.g., device type and name
-function Alert:set_device_type(devtype) self.device_type = tonumber(devtype) end
-function Alert:set_device_name(devname) self.device_name = tostring(devname) end
+-- @brief Functions to set L2-related data, e.g., device type and name
+function Alert:set_device_type(devtype)
+    self.device_type = tonumber(devtype)
+end
+function Alert:set_device_name(devname)
+    self.device_name = tostring(devname)
+end
 
 -- ##############################################
 
-function Alert:set_attacker(attacker) self.attacker = attacker end
-function Alert:set_victim(victim) self.victim = victim end
-function Alert:set_origin(origin) self.origin = origin end
-function Alert:set_target(target) self.target = target end
+function Alert:set_as_attacker()
+    self.is_attacker = true
+end
+
+function Alert:set_as_victim()
+    self.is_victim = true
+end
+
+-- ##############################################
+
+function Alert:set_attacker(attacker)
+    self.attacker = attacker
+end
+
+function Alert:set_victim(victim)
+    self.victim = victim
+end
+
+function Alert:set_origin(origin)
+    self.origin = origin
+end
+
+function Alert:set_target(target)
+    self.target = target
+end
 
 -- ##############################################
 

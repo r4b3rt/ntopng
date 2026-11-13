@@ -1,0 +1,79 @@
+--
+-- (C) 2020-26 - ntop.org
+--
+
+local dirs = ntop.getDirs()
+
+local vs_module = {}
+
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
+local ascan_utils = require("ascan_utils")
+
+-- ##############################################
+
+function vs_module:new()
+   local obj = { name = "ipv4_netscan", cidr = 24 }
+
+   setmetatable(obj, self)
+   self.__index = self
+
+   return obj
+end
+
+-- ##############################################
+
+function vs_module:is_enabled()
+   return(ascan_utils.is_nmap_installed())
+end
+
+-- ##############################################
+
+-- NOTE: ports are comma separated (e.g 80,443)
+
+function vs_module:scan_host(network_ip, ports, use_coroutines, cidr)
+   local secondary_scan_types, scan_frequency,net_scan_all, net_periodic_scan, net_single_scan = ascan_utils.get_network_pref_value(network_ip, self.name)
+
+   local sub_scans_types = {}
+   if (secondary_scan_types and secondary_scan_types:find(",")) then
+      sub_scans_types = string.split(secondary_scan_types,",")
+   else
+      sub_scans_types[#sub_scans_types + 1] = secondary_scan_types
+   end
+   local cidr_to_use = ternary(cidr ~= nil, cidr, self.cidr)
+   local discovered_hosts,scan_out,start_scan,scan_duration,scan_ok = ascan_utils.exec_netscan(network_ip, cidr_to_use)
+   
+   local hosts_not_configured = {}
+
+   -- [[ exec sub scan for every hosts discovered and for every sub scan type selected ]]
+   for _,host_ip in ipairs(discovered_hosts) do
+      
+      for _,d_scan_type in ipairs(sub_scans_types) do
+
+         local found_host_and_scan_type = ascan_utils.isVSConfiguredHostScanType(host_ip,d_scan_type)
+         if (found_host_and_scan_type) then
+            -- nothing to do
+         else
+            if (ascan_utils.isVSConfiguredHost(host_ip)) then
+               -- the host was already detected 
+            else
+               -- NEW HOST detected
+               hosts_not_configured[#hosts_not_configured+1] = host_ip
+               ascan_utils.triggerHostNotConfiguredAlert(host_ip,d_scan_type)
+            end
+
+            -- configure and scan host
+            local result,id = ascan_utils.add_host_pref(d_scan_type, host_ip, ports, scan_frequency, nil)
+            ascan_utils.schedule_ondemand_single_host_scan(d_scan_type,host_ip,ports,id,net_periodic_scan,net_scan_all,net_single_scan)
+         end
+      end
+      
+   end
+   
+return start_scan,scan_out,scan_duration,scan_ok,0--[[num_open_ports]],{}--[[udp_ports]],{}--[[tcp_ports]], hosts_not_configured
+
+end
+
+-- ##############################################
+
+return vs_module
+

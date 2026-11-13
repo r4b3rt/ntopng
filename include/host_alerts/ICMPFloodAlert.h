@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,11 +26,14 @@
 
 class ICMPFloodAlert : public FlowHitsAlert {
  private:
-  
  public:
-  static HostAlertType getClassType() { return { host_alert_icmp_flood, alert_category_security }; }
+  static HostAlertType getClassType() {
+    return {host_alert_icmp_flood, alert_category_security};
+  }
 
-  ICMPFloodAlert(HostCheck *c, Host *h, risk_percentage cli_pctg, u_int16_t hits, u_int64_t threshold, bool is_attacker) : FlowHitsAlert(c, h, cli_pctg, hits, threshold, is_attacker) {};
+  ICMPFloodAlert(HostCheck* c, Host* h, risk_percentage cli_pctg,
+                 u_int16_t hits, u_int64_t threshold, bool is_attacker)
+      : FlowHitsAlert(c, h, cli_pctg, hits, threshold, is_attacker) {};
   ~ICMPFloodAlert() {};
 
   HostAlertType getAlertType() const { return getClassType(); }

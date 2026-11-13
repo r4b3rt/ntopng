@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,9 @@ ticks ThreadedActivityStats::tickspersec = Utils::gettickspersec();
 
 /* ******************************************* */
 
-ThreadedActivityStats::ThreadedActivityStats(const ThreadedActivity *ta) {
+ThreadedActivityStats::ThreadedActivityStats(const ThreadedActivity* ta) {
+  // if(trace_new_delete) ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s",
+  // __FILE__);
   memset(&ta_stats, 0, sizeof(ta_stats));
   last_start_time = in_progress_since = 0;
   last_queued_time = deadline = scheduled_time = 0;
@@ -39,8 +41,7 @@ ThreadedActivityStats::ThreadedActivityStats(const ThreadedActivity *ta) {
 
 /* ******************************************* */
 
-ThreadedActivityStats::~ThreadedActivityStats() {
-}
+ThreadedActivityStats::~ThreadedActivityStats() {}
 
 /* ******************************************* */
 
@@ -50,8 +51,18 @@ void ThreadedActivityStats::incTimeseriesWriteDrops(u_long num_drops) {
 
 /* ******************************************* */
 
+void ThreadedActivityStats::incSNMPHostPolls(bool counters_poll_only) {
+  if(counters_poll_only)
+    ta_stats.snmp.num_polled_hosts_counters_only++;
+  else
+    ta_stats.snmp.num_polled_hosts_all_mibs++;
+}
+
+/* ******************************************* */
+
 void ThreadedActivityStats::updateTimeseriesWriteStats(ticks cur_ticks) {
-  threaded_activity_timeseries_delta_stats_t *last_stats = &ta_stats.timeseries.write.last;
+  threaded_activity_timeseries_delta_stats_t* last_stats =
+      &ta_stats.timeseries.write.last;
 
   /* Increase overall total stats */
   ta_stats.timeseries.write.tot_calls++;
@@ -59,7 +70,20 @@ void ThreadedActivityStats::updateTimeseriesWriteStats(ticks cur_ticks) {
   /* Increase delta stats */
   last_stats->tot_ticks += cur_ticks;
   last_stats->tot_calls++;
-  if(cur_ticks > last_stats->max_ticks) last_stats->max_ticks = cur_ticks;
+  if (cur_ticks > last_stats->max_ticks) last_stats->max_ticks = cur_ticks;
+}
+
+/* ******************************************* */
+
+void ThreadedActivityStats::updateTimeseriesWritten(u_int32_t num_ts) {
+  threaded_activity_timeseries_delta_stats_t* last_stats =
+    &ta_stats.timeseries.write.last;
+  
+  /* Increase overall total stats */
+  ta_stats.timeseries.write.tot_calls += num_ts;
+  
+  /* Increase delta stats */
+  last_stats->tot_calls += num_ts;
 }
 
 /* ******************************************* */
@@ -70,11 +94,12 @@ void ThreadedActivityStats::updateStatsQueuedTime(time_t queued_time) {
 
 /* ******************************************* */
 
-void ThreadedActivityStats::updateStatsBegin(struct timeval *begin) {
+void ThreadedActivityStats::updateStatsBegin(struct timeval* begin) {
   in_progress_since = last_start_time = begin->tv_sec;
 
   /* Start over */
-  memset(&ta_stats.timeseries.write.last, 0, sizeof(ta_stats.timeseries.write.last));
+  memset(&ta_stats.timeseries.write.last, 0,
+         sizeof(ta_stats.timeseries.write.last));
   ta_stats.alerts.has_drops = false;
 }
 
@@ -84,21 +109,44 @@ void ThreadedActivityStats::updateStatsEnd(u_long duration_ms) {
   /* Update time and progress information */
   in_progress_since = 0;
   last_duration_ms = duration_ms;
-  if(duration_ms > max_duration_ms)
-    max_duration_ms = duration_ms;
+  if (duration_ms > max_duration_ms) max_duration_ms = duration_ms;
 
-  /* Update Timeseries stats for the last run which has just ended with this call */
-  if(ta_stats.timeseries.write.last.tot_calls > 0)
-    ta_stats.timeseries.write.last_max_call_duration_ms = ta_stats.timeseries.write.last.max_ticks / (float)tickspersec * 1000,
-      ta_stats.timeseries.write.last_avg_call_duration_ms = ta_stats.timeseries.write.last.tot_ticks / (float)tickspersec / ta_stats.timeseries.write.last.tot_calls * 1000;
+  /* Update Timeseries stats for the last run which has just ended with this
+   * call */
+  if (ta_stats.timeseries.write.last.tot_calls > 0)
+    ta_stats.timeseries.write.last_max_call_duration_ms =
+        ta_stats.timeseries.write.last.max_ticks / (float)tickspersec * 1000,
+    ta_stats.timeseries.write.last_avg_call_duration_ms =
+        ta_stats.timeseries.write.last.tot_ticks / (float)tickspersec /
+        ta_stats.timeseries.write.last.tot_calls * 1000;
   else
-    ta_stats.timeseries.write.last_max_call_duration_ms = ta_stats.timeseries.write.last_avg_call_duration_ms = 0;
+    ta_stats.timeseries.write.last_max_call_duration_ms =
+        ta_stats.timeseries.write.last_avg_call_duration_ms = 0;
 }
 
 /* ******************************************* */
 
-void ThreadedActivityStats::luaTimeseriesStats(lua_State *vm) {
-  threaded_activity_timeseries_stats_t *cur_stats = &ta_stats.timeseries.write;
+void ThreadedActivityStats::sumTimeseriesStats(ThreadedActivityStats* oth_tas) {
+  threaded_activity_timeseries_stats_t* cur_stats = &ta_stats.timeseries.write;
+  threaded_activity_timeseries_stats_t* oth_stats = &oth_tas->ta_stats.timeseries.write;
+
+  cur_stats->tot_calls += oth_stats->tot_calls;
+  cur_stats->tot_drops += oth_stats->tot_drops;
+  cur_stats->last_max_call_duration_ms = max_val(cur_stats->last_max_call_duration_ms, oth_stats->last_max_call_duration_ms);
+
+  if (cur_stats->last_avg_call_duration_ms == 0)
+    cur_stats->last_avg_call_duration_ms = oth_stats->last_avg_call_duration_ms;
+
+  if (oth_stats->last_slow) cur_stats->last_slow = true;
+
+  ta_stats.snmp.num_polled_hosts_counters_only += oth_tas->ta_stats.snmp.num_polled_hosts_counters_only;
+  ta_stats.snmp.num_polled_hosts_all_mibs += oth_tas->ta_stats.snmp.num_polled_hosts_all_mibs;
+}
+
+/* ******************************************* */
+
+void ThreadedActivityStats::luaTimeseriesStats(lua_State* vm) {
+  threaded_activity_timeseries_stats_t* cur_stats = &ta_stats.timeseries.write;
 
   lua_newtable(vm);
 
@@ -111,8 +159,10 @@ void ThreadedActivityStats::luaTimeseriesStats(lua_State *vm) {
   /* Stats for the last run */
   lua_newtable(vm); /* "last" */
 
-  lua_push_float_table_entry(vm, "max_call_duration_ms", cur_stats->last_max_call_duration_ms);
-  lua_push_float_table_entry(vm, "avg_call_duration_ms", cur_stats->last_avg_call_duration_ms);
+  lua_push_float_table_entry(vm, "max_call_duration_ms",
+                             cur_stats->last_max_call_duration_ms);
+  lua_push_float_table_entry(vm, "avg_call_duration_ms",
+                             cur_stats->last_avg_call_duration_ms);
   lua_push_bool_table_entry(vm, "is_slow", cur_stats->last_slow);
 
   lua_pushstring(vm, "last");
@@ -126,59 +176,67 @@ void ThreadedActivityStats::luaTimeseriesStats(lua_State *vm) {
   lua_pushstring(vm, "timeseries");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
+
+  /* ***************** */
+
+  lua_newtable(vm);
+  lua_push_uint64_table_entry(vm, "num_polled_hosts_counters_only",
+			      ta_stats.snmp.num_polled_hosts_counters_only);
+  lua_push_uint64_table_entry(vm, "num_polled_hosts_all_mibs",
+			      ta_stats.snmp.num_polled_hosts_all_mibs);
+
+  lua_pushstring(vm, "snmp");
+  lua_insert(vm, -2);
+  lua_settable(vm, -3);
 }
 
 /* ******************************************* */
 
 void ThreadedActivityStats::setNotExecutedActivity(bool _not_executed) {
   not_executed = _not_executed;
-  if(_not_executed)
-    num_not_executed++;
+  if (_not_executed) num_not_executed++;
 }
 
 /* ******************************************* */
 
 void ThreadedActivityStats::setSlowPeriodicActivity(bool _slow) {
   is_slow = _slow;
-  if(_slow)
-    num_is_slow++;
+  if (_slow) num_is_slow++;
 }
 
 /* ******************************************* */
 
-void ThreadedActivityStats::lua(lua_State *vm) {
+void ThreadedActivityStats::lua(lua_State* vm, bool includeTimeseriesStats) {
   lua_newtable(vm);
 
-  lua_push_uint64_table_entry(vm, "max_duration_ms", (u_int64_t)max_duration_ms);
-  lua_push_uint64_table_entry(vm, "last_duration_ms", (u_int64_t)last_duration_ms);
+  lua_push_uint64_table_entry(vm, "max_duration_ms",
+                              (u_int64_t)max_duration_ms);
+  lua_push_uint64_table_entry(vm, "last_duration_ms",
+                              (u_int64_t)last_duration_ms);
 
   lua_pushstring(vm, "duration");
   lua_insert(vm, -2);
   lua_settable(vm, -3);
 
-  luaTimeseriesStats(vm);
+  if (includeTimeseriesStats) luaTimeseriesStats(vm);
 
-  if(in_progress_since)
+  if (in_progress_since)
     lua_push_uint64_table_entry(vm, "in_progress_since", in_progress_since);
 
-  if(last_start_time) 
+  if (last_start_time)
     lua_push_uint64_table_entry(vm, "last_start_time", last_start_time);
 
-  if(last_queued_time)
+  if (last_queued_time)
     lua_push_uint64_table_entry(vm, "last_queued_time", last_queued_time);
 
-  if(not_executed)
-    lua_push_bool_table_entry(vm, "not_executed", true);
-  if(num_not_executed)
+  if (not_executed) lua_push_bool_table_entry(vm, "not_executed", true);
+  if (num_not_executed)
     lua_push_uint64_table_entry(vm, "num_not_executed", num_not_executed);
 
-  if(is_slow)
-    lua_push_bool_table_entry(vm, "is_slow", true);
-  if(num_is_slow)
-    lua_push_uint64_table_entry(vm, "num_is_slow", num_is_slow);
+  if (is_slow) lua_push_bool_table_entry(vm, "is_slow", true);
+  if (num_is_slow) lua_push_uint64_table_entry(vm, "num_is_slow", num_is_slow);
 
-  if(hasAlertsDrops())
-    lua_push_bool_table_entry(vm, "alerts_drops", true);
+  if (hasAlertsDrops()) lua_push_bool_table_entry(vm, "alerts_drops", true);
 
   lua_push_uint64_table_entry(vm, "scheduled_time", scheduled_time);
   lua_push_uint64_table_entry(vm, "deadline", deadline);
@@ -188,17 +246,23 @@ void ThreadedActivityStats::lua(lua_State *vm) {
 /* ******************************************* */
 
 void ThreadedActivityStats::setState(ThreadedActivityState next_state) {
-  if(((state == threaded_activity_state_queued) && (next_state != threaded_activity_state_running))
-     || ((state == threaded_activity_state_running) && (next_state != threaded_activity_state_sleeping)))
-    ntop->getTrace()->traceEvent(TRACE_ERROR, "Internal error. Invalid state transition: %s -> %s",
-				 Utils::get_state_label(state), Utils::get_state_label(next_state));
+  if (((state == threaded_activity_state_queued) &&
+       (next_state != threaded_activity_state_running)) ||
+      ((state == threaded_activity_state_running) &&
+       (next_state != threaded_activity_state_sleeping)))
+    ntop->getTrace()->traceEvent(
+        TRACE_ERROR, "Internal error. Invalid state transition: %s -> %s",
+        Utils::get_state_label(state), Utils::get_state_label(next_state));
   else {
 #ifdef THREAD_DEBUG
     /* Everything is OK, let's set the state. */
     ntop->getTrace()->traceEvent(TRACE_NORMAL, "State transition: %s -> %s",
-				 Utils::get_state_label(state), Utils::get_state_label(next_state));
+                                 Utils::get_state_label(state),
+                                 Utils::get_state_label(next_state));
 #endif
-    
+
     state = next_state;
   }
 }
+
+/* ******************************************* */

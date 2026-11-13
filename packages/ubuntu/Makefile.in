@@ -3,6 +3,7 @@
 #
 NTOPNG_HOME=$(PWD)/../..
 NTOPNG_BUILD=${NTOPNG_HOME}/packages/ubuntu
+LUAC=${NTOPNG_HOME}/tools/luac.sh
 
 all: clean @DEFAULT_TARGET@ ntopng-data
 
@@ -16,26 +17,34 @@ ntopng-prep:
 	cp -r $(NTOPNG_HOME)/httpdocs ${NTOPNG_BUILD}/usr/share/ntopng
 	mv ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/misc/ntopng-utils-manage-config ${NTOPNG_BUILD}/usr/bin/
 	mv ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/misc/ntopng-utils-manage-updates ${NTOPNG_BUILD}/usr/bin/
-	if test -f "$(NTOPNG_HOME)/../nIndex/nindex" -a "@APP@" = "ntopng"; then \
-		cp $(NTOPNG_HOME)/../nIndex/nindex ${NTOPNG_BUILD}/usr/bin/; \
-	fi
 	cp $(NTOPNG_HOME)/packages/usr/bin/ntopctl ${NTOPNG_BUILD}/usr/bin/
 	cp -Lr $(NTOPNG_HOME)/scripts ${NTOPNG_BUILD}/usr/share/ntopng  # L to dereference symlinks
-	mv ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
+	# mv ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem.dummy ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/ssl/ntopng-cert.pem
 	if test -d "$(NTOPNG_HOME)/pro"; then \
 		mkdir ${NTOPNG_BUILD}/usr/share/ntopng/pro; \
 		cp -r $(NTOPNG_HOME)/pro/httpdocs ${NTOPNG_BUILD}/usr/share/ntopng/pro; \
 		cp -r $(NTOPNG_HOME)/pro/scripts ${NTOPNG_BUILD}/usr/share/ntopng/pro; \
 		rm -rf ${NTOPNG_BUILD}/usr/share/ntopng/pro/scripts/lua/nedge; \
 		cd ${NTOPNG_BUILD}/usr/share/ntopng/scripts/lua; rm -rf pro; ln -s ../../pro/scripts/lua pro; \
+		$(MAKE) -C $(NTOPNG_HOME)/pro/utils snzip || exit 1; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/pro -name "*.lua" -type f -exec $(NTOPNG_HOME)/pro/utils/snzip -c -i {} -o {}r \;; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/pro -name "*.lua" -type f -exec /bin/rm  {} ';'; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/pro/scripts -name "*.luar" | xargs rename 's/\.luar/.lua/'; \
 	fi
+	# find ${NTOPNG_BUILD}/usr/share/ntopng/scripts -name "*.lua" -type f -exec ${LUAC} {} ';';
 	if hash systemctl 2>/dev/null; then \
 		rm -rf ${NTOPNG_BUILD}/etc/init.d; \
 	fi
-	rm -rf ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip/
+
+	# nmap vulnerability scan - https://github.com/scipag/vulscan
+	#\mkdir -p ${NTOPNG_BUILD}/usr/share/nmap/scripts/vulscan
+	#wget -O ${NTOPNG_BUILD}/usr/share/nmap/scripts/vulscan/vulscan.nse https://raw.githubusercontent.com/scipag/vulscan/master/vulscan.nse
+	#wget -O ${NTOPNG_BUILD}/usr/share/nmap/scripts/vulscan/cve.csv 	   https://raw.githubusercontent.com/scipag/vulscan/master/cve.csv
+	#wget -O ${NTOPNG_BUILD}/usr/share/nmap/scripts/vulscan/cve.csv 	https://www.computec.ch/projekte/vulscan/download/cve.csv
+	# wget -O ${NTOPNG_BUILD}/usr/share/nmap/scripts/vulscan/openvas.csv 	https://www.computec.ch/projekte/vulscan/download/openvas.csv
+
+	rm -rf ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip 
+	rm -rf ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/mibs 
 	find ${NTOPNG_BUILD}/usr/share/ntopng -name "*~"   | xargs /bin/rm -f
 	find ${NTOPNG_BUILD}/usr/share/ntopng -name ".svn" | xargs /bin/rm -rf
 	find ${NTOPNG_BUILD}/usr/share/ntopng -name ".git*" | xargs /bin/rm -rf
@@ -47,7 +56,7 @@ ntopng: ntopng-prep
 	@/bin/rm -f ../ntopng_*deb
 	@SUDO@ dpkg-buildpackage -rfakeroot -d -us -uc -b
 	@CHOWN@
-	dpkg-sig --sign builder -k D1EB60BE ../ntopng_*deb
+	@SIGN_CMD@ --sign builder -k D1EB60BE ../ntopng_*deb
 	@\rm -f ../ntopng_*dsc ../ntopng_*.gz ../ntopng_*changes
 	@/bin/mv ../ntopng_*deb .
 	@echo
@@ -64,6 +73,7 @@ nedge-prep: ntopng-prep
 #	-cp -r $(NTOPNG_HOME)/nedge/packages/ ${NTOPNG_BUILD}
 	if test -d "$(NTOPNG_HOME)/pro/nedge"; then \
 		cp -r $(NTOPNG_HOME)/pro/scripts/lua/nedge ${NTOPNG_BUILD}/usr/share/ntopng/scripts/lua/pro/; \
+		$(MAKE) -C $(NTOPNG_HOME)/pro/utils snzip || exit 1; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/scripts/lua/pro/nedge -name "*.lua" -type f -exec $(NTOPNG_HOME)/pro/utils/snzip -c -i {} -o {}r \;; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/scripts/lua/pro/nedge -name "*.lua" -type f -exec /bin/rm  {} ';'; \
 		find ${NTOPNG_BUILD}/usr/share/ntopng/scripts/lua/pro/nedge -name "*.luar" | xargs rename 's/\.luar/.lua/'; \
@@ -74,7 +84,7 @@ nedge: nedge-prep
 	@/bin/rm -f ../nedge_*deb
 	@SUDO@ dpkg-buildpackage -rfakeroot -d -us -uc -b
 	@CHOWN@
-	dpkg-sig --sign builder -k D1EB60BE ../nedge_*deb
+	@SIGN_CMD@ --sign builder -k D1EB60BE ../nedge_*deb
 	@\rm -f ../nedge_*dsc ../nedge_*.gz ../nedge_*changes
 	@/bin/mv ../nedge_*deb .
 	@echo
@@ -90,15 +100,17 @@ ntopng-data:
 	ln -s ./debian.ntopng-data ./debian
 	@SUDO@ \rm -rf ./usr ./etc/ ./debian/ntopng-data
 	\mkdir -p ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip ./debian/ntopng-data
+	cp ${HOME}/dat_files/as.csv ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip/as.csv
 	cp ${HOME}/dat_files/dbip-city-lite-*.mmdb ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip/dbip-city-lite.mmdb
 	cp ${HOME}/dat_files/dbip-asn-lite-*.mmdb ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip/dbip-asn-lite.mmdb
 	cp ${HOME}/dat_files/dbip-country-lite-*.mmdb ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/geoip/dbip-country-lite.mmdb
+	cp -r $(NTOPNG_HOME)/packages/mibs ${NTOPNG_BUILD}/usr/share/ntopng/httpdocs/ 
 	@echo
 	@find . -name "*~" -exec /bin/rm {} ';'
 	@/bin/rm -f ../ntopng-data_*deb
 	@SUDO@ dpkg-buildpackage -rfakeroot -d -us -uc
 	@SUDO@ chown ${USER}:${GROUP} ../ntopng-data_*deb
-	dpkg-sig --sign builder -k D1EB60BE ../ntopng-data_*deb
+	@SIGN_CMD@ --sign builder -k D1EB60BE ../ntopng-data_*deb
 	@\rm -f ../ntopng-data_*dsc ../ntopng-data_*.gz ../ntopng-data_*changes
 	@/bin/mv ../ntopng-data_*deb .
 	@echo

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
@@ -29,63 +29,55 @@ end
 
 -- ################################################
 
-local modules = import_export_rest_utils.unpack(_POST["JSON"])
+local raw, is_csv = import_export_rest_utils.get_raw_conf()
 
-if not modules then
+if not raw or raw == "" then
    rest_utils.answer(rest_utils.consts.err.invalid_args)
    return
 end
 
-local expected_modules = { "snmp", "active_monitoring", "notifications", "scripts", "pool" }
-local missing_modules = {}
-for _, m in ipairs(expected_modules) do
-  if not modules[m] then
-    rest_utils.answer(rest_utils.consts.err.configuration_file_mismatch)
-    missing_modules[#missing_modules+1] = m
-  end
-end
-
-if #missing_modules > 0 then
-  traceError(TRACE_ERROR, TRACE_CONSOLE, "Failure importing configuration due to missing modules: " .. table.concat(missing_modules, ", "))
-  return
-end
-
 local items = {}
-
-local snmp_ie = snmp_import_export:create()
-items[#items+1] = {
-   name = "snmp",
-   conf = modules["snmp"],
-   instance = snmp_ie
-}
-
-local am_ie = am_import_export:create()
-items[#items+1] = {
-   name = "active_monitoring", 
-   conf = modules["active_monitoring"],
-   instance = am_ie
-}
-
-local notifications_ie = notifications_import_export:create()
-items[#items+1] = {
-   name = "notifications", 
-   conf = modules["notifications"],     
-   instance = notifications_ie
-}
-
-local scripts_ie = checks_import_export:create()
-items[#items+1] = {
-   name = "scripts", 
-   conf = modules["scripts"],           
-   instance = scripts_ie
-}
-
 local pool_ie = pool_import_export:create()
-items[#items+1] = {
-   name = "pool", 
-   conf = modules["pool"],              
-   instance = pool_ie
-}
+
+if is_csv then
+   -- CSV path
+   items[#items+1] = {
+      name     = "pool",
+      conf     = pool_ie:parse_csv(raw),
+      instance = pool_ie
+   }
+else
+   -- Standard JSON path: unpack and extract only the "pool" module
+   local modules = import_export_rest_utils.unpack(raw)
+
+   if not modules then
+      rest_utils.answer(rest_utils.consts.err.invalid_args)
+      return
+   end
+
+   local expected_modules = { "pool" }
+
+   local missing_modules = {}
+   for _, m in ipairs(expected_modules) do
+      if not modules[m] then
+         rest_utils.answer(rest_utils.consts.err.configuration_file_mismatch)
+         missing_modules[#missing_modules+1] = m
+      end
+   end
+
+   if #missing_modules == #expected_modules then
+      traceError(TRACE_ERROR, TRACE_CONSOLE, "Failure importing configuration, none of the expected modules found: " .. table.concat(expected_modules, ", "))
+      return
+   end
+
+   if modules["pool"] then
+      items[#items+1] = {
+         name = "pool", 
+         conf = modules["pool"],              
+         instance = pool_ie
+      }
+   end
+end
 
 import_export_rest_utils.import(items)
 

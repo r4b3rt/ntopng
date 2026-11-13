@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2015-22 - ntop.org
+ * (C) 2015-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,27 +26,30 @@
 
 class PacketDumper {
  private:
-  NetworkInterface *iface;
-  pcap_dumper_t *dumper;
+  NetworkInterface* iface;
+  pcap_dumper_t* dumper;
   u_int32_t file_id;
   u_int16_t iface_type;
   u_int64_t num_dumped_packets;
   u_int64_t max_bytes_per_file;
+  u_int64_t max_files;
   u_int64_t num_bytes_cur_file;
-  char *out_path;
+  char* out_path;
 
  public:
-  PacketDumper(NetworkInterface *i, const char *path);
+  PacketDumper(NetworkInterface* iface, const char* path);
   ~PacketDumper();
 
-  void init(NetworkInterface *i);
+  void init(NetworkInterface* i);
   void closeDump();
   void idle();
   bool checkClose();
   bool openDump();
-  void dumpPacket(const struct pcap_pkthdr *h, const u_char *packet);
+  bool dumpPacket(const struct pcap_pkthdr* h, const u_char* packet);
+  bool dumpL3Packet(const u_char* l3, u_int32_t l3_len, struct timeval* ts,
+                    u_char* dst_mac, u_char* src_mac, int ip_version);
   inline u_int64_t get_num_dumped_packets() { return num_dumped_packets; }
-  inline u_int64_t get_num_dumped_files()   { return file_id; }
+  inline u_int64_t get_num_dumped_files() { return file_id; }
 };
 
 #endif /* _PACKET_DUMPER_H_ */

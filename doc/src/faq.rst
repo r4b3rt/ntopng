@@ -9,11 +9,6 @@ I'm using nProbe with ntopng. Do I need a license for it?
 
 Yes. See the `nProbe product page <https://www.ntop.org/products/netflow/nprobe/>`_.
 
-I'm using nProbe Agent with ntopng. Do I need a license for it?
----------------------------------------------------------------
-
-Yes. See the `nProbe Agent product page <https://www.ntop.org/products/netflow/nprobe-agent/>`_.
-
 I'm using nProbe Cento with ntopng. Do I need a license for it?
 ---------------------------------------------------------------
 
@@ -62,62 +57,25 @@ The recommended number of interfaces monitored by an ntopng running on a commodi
 The maximum number of interfaces depends on the license, as is highlighted in the following table
 
 
-+--------------+-------------------------------+
-|              | Maximum Number of Interfaces  |
-+--------------+-------------------------------+
-| Community    | 8                             |
-+--------------+-------------------------------+
-| Pro          | 8                             |
-+--------------+-------------------------------+
-| Enterprise M | 16                            |
-+--------------+-------------------------------+
-| Enterprise L | 32                            |
-+--------------+-------------------------------+
++---------------+-------------------------------+
+|               | Maximum Number of Interfaces  |
++---------------+-------------------------------+
+| Community     | 8                             |
++---------------+-------------------------------+
+| Pro           | 8                             |
++---------------+-------------------------------+
+| Enterprise M  | 16                            |
++---------------+-------------------------------+
+| Enterprise L  | 32                            |
++---------------+-------------------------------+
+| Enterprise XL | 64                            |
++---------------+-------------------------------+
 
 Limits above also apply when disaggregated interfaces are used. For example, the maximum 32 interfaces limit can be hit when:
 
 - 32 interfaces are used without disaggregation
 - A single interface is configured with disaggregation resulting in 31 disaggregated sub-interfaces
 - Two interfaces are configured with disaggregation resulting in 15 and 16 disaggregated sub-interfaces, respectively
-
-Hardware Sizing
-===============
-
-Indications on process, memory and disk required are given below for networks with three different sizes.
-
-Network Size
-------------
-
-+--------------+---------------+---------------------------+-----------------------+
-|              | Small Network | Medium Network            | Large Network         |
-+--------------+---------------+---------------------------+-----------------------+
-| Traffic      | < 100Mbps     | Between 100Mbps and 1Gbps | Above 1Gbps           |
-+--------------+---------------+---------------------------+-----------------------+
-| Active Hosts | Hundredths    | Thousands                 | Hundreds of thousands |
-+--------------+---------------+---------------------------+-----------------------+
-| Active Flows | Thousands     | Hundreds of thousands     | Millions              |
-+--------------+---------------+---------------------------+-----------------------+
-
-.. note::
-
-  On large networks, special extra configuration is required as explained in :ref:`OperatingNtopngOnLargeNetworks`.
-
-Processor and Memory
---------------------
-
-+-----------+---------------+----------------+---------------+
-|           | Small Network | Medium Network | Large Network |
-+-----------+---------------+----------------+---------------+
-| Processor | 2cores+       | 4cores+        | 8cores+       |
-+-----------+---------------+----------------+---------------+
-| Memory    | 2GB+          | 4GB+           | 16GB+         |
-+-----------+---------------+----------------+---------------+
-
-Disk
-----
-
-See `ntopng Disk Requirements for Timeseries and Flows <https://www.ntop.org/ntopng/ntopng-disk-requirements-for-timeseries-and-flows/>`_.
-
 
 Cannot Login into the GUI
 =========================

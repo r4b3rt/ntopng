@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,17 +28,24 @@ class ElephantFlowAlert : public FlowAlert {
  private:
   u_int64_t l2r_th, r2l_th;
 
-  ndpi_serializer *getAlertJSON(ndpi_serializer* serializer);
+  ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType() { return { flow_alert_elephant_flow, alert_category_security }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_elephant_flow, alert_category_security};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_WARNING; };
 
- ElephantFlowAlert(FlowCheck *c, Flow *f, u_int64_t _l2r_th, u_int64_t _r2l_th) : FlowAlert(c, f) { 
+  inline u_int64_t get_l2r_threshold() { return l2r_th; };
+  inline u_int64_t get_r2l_threshold() { return r2l_th; };
+
+  ElephantFlowAlert(FlowCheck* c, Flow* f, u_int64_t _l2r_th, u_int64_t _r2l_th)
+      : FlowAlert(c, f) {
     l2r_th = _l2r_th;
     r2l_th = _r2l_th;
+    setAlertScore(getDefaultScore());
   };
-  ~ElephantFlowAlert() { };
+  ~ElephantFlowAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }
 };

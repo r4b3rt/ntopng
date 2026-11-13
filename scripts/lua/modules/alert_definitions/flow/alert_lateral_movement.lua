@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local json = require "dkjson"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -19,8 +21,16 @@ local alert_lateral_movement = classes.class(alert)
 
 alert_lateral_movement.meta = {
    alert_key = flow_alert_keys.flow_alert_lateral_movement,
+   issue_resolve_policy = "manual", -- Indicator of compromise: the issue is resolved by the user only
    i18n_title = "alerts_dashboard.lateral_movement",
    icon = "fas fa-fw fa-arrows-alt-h",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.lateral_movement,
+      mitre_id = "TA0008"
+   },
+
 }
 
 -- ##############################################
@@ -58,7 +68,7 @@ function alert_lateral_movement.format(ifid, alert, alert_type_params)
       end
    end
 
-   if ntop.isEnterprise() and ntop.isAdministrator() then
+   if ntop.isEnterprise and ntop.isEnterprise() and ntop.isAdministrator() then
       local dirs = ntop.getDirs()
       package.path = dirs.installdir .. "/pro/scripts/lua/enterprise/modules/?.lua;" .. package.path
       local graph_map_utils = require("graph_map_utils")

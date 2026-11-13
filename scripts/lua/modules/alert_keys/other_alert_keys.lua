@@ -1,5 +1,5 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 
 -- ##############################################
@@ -16,9 +16,9 @@ local other_alert_keys = {
    alert_device_disconnection           =  OTHER_BASE_KEY + 2 ,
    alert_dropped_alerts                 =  OTHER_BASE_KEY + 3 ,
    alert_gateway_unreachable            =  OTHER_BASE_KEY + 4 ,
-   alert_flow_flood                     =  OTHER_BASE_KEY + 5 , -- No longer used, check alert_flow_flood_attacker and alert_flow_flood_victim
+   alert_bgp_prefix_update              =  OTHER_BASE_KEY + 5 ,
    alert_ghost_network                  =  OTHER_BASE_KEY + 6 ,
-   alert_host_pool_connection           =  OTHER_BASE_KEY + 7 ,
+   alert_no_exporter_activity           =  OTHER_BASE_KEY + 7 ,
    alert_host_pool_disconnection        =  OTHER_BASE_KEY + 8 ,
    alert_influxdb_dropped_points        =  OTHER_BASE_KEY + 9 ,
    alert_influxdb_error                 =  OTHER_BASE_KEY + 10,
@@ -29,28 +29,28 @@ local other_alert_keys = {
    alert_mac_ip_association_change      =  OTHER_BASE_KEY + 16,
    alert_misbehaving_flows_ratio        =  OTHER_BASE_KEY + 17,
    alert_misconfigured_app              =  OTHER_BASE_KEY + 18,
-   alert_new_device                     =  OTHER_BASE_KEY + 19, -- No longer used
+   alert_cloud_disconnected             =  OTHER_BASE_KEY + 19,
    alert_nfq_flushed                    =  OTHER_BASE_KEY + 20,
-   alert_none                           =  OTHER_BASE_KEY + 21, -- No longer used
+   alert_cloud_reconnected              =  OTHER_BASE_KEY + 21,
    alert_periodic_activity_not_executed =  OTHER_BASE_KEY + 22,
    alert_am_threshold_cross             =  OTHER_BASE_KEY + 23,
    alert_port_duplexstatus_change       =  OTHER_BASE_KEY + 24,
    alert_port_errors                    =  OTHER_BASE_KEY + 25,
-   alert_port_load_threshold_exceeded   =  OTHER_BASE_KEY + 26,
+   alert_no_probe_activity              =  OTHER_BASE_KEY + 26,
    alert_port_mac_changed               =  OTHER_BASE_KEY + 27,
    alert_port_status_change             =  OTHER_BASE_KEY + 28,
    alert_process_notification           =  OTHER_BASE_KEY + 29,
    alert_quota_exceeded                 =  OTHER_BASE_KEY + 30,
    alert_request_reply_ratio            =  OTHER_BASE_KEY + 31,
    alert_slow_periodic_activity         =  OTHER_BASE_KEY + 32,
-   alert_slow_purge                     =  OTHER_BASE_KEY + 33,
+   alert_notused_1                      =  OTHER_BASE_KEY + 33,
    alert_snmp_device_reset              =  OTHER_BASE_KEY + 34,
    alert_snmp_topology_changed          =  OTHER_BASE_KEY + 35,
-   alert_suspicious_activity            =  OTHER_BASE_KEY + 36, -- No longer used
+   alert_snmp_trap                      =  OTHER_BASE_KEY + 36,
    alert_tcp_syn_flood                  =  OTHER_BASE_KEY + 37, -- No longer used, check alert_tcp_syn_flood_attacker and alert_tcp_syn_flood_victim
    alert_tcp_syn_scan                   =  OTHER_BASE_KEY + 38, -- No longer used, check alert_tcp_syn_scan_attacker and alert_tcp_syn_scan_victim
-   alert_test_failed                    =  OTHER_BASE_KEY + 39,
-   alert_threshold_cross                =  OTHER_BASE_KEY + 40,
+   alert_test                           =  OTHER_BASE_KEY + 39,
+   alert_threshold_cross                =  OTHER_BASE_KEY + 40,  -- No longer used
    alert_too_many_drops                 =  OTHER_BASE_KEY + 41,
    alert_unresponsive_device            =  OTHER_BASE_KEY + 42,
    alert_user_activity                  =  OTHER_BASE_KEY + 43,
@@ -61,15 +61,15 @@ local other_alert_keys = {
    alert_lateral_movement               =  OTHER_BASE_KEY + 48, -- No longer user (moved to the flows)
    alert_list_download_succeeded        =  OTHER_BASE_KEY + 49,
    alert_no_if_activity                 =  OTHER_BASE_KEY + 50, 
-   alert_unexpected_new_device          =  OTHER_BASE_KEY + 51, 
+   alert_device_connection_disconnection =  OTHER_BASE_KEY + 51, 
    alert_shell_script_executed          =  OTHER_BASE_KEY + 52, 
    alert_periodicity_update             =  OTHER_BASE_KEY + 53, -- No longer user (moved to the flows)
    alert_dns_positive_error_ratio       =  OTHER_BASE_KEY + 54, 
    alert_fail2ban_executed              =  OTHER_BASE_KEY + 55, 
    alert_flow_flood_attacker            =  OTHER_BASE_KEY + 56,
    alert_flow_flood_victim              =  OTHER_BASE_KEY + 57,
-   alert_tcp_syn_flood_attacker         =  OTHER_BASE_KEY + 58,
-   alert_tcp_syn_flood_victim           =  OTHER_BASE_KEY + 59,
+   alert_tcp_syn_flood_attacker         =  OTHER_BASE_KEY + 58, -- Obsolete: no longer used
+   alert_tcp_syn_flood_victim           =  OTHER_BASE_KEY + 59, -- Obsolete: no longer used
    alert_tcp_syn_scan_attacker          =  OTHER_BASE_KEY + 60,
    alert_tcp_syn_scan_victim            =  OTHER_BASE_KEY + 61,
    alert_contacted_peers                =  OTHER_BASE_KEY + 62,
@@ -90,6 +90,30 @@ local other_alert_keys = {
    alert_port_mac_disappeared           =  OTHER_BASE_KEY + 77,
    alert_network_score_per_host         =  OTHER_BASE_KEY + 78,
    alert_dhcp_storm                     =  OTHER_BASE_KEY + 79,
+   alert_snmp_interface_errors          =  OTHER_BASE_KEY + 80,
+   alert_snmp_device_traffic_change     =  OTHER_BASE_KEY + 81,
+   alert_local_host_blacklisted         =  OTHER_BASE_KEY + 82,
+   alert_network_issues                 =  OTHER_BASE_KEY + 83,
+   alert_network_rule_threshold_cross   =  OTHER_BASE_KEY + 84,
+   alert_snmp_interface_threshold_crossed = OTHER_BASE_KEY + 85,
+   alert_score_behavior_anomaly         = OTHER_BASE_KEY + 86,
+   alert_traffic_behavior_anomaly       = OTHER_BASE_KEY + 87,
+   alert_active_scan                    = OTHER_BASE_KEY + 88,
+   alert_host_pool_rule_threshold_crossed = OTHER_BASE_KEY + 89,
+   alert_cidr_rule_threshold_crossed    = OTHER_BASE_KEY + 90,
+   alert_system_error                   = OTHER_BASE_KEY + 91,
+   alert_port_avg_usages_threshold_crossed = OTHER_BASE_KEY + 92, -- No longer used
+   alert_vlan_rule_threshold_crossed    = OTHER_BASE_KEY + 93, 
+   alert_profile_rule_threshold_crossed = OTHER_BASE_KEY + 94,
+   alert_snmp_device_polling_error      = OTHER_BASE_KEY + 95,
+   alert_exporters_limit_exceeded       = OTHER_BASE_KEY + 96,
+   alert_acl_violation_arp              = OTHER_BASE_KEY + 97,
+   alert_redis_reads_writes_exceeded    = OTHER_BASE_KEY + 98,
+   alert_asn_rule_threshold_crossed     = OTHER_BASE_KEY + 99,
+   alert_as_ranking_changed            = OTHER_BASE_KEY + 100,
+   alert_disk_space_low                = OTHER_BASE_KEY + 101,
+
+   MAX_OTHER_ALERT_TYPE = OTHER_BASE_KEY + 127 -- see ntop_typedefs.h
 }
 
 -- ##############################################

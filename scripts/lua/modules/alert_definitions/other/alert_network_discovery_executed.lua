@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -10,6 +10,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local alert_entities = require "alert_entities"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -19,10 +21,19 @@ local alert_network_discovery_executed = classes.class(alert)
 
 alert_network_discovery_executed.meta = {  
    alert_key = other_alert_keys.alert_network_discovery_executed,
+   issue = false, -- Informational: does not open issues (see issues/issue_manager.lua)
    i18n_title = "checks.network_discovery_title",
    icon = "fas fa-fw fa-arrow-circle-up",
    entities = {
       alert_entities.interface
+   },
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.reconnaissance,
+      mitre_technique = mitre.technique.gather_victim_net_info,
+      mitre_sub_technique = mitre.sub_technique.network_topology,
+      mitre_id = "T1590.004"
    },
 }
 

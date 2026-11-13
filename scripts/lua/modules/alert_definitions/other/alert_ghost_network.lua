@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -11,6 +11,8 @@ local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
 local alert_entities = require "alert_entities"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -20,12 +22,19 @@ local alert_ghost_network = classes.class(alert)
 
 alert_ghost_network.meta = {
   alert_key = other_alert_keys.alert_ghost_network,
-  i18n_title = "alerts_dashboard.ghost_network_detected",
+  i18n_title = "alerts_dashboard.ghost_networks",
   icon = "fas fa-fw fa-ghost",
   entities = {
      alert_entities.interface,
      alert_entities.network
   },
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.c_and_c,
+      mitre_technique = mitre.technique.hide_infrastructure,
+      mitre_id = "T1665"
+   },
 }
 
 -- ##############################################

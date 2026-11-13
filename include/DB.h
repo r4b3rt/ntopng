@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,47 +24,66 @@
 
 #include "ntop_includes.h"
 
+typedef int db_result_row_callback(std::vector<std::string>* row,
+                                   std::vector<std::string>* columns,
+                                   void* user_data);
+
 class DB {
  private:
-  struct timeval lastUpdateTime;
-  float exportRate;
-  u_int64_t exportedFlows, lastExportedFlows;
-  /* Multiple threads can inc in case of view interfaces */
-  std::atomic<u_int32_t> droppedFlows;
-  std::atomic<u_int32_t> queueDroppedFlows;
-  u_int64_t checkpointExportedFlows;
-  u_int32_t checkpointDroppedFlows, checkpointQueueDroppedFlows;
-
  protected:
+  NetworkInterface* iface;
   bool running;
-  NetworkInterface *iface;
 
  public:
-  DB(NetworkInterface *_iface);
+  DB(NetworkInterface* _iface);
   virtual ~DB() {};
 
-  inline void incNumExportedFlows(u_int64_t num = 1)        { exportedFlows += num;     };
-  inline void incNumDroppedFlows(u_int32_t num = 1)         { droppedFlows += num;      };
-  inline void incNumQueueDroppedFlows(u_int32_t num = 1)    { queueDroppedFlows += num; };
+  virtual const char* getEngineName() { return "Unknown"; };
+  virtual bool startDumpLoop() { return false; }
 
-  inline u_int64_t getNumExportedFlows() const              { return(exportedFlows); }
-  inline u_int32_t getNumDroppedFlows()  const              { return(queueDroppedFlows + droppedFlows); };
-  void updateStats(const struct timeval *tv);
-  void checkPointCounters(bool drops_only);
+  virtual int execSQLQuery(const char* sql, bool doReconnect = true,
+                           bool ignoreErrors = false,
+                           db_result_row_callback* cb = NULL,
+                           void* cb_user_data = NULL) {
+    return (-1);
+  }
 
-  /* Pure Virtual Functions of a DB flow exporter */
-  virtual bool dumpFlow(time_t when, Flow *f, char *json) = 0;
-  virtual bool startQueryLoop() { return(false); }
+  virtual int execSQLQuery(lua_State* vm, const char* sql, bool limitRows,
+                           bool wait_for_db_created) {
+    return (-1);
+  }
 
-  virtual int exec_sql_query(lua_State *vm, char *sql, bool limitRows, bool wait_for_db_created) { return(-1); }
-  
-  inline void startDBLoop()                                 { if(startQueryLoop()) running = true; };
-  inline int isRunning()                                    { return(running); };
-  virtual bool isDbCreated()                                { return(true); };
+  virtual int execSQLQuery2CSV(const char* sql, const char* delimiter,
+                               const char* null_value, bool remove_headers,
+                               struct mg_connection* mg_conn) {
+    return (-1);
+  }
+
+  /* Execute queries that do not return data (e.g. insert) */
+  virtual int execSQLWrite(const char* sql) { return (-1); }
+
+  /* Batch insert (used by ClickHouse timeseries) */
+  virtual bool insertTimeseriesBatch(const char* table,
+                                     const std::vector<CHTSPoint*>& points,
+                                     std::string& err) {
+    return false;
+  }
+
+  virtual void archiveData(time_t epoch_begin, time_t epoch_end) {}
+
+  inline NetworkInterface* getNetworkInterface() { return iface; };
+  inline void startDBLoop() {
+    if (startDumpLoop()) running = true;
+  };
+  inline int isRunning() { return (running); };
+  virtual bool isDbCreated() { return (true); };
   virtual void shutdown();
   virtual void flush() {};
-  virtual void lua(lua_State* vm, bool since_last_checkpoint) const;
-  virtual int select_database(char *dbname)                 { return(-1); }
+  virtual void checkIdle(time_t when, bool flush_on_pcap_done = true) { ; }
+  virtual bool dumpSyslogEntry(const char* producer,
+			       const char* message, const char* host,
+			       const char* hostname, int priority) { return(false); }
+  virtual void forceSyslogRulesReload() { ; }
 };
 
 #endif /* _DB_CLASS_H_ */

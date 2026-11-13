@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2019 - ntop.org
+ * (C) 2019-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,27 +26,30 @@
 
 class SyslogParserInterface : public ParserInterface {
  private:
-  SyslogLuaEngine *le;
+  SyslogLuaEngine* le;
   typedef std::map<string, string> producers_map_t;
   producers_map_t producers_map;
   bool producers_reload_requested;
 
  public:
-  SyslogParserInterface(const char *endpoint, const char *custom_interface_type = NULL);
+  SyslogParserInterface(const char* endpoint,
+                        const char* custom_interface_type = NULL);
   ~SyslogParserInterface();
 
-  void addProducerMapping(const char *host, const char *producer);
+  void addProducerMapping(const char* host, const char* producer);
   void doProducersMappingUpdate();
   void updateProducersMapping() { producers_reload_requested = true; };
-  const char *getProducerName(const char *host);
+  const char* getProducerName(const char* host);
 
-  u_int8_t parseLog(char *log_line, char *client_ip);
+  static bool isRFC5424Header(const char* log_line);
+  static bool parseRFC5424Header(char* log_line, char** device,
+                                 char** application, char** content);
+
+  u_int8_t parseLog(char* log_line, char* client_ip);
 
   u_int32_t getNumDroppedPackets() { return 0; };
-  virtual void lua(lua_State* vm);
+  virtual void lua(lua_State* vm, bool fullStats);
   virtual void startPacketPolling();
 };
 
 #endif /* _SYSLOG_PARSER_INTERFACE_H_ */
-
-

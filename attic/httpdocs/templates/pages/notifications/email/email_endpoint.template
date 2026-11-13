@@ -1,0 +1,77 @@
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        <b>{{ i18n("notification_endpoint.email.smtp_server") }}</b>
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input
+            data-validation-message="{{ i18n('notification_endpoint.email.validation.invalid_SMTP_server') }}"
+            data-validation-empty-message="{{ i18n('notification_endpoint.email.validation.empty_SMTP_server') }}"
+            data-pattern="ipv4|ipv6|domainName|emailUrl" data-validation-resolveDNS="true" name="smtp_server" type="text" id="smtp_server" class="form-control" required />
+        <label class="form-check-label" for="smtp_server"><small>{{ i18n("notification_endpoint.email.use_tls_descr") }}</small></label>
+</div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        {{ i18n("notification_endpoint.email.smtp_port") }}
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input
+            data-validation-message="{{ i18n('notification_endpoint.email.validation.invalid_SMTP_port') }}"
+            data-validation-empty-message="{{ i18n('notification_endpoint.email.validation.empty_SMTP_port') }}"
+            data-pattern="port" name="smtp_port" max="65535" type="number" class="form-control" />
+    </div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        {{ i18n("notification_endpoint.email.use_startssl") }}
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input name="use_startssl" type="checkbox" class="form-check-input" id="use_startssl">
+        <label class="form-check-label" for="use_startssl"><small>{{ i18n("notification_endpoint.email.use_startssl_descr") }}</small></label>
+    </div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        {{ i18n("notification_endpoint.email.use_proxy") }}
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input name="use_proxy" type="checkbox" class="form-check-input" id="email_use_proxy">
+        <label class="form-check-label" for="email_use_proxy"><small>{{ i18n("notification_endpoint.email.use_proxy_descr") }}</small></label>
+    </div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        <b>{{ i18n("notification_endpoint.email.email_sender") }}</b>
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input
+            data-validation-message="{{ i18n('notification_endpoint.email.validation.invalid_email') }}"
+            data-validation-empty-message="{{ i18n('notification_endpoint.email.validation.empty_email') }}"
+            type="email" name="email_sender"  class="form-control" required />
+    </div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        {{ i18n("notification_endpoint.email.smtp_username") }}
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input data-pattern="username|email" name="smtp_username" type="text" class="form-control" />
+        <small class="text-muted">{{ i18n("optional_field") }}</small>
+    </div>
+</div>
+<div class="mb-3 row">
+    <label class="col-form-label col-sm-3">
+        {{ i18n("notification_endpoint.email.smtp_password") }}
+        <a title="{{ i18n('help') }}" target="blank" href="https://www.ntop.org/guides/ntopng/user_interface/shared/alerts/available_endpoints.html?utm_source=ntopng#email"><i class="fa-regular fa-circle-question"></i></a>
+    </label>
+    <div class="col-sm-7">
+        <input name="smtp_password" type="password" autocomplete="off" class="form-control" />
+        <small class="text-muted">{{ i18n("optional_field") }}</small>
+    </div>
+</div>

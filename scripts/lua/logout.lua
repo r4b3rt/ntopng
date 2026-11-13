@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -7,9 +7,11 @@ package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 require "lua_utils"
 
+-- Logout page for nEdge Captive Portal users
+
 local captive_portal_utils = require("captive_portal_utils")
 
-if not ntop.isnEdge() then
+if not (ntop.isnEdge and ntop.isnEdge()) then
    return
 end
 

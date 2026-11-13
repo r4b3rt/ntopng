@@ -1,17 +1,17 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
 -- Module to keep things in common across pools of various type
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/notifications/?.lua;" .. package.path
 
+local clock_start = os.clock()
 
-require "lua_utils"
+require "ntop_utils"
+require "label_utils"
+require "check_redis_prefs"
 local pools = require "pools"
-local checks = require "checks"
-local ts_utils = require "ts_utils_core"
-local json = require "dkjson"
 
 -- ##############################################
 
@@ -54,9 +54,10 @@ function host_pools:create(args)
 	  ntop.setMembersCache(self:_get_pool_ids_key(),
 			       string.format("%d", host_pools.DROP_HOST_POOL_ID))
 
-	  if ntop.isPro() and not ntop.isnEdge() then
+	  if ntop.isPro and ntop.isPro() and not (ntop.isnEdge and ntop.isnEdge()) then
 	     -- Add the default drop policy to the pool
 	     package.path = dirs.installdir .. "/pro/scripts/callbacks/system/?.lua;" .. package.path
+	     package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
 	     local policy_utils = require "policy_utils"
 
 	     -- Add the default drop policy to the pool
@@ -95,10 +96,12 @@ end
 
 -- @brief Ends a pool transaction.
 function host_pools:end_transaction()
-   -- Perform end-of-transaction operations. Basically all the operations
-   -- that are needed when doing a _persist
-   -- Reload pools
-    ntop.reloadHostPools()
+    if self.transaction_started then
+        -- Perform end-of-transaction operations. Basically all the operations
+        -- that are needed when doing a _persist
+        -- Reload pools
+        ntop.reloadHostPools()
+    end
 
     self.transaction_started = nil
 end
@@ -107,10 +110,11 @@ end
 
 -- @brief Given a member key, returns a table of member details such as member name.
 function host_pools:get_member_details(member)
+
     local res = {}
     local member_name
     local member_type
-    local host_info = hostkey2hostinfo(member)
+    local host_info = poolkey2poolinfo(member)
     local address = host_info["host"]
 
     if isMacAddress(address) then
@@ -257,7 +261,8 @@ function host_pools:_persist(pool_id, name, members, policy)
     local pool_members_key = self:_get_pool_members_key(pool_id)
     ntop.delCache(pool_members_key)
     for _, member in pairs(members) do
-        ntop.setMembersCache(pool_members_key, member)
+        local m = self:normalize_member(member)
+        ntop.setMembersCache(pool_members_key, m)
     end
 
     -- Policy
@@ -288,6 +293,7 @@ function host_pools:delete_pool(pool_id)
         local cur_pool_details = self:get_pool(pool_id)
 
         if cur_pool_details then
+            local ts_utils = require "ts_utils_core"
             -- Remove the key with all the pool details (e.g., with members)
             ntop.delCache(self:_get_pool_details_key(pool_id))
 
@@ -414,35 +420,55 @@ end
 
 -- ##############################################
 
+-- Get from redis the throughput type bps or pps
+local function getThroughputType()
+  local throughput_type = ntop.getCache("ntopng.prefs.thpt_content")
+  if throughput_type == "" then throughput_type = "bps" end
+  
+  return throughput_type
+end
+
+-- ##############################################
+
 function host_pools:hostpool2record(ifid, pool_id, pool)
+    local format_utils = require "format_utils"
     local record = {}
+    local throughput_type = getThroughputType()
     record["key"] = tostring(pool_id)
 
     local pool_name = self:get_pool_name(pool_id)
+
+    -- prevent error if no pool_name is found
+    if not pool_name then
+        return record
+    end
+
     local pool_link = "<A HREF='" .. ntop.getHttpPrefix() ..
                           '/lua/hosts_stats.lua?pool=' .. pool_id .. "' title='" ..
                           pool_name .. "'>" .. pool_name .. '</A>'
     record["column_id"] = pool_link
 
-    record["column_hosts"] = pool["num_hosts"] .. ""
-    record["column_since"] = secondsToTime(os.time() - pool["seen.first"] + 1)
+    record["column_hosts"] = format_utils.format_high_num_value_for_tables(pool, "num_hosts")
+    record["column_since"] = format_utils.secondsToTime(os.time() - pool["seen.first"] + 1)
     record["column_num_dropped_flows"] = (pool["flows.dropped"] or 0) .. ""
 
-    local sent2rcvd = round((pool["bytes.sent"] * 100) /
-                                (pool["bytes.sent"] + pool["bytes.rcvd"]), 0)
-    record["column_breakdown"] =
-        "<div class='progress'><div class='progress-bar bg-warning' style='width: " ..
-            sent2rcvd ..
-            "%;'>Sent</div><div class='progress-bar bg-success' style='width: " ..
-            (100 - sent2rcvd) .. "%;'>Rcvd</div></div>"
+    local tot_bytes = (pool["bytes.sent"] or 0) + (pool["bytes.rcvd"] or 0)
+    local delta = ((pool["bytes.sent"] * 100) / tot_bytes)
+    local sent2rcvd_pctg = math.floor(delta + 0.5)
+    local rcvd2sent_pctg = 100 - sent2rcvd_pctg
+    if sent2rcvd_pctg ~= sent2rcvd_pctg then -- tot_bytes is 0
+        sent2rcvd_pctg = 0
+        rcvd2sent_pctg = 0
+    end
+    record["column_breakdown"] = format_utils.createBreakdown(sent2rcvd_pctg, rcvd2sent_pctg, "Sent", "Rcvd")
 
     if (throughput_type == "pps") then
-        record["column_thpt"] = pktsToSize(pool["throughput_pps"])
+        record["column_thpt"] = format_utils.pktsToSize(pool["throughput_pps"])
     else
-        record["column_thpt"] = bitsToSize(8 * pool["throughput_bps"])
+        record["column_thpt"] = format_utils.bitsToSize(8 * pool["throughput_bps"])
     end
 
-    record["column_traffic"] = bytesToSize(
+    record["column_traffic"] = format_utils.bytesToSize(
                                    pool["bytes.sent"] + pool["bytes.rcvd"])
 
     record["column_chart"] = ""
@@ -458,7 +484,7 @@ end
 
 -- ##############################################
 
-function host_pools:updateRRDs(ifid, dump_ndpi, verbose)
+function host_pools:updateRRDs(ifid, dump_ndpi, verbose, when)
     local ts_utils = require "ts_utils"
     require "ts_5min"
 
@@ -469,6 +495,12 @@ function host_pools:updateRRDs(ifid, dump_ndpi, verbose)
             pool = pool_id,
             bytes_sent = pool_stats["bytes.sent"],
             bytes_rcvd = pool_stats["bytes.rcvd"]
+        }, when)
+
+        ts_utils.append("host_pool:throughput_bps", {
+            ifid = ifid,
+            pool = pool_id,
+            bps = pool_stats["throughput_bps"]
         }, when)
 
         if pool_id ~= tonumber(host_pools.DEFAULT_POOL_ID) then

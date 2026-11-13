@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2017-22 - ntop.org
+ * (C) 2017-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,35 +21,40 @@
 
 #include "ntop_includes.h"
 
-HostPoolStats::HostPoolStats(NetworkInterface *iface) : GenericTrafficElement() {
-    ndpiStats = new (std::nothrow) nDPIStats();
-    totalStats = new (std::nothrow) nDPIStats();
-    mustReset = false;
+/* ***************************************** */
 
-    if(iface && iface->getTimeLastPktRcvd() > 0)
-      first_seen = last_seen = iface->getTimeLastPktRcvd();
-    else
-      first_seen = last_seen = time(NULL);
- };
+HostPoolStats::HostPoolStats(NetworkInterface* iface)
+    : GenericTrafficElement() {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
+  ndpiStats = new (std::nothrow) nDPIStats();
+  totalStats = new (std::nothrow) nDPIStats();
+  mustReset = false;
+
+  if (iface && iface->getTimeLastPktRcvd() > 0)
+    first_seen = last_seen = iface->getTimeLastPktRcvd();
+  else
+    first_seen = last_seen = time(NULL);
+};
 
 /* ***************************************** */
 
 void HostPoolStats::updateSeen(time_t _last_seen) {
   last_seen = _last_seen;
 
-  if((first_seen == 0) || (first_seen > last_seen))
-    first_seen = last_seen;
+  if ((first_seen == 0) || (first_seen > last_seen)) first_seen = last_seen;
 }
 
 /* ***************************************** */
 
-void HostPoolStats::updateName(const char * _pool_name) {
+void HostPoolStats::updateName(const char* _pool_name) {
   pool_name.assign(_pool_name ? _pool_name : "");
 }
 
 /* ***************************************** */
 
-void HostPoolStats::lua(lua_State* vm, NetworkInterface *iface) {
+void HostPoolStats::lua(lua_State* vm, NetworkInterface* iface) {
   u_int64_t bytes = 0;
   u_int32_t duration = 0;
 
@@ -58,9 +63,9 @@ void HostPoolStats::lua(lua_State* vm, NetworkInterface *iface) {
   GenericTrafficElement::lua(vm, true);
   lua_push_uint64_table_entry(vm, "seen.first", first_seen);
   lua_push_uint64_table_entry(vm, "seen.last", last_seen);
-  if(ndpiStats) ndpiStats->lua(iface, vm, true /* with categories */);
+  if (ndpiStats) ndpiStats->lua(iface, vm, true /* with categories */);
 
-  if(totalStats) {
+  if (totalStats) {
     getStats(&bytes, &duration);
 
     lua_newtable(vm);
@@ -74,36 +79,90 @@ void HostPoolStats::lua(lua_State* vm, NetworkInterface *iface) {
   }
 }
 
-json_object* HostPoolStats::getJSONObject(NetworkInterface *iface) {
-  json_object *my_object;
-  
-  if((my_object = json_object_new_object()) == NULL) return(NULL);
+/* ***************************************** */
+
+json_object* HostPoolStats::getJSONObject(NetworkInterface* iface) {
+  json_object* my_object;
+
+  if ((my_object = json_object_new_object()) == NULL) return (NULL);
 
   json_object_object_add(my_object, "sent", sent.getJSONObject());
   json_object_object_add(my_object, "rcvd", rcvd.getJSONObject());
-  if(ndpiStats) json_object_object_add(my_object, "ndpi", ndpiStats->getJSONObject(iface));
-  if(totalStats) json_object_object_add(my_object, "totals", totalStats->getJSONObject(iface));
+  if (ndpiStats)
+    json_object_object_add(my_object, "ndpi", ndpiStats->getJSONObject(iface));
+  if (totalStats)
+    json_object_object_add(my_object, "totals",
+                           totalStats->getJSONObject(iface));
   return my_object;
 }
 
-char* HostPoolStats::serialize(NetworkInterface *iface) {
-  json_object *my_object = getJSONObject(iface);
+/* ***************************************** */
 
-  if (! my_object)  return NULL;
+char* HostPoolStats::serialize(NetworkInterface* iface) {
+  json_object* my_object = getJSONObject(iface);
 
-  char *rsp = strdup(json_object_to_json_string(my_object));
+  if (!my_object) return NULL;
+
+  char* rsp = strdup(json_object_to_json_string(my_object));
 
   /* Free memory */
   json_object_put(my_object);
 
-  return(rsp);
+  return (rsp);
 }
 
-void HostPoolStats::deserialize(NetworkInterface *iface, json_object *o) {
-  json_object *obj;
+/* ***************************************** */
 
-  if(json_object_object_get_ex(o, "sent", &obj)) sent.deserialize(obj);
-  if(json_object_object_get_ex(o, "rcvd", &obj)) rcvd.deserialize(obj);
-  if(ndpiStats && json_object_object_get_ex(o, "ndpi", &obj)) ndpiStats->deserialize(iface, obj);
-  if(totalStats && json_object_object_get_ex(o, "totals", &obj)) totalStats->deserialize(iface, obj);
+bool HostPoolStats::deserialize(char* json, NetworkInterface* iface) {
+  json_object *o, *obj;
+  enum json_tokener_error jerr = json_tokener_success;
+
+  if (!json) return (false);
+
+  if ((o = json_tokener_parse_verbose(json, &jerr)) == NULL) return (false);
+
+  cleanup();
+
+  if (json_object_object_get_ex(o, "sent", &obj)) {
+    sent.deserialize(obj);
+    ;
+  }
+
+  if (json_object_object_get_ex(o, "rcvd", &obj)) {
+    rcvd.deserialize(obj);
+  }
+
+  if (json_object_object_get_ex(o, "ndpi", &obj)) {
+    if (!ndpiStats) ndpiStats = new (std::nothrow) nDPIStats();
+    if (ndpiStats) ndpiStats->deserialize(obj, iface);
+  }
+
+  if (json_object_object_get_ex(o, "totals", &obj)) {
+    if (!totalStats) totalStats = new (std::nothrow) nDPIStats();
+    if (totalStats) totalStats->deserialize(obj, iface);
+  }
+
+  json_object_put(o);
+  return (true);
+}
+
+/* ***************************************** */
+
+void HostPoolStats::cleanup() {
+  if (ndpiStats) {
+    delete ndpiStats;
+    ndpiStats = NULL;
+  }
+
+  if (totalStats) {
+    delete totalStats;
+    totalStats = NULL;
+  }
+
+  sent.resetStats();
+  rcvd.resetStats();
+
+  pool_name.clear();
+  mustReset = false;
+  first_seen = last_seen = 0;
 }

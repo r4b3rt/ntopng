@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -17,8 +17,6 @@ local checks_var = {
    available_modules = nil,
    iface_config = nil, 
    configset = nil,
-   do_benchmark = false,
-   do_print_benchmark = false
 }
 
 local granularity = "day"
@@ -27,3 +25,5 @@ local do_trace = false
 -- #################################################################
 
 checks.interfaceChecks(granularity, checks_var, do_trace)
+checks.hostChecks(granularity, checks_var, do_trace)
+checks.asChecks(granularity, checks_var, do_trace)

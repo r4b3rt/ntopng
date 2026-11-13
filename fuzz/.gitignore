@@ -1,0 +1,11 @@
+/stub/*.o
+/*.o
+/proto
+/!corpus/**/*.pcap
+/*.zip
+
+# Binaries
+/fuzz_dissect_packet
+/fuzz_zmq_flow
+/fuzz_snmp_response
+/fuzz_syslog_parse

@@ -1,8 +1,10 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
+
+local dirs = ntop.getDirs()
 
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/check_templates/?.lua;" .. package.path
@@ -34,8 +36,14 @@ end
 
 -- #######################################################
 
+function threshold_cross:getOperator(conf)
+  return conf.operator or (self._check.gui and self._check.gui.field_operator)
+end
+
+-- #######################################################
+
 function threshold_cross:parseConfig(conf)
-  if(not http_lint.validateOperator(conf.operator)) then
+  if(not http_lint.validateOperator(self:getOperator(conf))) then
     return false, "bad operator"
   end
 
@@ -60,7 +68,7 @@ function threshold_cross:describeConfig(hooks_conf)
 
     if granularity and hook and hook.script_conf.threshold then
       local unit = ""
-      local op = ternary(hook.script_conf.operator == "gt", ">", "<")
+      local op = ternary(self:getOperator(hook.script_conf) == "gt", ">", "<")
 
       if(self._check.gui and self._check.gui.i18n_field_unit) then
         unit = " " .. i18n(self._check.gui.i18n_field_unit)

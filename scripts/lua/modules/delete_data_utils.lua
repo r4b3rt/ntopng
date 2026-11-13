@@ -1,5 +1,5 @@
 --
--- (C) 2014-22 - ntop.org
+-- (C) 2014-26 - ntop.org
 --
 local dirs = ntop.getDirs()
 
@@ -14,6 +14,10 @@ local dry_run = false
 local ALL_INTERFACES_HASH_KEYS         = "ntopng.prefs.iface_id"
 local ACTIVE_INTERFACES_DELETE_HASH    = "ntopng.prefs.delete_active_interfaces_data"
 local PCAP_DUMP_INTERFACES_DELETE_HASH = "ntopng.prefs.delete_pcap_dump_interfaces_data"
+
+-- Purge all data request keys
+local PURGE_ALL_DATADIR_REQUEST_KEY    = "ntopng.prefs.purge_all_datadir_data_request"
+local PURGE_ALL_CLICKHOUSE_REQUEST_KEY = "ntopng.prefs.purge_all_clickhouse_data_request"
 
 -- ################################################################
 
@@ -96,24 +100,31 @@ end
 
 -- ################################################################
 
-local function delete_host_mysql_flows(interface_id, host_info)
+local function delete_host_db_flows(interface_id, host_info)
    local status = "OK"
+   local addr = host_info["host"]
+   local vlan = host_info["vlan"] or 0
+   local q
 
-   if ntop.getPrefs()["is_dump_flows_to_mysql_enabled"] then
-      local addr = host_info["host"]
-      local vlan = host_info["vlan"] or 0
-      local q
+   if ntop.isClickHouseEnabled() then
+      local historical_flow_utils = require "historical_flow_utils"
+ 
+      local where_clause
 
       if isIPv4(addr) then
-	 q = string.format("DELETE FROM %s WHERE (IP_SRC_ADDR = INET_ATON('%s') OR IP_DST_ADDR = INET_ATON('%s')) AND VLAN_ID = %u and INTERFACE_ID = %d",
-			   "flowsv4", addr, addr, vlan, interface_id)
-      elseif isIPv6(addr) then
-	 q = string.format("DELETE FROM %s WHERE (IP_SRC_ADDR = '%s' OR IP_DST_ADDR = '%s') AND VLAN_ID = %u AND INTERFACE_ID = %d",
-			   "flowsv6", addr, addr, vlan, interface_id)
+         where_clause = string.format("(IPV4_SRC_ADDR = ('%s') OR IPV4_DST_ADDR = ('%s')) AND VLAN_ID = %u AND INTERFACE_ID = %d",
+            addr, addr, vlan, interface_id)
+      else
+         where_clause = string.format("(IPV6_SRC_ADDR = ('%s') OR IPV6_DST_ADDR = ('%s')) AND VLAN_ID = %u AND INTERFACE_ID = %d",
+            addr, addr, vlan, interface_id)
       end
 
+      where_clause = historical_flow_utils.fixWhereTypes(where_clause)
+
+      q = string.format("ALTER TABLE `flows` DELETE WHERE %s", where_clause)
+
       if not dry_run and q then
-	 interface.execSQLQuery(q)
+         interface.execSQLWrite(q)
       end
    end
 
@@ -135,10 +146,10 @@ local function _delete_host(interface_id, host_info)
 
    local h_ts = delete_host_timeseries_data(interface_id, host_info)
    local h_rk = delete_host_redis_keys(interface_id, host_info)
-   local h_db = delete_host_mysql_flows(interface_id, host_info)
+   local h_db = delete_host_db_flows(interface_id, host_info)
 
    interface.select(old_ifname)
-   return {delete_host_timeseries_data = h_ts, delete_host_redis_keys = h_rk, delete_host_mysql_flows = h_db}
+   return {delete_host_timeseries_data = h_ts, delete_host_redis_keys = h_rk, delete_host_db_flows = h_db}
 end
 
 -- ################################################################
@@ -313,11 +324,9 @@ local function delete_interfaces_db_flows(interfaces_list)
    local prefs = ntop.getPrefs()
 
    for if_id, if_name in pairs(interfaces_list) do
-      -- this deletes MySQL
-      if prefs.is_dump_flows_to_mysql_enabled == true and not dry_run then
-	 db_utils.harverstExpiredMySQLFlows(if_id, os.time() + 86400 --[[ go 1d in the future to make sure everything is deleted --]])
+      if ntop.isClickHouseEnabled() and not dry_run then
+         -- TODO: delete flows from clickhouse for if_id
       end
-      -- TODO: add delete for nIndex
    end
 
    return {status = status}
@@ -392,7 +401,7 @@ end
 local function delete_interfaces_from_list(interfaces_list, preserve_interface_ids, preserve_redis_keys)
    local if_dt = delete_interfaces_data(interfaces_list)
    local if_db = delete_interfaces_db_flows(interfaces_list)
-   local preserve_prefs = ternary(ntop.isnEdge(), true, false)
+   local preserve_prefs = ternary(ntop.isnEdge and ntop.isnEdge(), true, false)
 
    local if_rk
    if not preserve_redis_keys then
@@ -435,7 +444,7 @@ function delete_data_utils.delete_all_interfaces_data()
    -- Currently we are using this only in boot.lua (that is, before interfaces registration)
    -- and only in nEdge. Use it carefully.
 
-   if not ntop.isnEdge() then
+   if not (ntop.isnEdge and ntop.isnEdge()) then
       return
    end
 
@@ -593,11 +602,90 @@ end
 
 -- ################################################################
 
+-- Request the deletion of the whole data directory (RRDs and per-interface data) for all interfaces.
+-- Actual deletion is performed at the next boot  as data may currently be in use.
+function delete_data_utils.request_purge_all_datadir_data()
+   ntop.setCache(PURGE_ALL_DATADIR_REQUEST_KEY, "1")
+end
+
+function delete_data_utils.clear_purge_all_datadir_data_request()
+   ntop.delCache(PURGE_ALL_DATADIR_REQUEST_KEY)
+end
+
+function delete_data_utils.purge_all_datadir_data_requested()
+   return ntop.getCache(PURGE_ALL_DATADIR_REQUEST_KEY) == "1"
+end
+
+-- Delete the whole data directory content of all known interfaces
+function delete_data_utils.purge_all_datadir_data()
+   local if_list = delete_data_utils.list_all_interfaces()
+   if_list[tonumber(getSystemInterfaceId())] = getSystemInterfaceName()
+
+   local res = delete_interfaces_from_list(if_list, true --[[ preserve ids --]], true --[[ preserve redis keys --]])
+
+   -- Drop cached disk usage stats (see storage_utils.lua) as they are only refreshed hourly otherwise
+   ntop.delCache("ntopng.cache.system_storage_info")
+   for if_id, _ in pairs(if_list) do
+      ntop.delCache("ntopng.cache."..if_id..".storage_info")
+   end
+
+   return res
+end
+
+-- ################################################################
+
+-- Request deletion of all the data stored in ClickHouse.
+-- Actual deletion is performed at the next restart.
+function delete_data_utils.request_purge_all_clickhouse_data()
+   ntop.setCache(PURGE_ALL_CLICKHOUSE_REQUEST_KEY, "1")
+end
+
+function delete_data_utils.clear_purge_all_clickhouse_data_request()
+   ntop.delCache(PURGE_ALL_CLICKHOUSE_REQUEST_KEY)
+end
+
+function delete_data_utils.purge_all_clickhouse_data_requested()
+   return ntop.getCache(PURGE_ALL_CLICKHOUSE_REQUEST_KEY) == "1"
+end
+
+-- Truncate all tables in the ClickHouse database.
+function delete_data_utils.purge_all_clickhouse_data()
+   local status = "OK"
+
+   if not ntop.isClickHouseEnabled() then
+      return {status = status}
+   end
+
+   local database = ntop.getPrefs().clickhouse_dbname or "ntopng"
+   local tables, err = interface.execSQLQuery(string.format("SELECT name FROM system.tables WHERE database = '%s' AND engine NOT IN ('View', 'MaterializedView', 'LiveView')", database))
+
+   if not tables then
+      traceError(TRACE_ERROR, TRACE_CONSOLE, "Unable to list ClickHouse tables: "..(err or ""))
+      return {status = "ERR_CLICKHOUSE_TRUNCATE"}
+   end
+
+   for _, t in ipairs(tables) do
+      local q = string.format("TRUNCATE TABLE IF EXISTS `%s`.`%s`", database, t["name"])
+
+      if not dry_run then
+	 if not interface.execSQLWrite(q) then
+	    status = "ERR_CLICKHOUSE_TRUNCATE"
+	 end
+      end
+   end
+
+   return {status = status}
+end
+
+-- ################################################################
+
 -- TRACKER HOOK
 
 tracker.track(delete_data_utils, 'delete_all_interfaces_data')
 tracker.track(delete_data_utils, 'delete_inactive_interfaces')
 tracker.track(delete_data_utils, 'request_delete_active_interface_data')
+tracker.track(delete_data_utils, 'request_purge_all_datadir_data')
+tracker.track(delete_data_utils, 'request_purge_all_clickhouse_data')
 
 -- ################################################################
 

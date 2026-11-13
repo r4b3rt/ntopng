@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,29 +24,33 @@
 
 /* ***************************************************** */
 
-RemoteConnection::RemoteConnection() : HostCheck(ntopng_edition_community, false /* All interfaces */, false /* Don't exclude for nEdge */, false /* NOT only for nEdge */) {};
+RemoteConnection::RemoteConnection()
+    : HostCheck(ntopng_edition_community, false /* All interfaces */,
+                false /* Don't exclude for nEdge */,
+                false /* NOT only for nEdge */) {};
 
 /* ***************************************************** */
 
-void RemoteConnection::periodicUpdate(Host *h, HostAlert *engaged_alert) {
-  HostAlert *alert = engaged_alert;
+void RemoteConnection::periodicUpdate(Host* h, HostAlert* engaged_alert) {
+  HostAlert* alert = engaged_alert;
   u_int8_t num_remote_access = 0;
 
   num_remote_access = h->getRemoteAccess();
 
-  if(num_remote_access > 0) {
-    if (!alert) alert = allocAlert(this, h, CLIENT_FAIR_RISK_PERCENTAGE, num_remote_access);
+  if (num_remote_access > 0) {
+    if (!alert)
+      alert =
+          allocAlert(this, h, CLIENT_FAIR_RISK_PERCENTAGE, num_remote_access);
     if (alert) h->triggerAlert(alert);
   }
 }
 
 /* ***************************************************** */
 
-bool RemoteConnection::loadConfiguration(json_object *config) {
+bool RemoteConnection::loadConfiguration(json_object* config) {
   HostCheck::loadConfiguration(config); /* Parse parameters in common */
 
-  return(true);
+  return (true);
 }
 
 /* ***************************************************** */
-

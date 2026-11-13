@@ -1,5 +1,5 @@
 --
--- (C) 2021-22 - ntop.org
+-- (C) 2021-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -10,12 +10,10 @@ local classes = require "classes"
 
 require "lua_utils"
 local alert_store = require "alert_store"
-local format_utils = require "format_utils"
 local alert_consts = require "alert_consts"
 local alert_utils = require "alert_utils"
 local alert_entities = require "alert_entities"
-local tag_utils = require "tag_utils"
-local json = require "dkjson"
+local flowfilter_utils = require "flowfilter_utils"
 
 -- ##############################################
 
@@ -26,34 +24,38 @@ local network_alert_store = classes.class(alert_store)
 function network_alert_store:init(args)
    self.super:init()
 
-   self._table_name = "network_alerts"
+   if ntop.isClickHouseEnabled() then
+      self._table_name = "network_alerts_view"
+      self._write_table_name = "network_alerts"
+      self._engaged_write_table_name = "engaged_network_alerts"
+   else
+      self._table_name = "network_alerts_view"
+      self._write_table_name = "network_alerts"
+      self._engaged_write_table_name = "mem_db.engaged_network_alerts"
+   end
+
    self._alert_entity = alert_entities.network
 end
 
 -- ##############################################
 
-function network_alert_store:insert(alert)
+function network_alert_store:_build_insert_query(alert, write_table, alert_status, extra_columns, extra_values)
    local name = alert.entity_val
    local alias = getLocalNetworkAlias(name)
 
-   local extra_columns = ""
-   local extra_values = ""
-   if(ntop.isClickHouseEnabled()) then
-      extra_columns = "rowid, "
-      extra_values = "generateUUIDv4(), "
-   end
-
    local insert_stmt = string.format("INSERT INTO %s "..
-      "(%salert_id, interface_id, tstamp, tstamp_end, severity, score, local_network_id, name, alias, granularity, json) "..
-      "VALUES (%s%u, %d, %u, %u, %u, %u, %u, '%s', '%s', %u, '%s'); ",
-      self._table_name, 
+      "(%salert_id, alert_status, require_attention, interface_id, tstamp, tstamp_end, severity, score, local_network_id, name, alias, granularity, json) "..
+      "VALUES (%s%u, %u, %u, %d, %u, %u, %u, %u, %u, '%s', '%s', %u, '%s'); ",
+      write_table,
       extra_columns,
       extra_values,
       alert.alert_id,
+      alert_status,
+      ternary(alert.require_attention, 1, 0),
       self:_convert_ifid(interface.getId()),
       alert.tstamp,
       alert.tstamp_end,
-      ntop.mapScoreToSeverity(alert.score),
+      map_score_to_severity(alert.score),
       alert.score,
       ntop.getLocalNetworkID(name),
       self:_escape(name),
@@ -61,9 +63,7 @@ function network_alert_store:insert(alert)
       alert.granularity,
       self:_escape(alert.json))
 
-   -- traceError(TRACE_NORMAL, TRACE_CONSOLE, insert_stmt)
-
-   return interface.alert_store_query(insert_stmt)
+   return insert_stmt
 end
 
 -- ##############################################
@@ -85,7 +85,7 @@ end
 --@brief Get info about additional available filters
 function network_alert_store:_get_additional_available_filters()
    local filters = {
-      network_name = tag_utils.defined_tags.network_name,
+      network_name = flowfilter_utils.defined_filters.network_name,
    }
 
    return filters
@@ -127,8 +127,9 @@ end
 local RNAME = {
    ALIAS = { name = "alias", export = true},
    LOCAL_NETWORK_ID = { name = "local_network_id", export = true},
-   NETWORK = { name = "network", export = true},
+   NETWORK = { name = "name", export = true},
    ALERT_NAME = { name = "alert_name", export = true},
+   DESCRIPTION = { name = "description", export = true},
    MSG = { name = "msg", export = true, elements = {"name", "value", "description"}}
 }
 
@@ -159,12 +160,14 @@ function network_alert_store:format_record(value, no_html)
       msg = noHtml(msg)
    end
 
+   record[RNAME.DESCRIPTION.name] = msg
+
    record[RNAME.MSG.name] = {
      name = noHtml(alert_name),
      fullname = alert_fullname,
      value = tonumber(value["alert_id"]),
      description = msg,
-     configset_ref = alert_utils.getConfigsetAlertLink(alert_info)
+     configset_ref = alert_utils.getConfigsetAlertLink(alert_info, value["alert_id"], alert_entities.network.entity_id)
    }
 
    return record

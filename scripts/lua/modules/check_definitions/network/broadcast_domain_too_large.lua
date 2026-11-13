@@ -1,16 +1,17 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
-local alert_entities = require("alert_entities")
-local alert_utils = require("alert_utils")
-local checks = require("checks")
+local alert_consts = require("alert_consts")
+local alert_categories = require "alert_categories"
 
 local script = {
   -- Script category
-  category = checks.check_categories.network,
+  category = alert_categories.network,
 
   default_enabled = true,
+
+  severity = alert_consts.get_printable_severities().warning,
 
   -- The default configuration of this script
   default_value = {

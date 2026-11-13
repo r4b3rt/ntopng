@@ -1,5 +1,5 @@
 --
--- (C) 2020-22 - ntop.org
+-- (C) 2020-26 - ntop.org
 --
 
 local ts_utils = require("ts_utils_core")
@@ -22,7 +22,7 @@ local result = {}
 local function check(measurement, hosts, granularity)
   result[measurement] = {}
 
-  for key, host in pairs(hosts) do
+  for key, host in pairs(hosts) do    
     local domain_name = host.host
 
     if do_trace then
@@ -41,24 +41,27 @@ local function check(measurement, hosts, granularity)
       end
       ]]
 
-      rv = ntop.httpGetAuthToken(domain_name, host.token, 10 --[[ timeout ]], host.save_result == false --[[ whether to return the content --]],
+      rv = ntop.httpGetAuthToken(domain_name, host.token, 10 --[[ timeout ]], false --[[ whether to return the content --]],
 				  nil, true --[[ follow redirects ]])
     else
-       rv = ntop.httpGet(domain_name, nil, nil, 10 --[[ timeout ]], host.save_result == false --[[ whether to return the content --]],
+       rv = ntop.httpGet(domain_name, nil, nil, 10 --[[ timeout ]], false --[[ whether to return the content --]],
 			 nil, true --[[ don't follow redirects ]])
     end
 
     if(rv and rv.HTTP_STATS and (rv.HTTP_STATS.TOTAL_TIME > 0)) then
-      local download_bit = rv.BYTES_DOWNLOAD * 8
+      local download_bytes = rv.HTTP_STATS.BYTES_DOWNLOAD or 0
       local total_time = rv.HTTP_STATS.TOTAL_TIME
-      local lookup_time = (rv.HTTP_STATS.NAMELOOKUP_TIME or 0)
 
-      local bandwidth = (download_bit / total_time) / 1000000
+      -- the total_time is in seconds, being Bps, throughput is bit / seconds,
+      -- however all the timeseries are saved as Bps
+      local throughput = download_bytes / total_time
+
 
       result[measurement][key] = {
-	    value = bandwidth,
+        calculate_scaling = false,
+	      value = throughput,
         resolved_addr = rv.RESOLVED_IP,
-	 }
+	    }
     end
   end
 end
@@ -135,7 +138,7 @@ return {
       -- If set, indicates the default threshold value
       default_threshold = nil,
       -- A list of additional timeseries (the am_host:val_* is always shown) to show in the charts.
-      -- See https://www.ntop.org/guides/ntopng/api/timeseries/adding_new_timeseries.html#charting-new-metrics .
+      -- See https://www.ntop.org/guides/ntopng/api/timeseries/adding_new_timeseries.html?utm_source=ntopng#charting-new-metrics .
       additional_timeseries = nil,
       -- Js function to call to format the measurement value. See ntopng_utils.js .
       value_js_formatter = "NtopUtils.fbits",

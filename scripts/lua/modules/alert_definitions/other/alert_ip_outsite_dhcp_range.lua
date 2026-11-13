@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -51,6 +51,8 @@ function alert_ip_outsite_dhcp_range.format(ifid, alert, alert_type_params)
   local hostinfo = hostkey2hostinfo(alert.entity_val)
   local hostkey = hostinfo2hostkey(hostinfo)
   local router_info = hostkey2hostinfo(alert_type_params.router_info)
+
+  ifid = ifid or alert.interface_id
 
   return(i18n("alert_messages.ip_outsite_dhcp_range", {
     client_url = getMacUrl(alert_type_params.client_mac),

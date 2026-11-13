@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,16 +34,30 @@ class IECUnexpectedTypeIdAlert : public FlowAlert {
   ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType() { return { flow_alert_iec_unexpected_type_id, alert_category_security }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_iec_unexpected_type_id,
+            alert_category_security};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
-  IECUnexpectedTypeIdAlert(FlowCheck *c, Flow *f, u_int8_t _type_id, u_int16_t _asdu, u_int8_t _cause_tx, u_int8_t _negative) : FlowAlert(c, f) { 
+  inline u_int16_t get_asdu() { return asdu; };
+  inline u_int8_t get_type_id() { return type_id; };
+  inline u_int8_t get_cause_tx() { return cause_tx; };
+  inline u_int8_t get_negative() { return negative; };
+
+  IECUnexpectedTypeIdAlert(FlowCheck* c, Flow* f, u_int8_t _type_id,
+                           u_int16_t _asdu, u_int8_t _cause_tx,
+                           u_int8_t _negative)
+      : FlowAlert(c, f) {
     type_id = _type_id;
     asdu = _asdu;
     cause_tx = _cause_tx;
-    negative  = _negative;
+    negative = _negative;
+    setAlertScore(getDefaultScore());
   };
-  ~IECUnexpectedTypeIdAlert() { };
+  ~IECUnexpectedTypeIdAlert() {};
+
+  bool autoAck() const { return false; };
 
   FlowAlertType getAlertType() const { return getClassType(); }
 };

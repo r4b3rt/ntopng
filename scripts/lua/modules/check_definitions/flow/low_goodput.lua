@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local checks = require("checks")
@@ -14,8 +14,6 @@ local script = {
   
   -- Script category
   category = checks.check_categories.network,
-
-  packet_interface_only = true,
   nedge_exclude = true,
 
   -- This script is only for alerts generation
@@ -44,7 +42,7 @@ local script = {
   },
 
   gui = {
-    i18n_title = "flow_checks.low_goodput_title",
+    i18n_title = "alerts_dashboard.flow_low_goodput",
     i18n_description = "flow_checks.low_goodput_description",
   }
 }

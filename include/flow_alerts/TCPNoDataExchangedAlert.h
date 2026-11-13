@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,10 +24,15 @@
 
 class TCPNoDataExchangedAlert : public FlowAlert {
  public:
-  static FlowAlertType getClassType() { return { flow_alert_tcp_no_data_exchanged, alert_category_network }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_NOTICE; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_tcp_no_data_exchanged,
+            alert_category_network};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_NOTICE; };
 
- TCPNoDataExchangedAlert(FlowCheck *c, Flow *f) : FlowAlert(c, f) {};
+  TCPNoDataExchangedAlert(FlowCheck* c, Flow* f) : FlowAlert(c, f) {
+    setAlertScore(getDefaultScore());
+  };
   ~TCPNoDataExchangedAlert() {};
 
   FlowAlertType getAlertType() const { return getClassType(); }

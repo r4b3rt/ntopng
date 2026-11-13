@@ -1,13 +1,15 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local checks = require("checks")
+local alert_consts = require("alert_consts")
 local host_alert_keys = require "host_alert_keys"
 
 local domain_names_contacts = {
    -- Script category
    category = checks.check_categories.network,
+   severity = alert_consts.get_printable_severities().notice,
 
    default_enabled = false,
    alert_id = host_alert_keys.host_alert_domain_names_contacts,

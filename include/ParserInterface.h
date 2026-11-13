@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,23 +28,33 @@ class ParserInterface : public NetworkInterface {
  private:
   Mutex companions_lock;
   u_int8_t num_companion_interfaces;
-  NetworkInterface **companion_interfaces;
+  NetworkInterface** companion_interfaces;
 
-  static bool isProbingFlow(const ParsedFlow * zflow);
   virtual void reloadCompanions();
 
+ protected:
+#ifdef NTOPNG_PRO
+  void exportersLimitReached();
+#endif
+
+  inline u_int32_t getExporterUniqueSourceID(struct ndpi_in6_addr *exporter_device_ip,
+                                             struct ndpi_in6_addr *nprobe_ip) {
+    return exporter_device_ip->u6_addr.u6_addr32[3] + nprobe_ip->u6_addr.u6_addr32[3];
+  }
+
  public:
-  ParserInterface(const char *endpoint, const char *custom_interface_type = NULL);
+  ParserInterface(const char* endpoint,
+                  const char* custom_interface_type = NULL);
   ~ParserInterface();
 
-  virtual bool is_ndpi_enabled() const    { return(false);      };
-  virtual u_int getPacketOverhead() { return 0; /* Can't determine this for non-packet interfaces */ }
-  bool processFlow(ParsedFlow *zflow);
+  virtual bool is_ndpi_enabled() const { return (false); };
+  virtual u_int getPacketOverhead() {
+    return 0; /* Can't determine this for non-packet interfaces */
+  }
+  bool processFlow(ParsedFlow* zflow);
 
-  void deliverFlowToCompanions(ParsedFlow * const flow);
+  void deliverFlowToCompanions(ParsedFlow* const flow);
   inline bool companionsEnabled() { return num_companion_interfaces > 0; };
 };
 
 #endif /* _PARSER_INTERFACE_H_ */
-
-

@@ -1,0 +1,63 @@
+{
+    "id": "local_hosts_traffic",
+    "data_url": "lua/pro/rest/v2/get/host/assets_total_traffic.lua",
+    "use_current_page": false,
+    "enable_search": true,
+    "paging": false,
+    "display_empty_rows": false,
+    "empty_message_i18n": "table_empty.local_hosts_traffic",
+    "default_sort": {
+        "column_id": "local_traffic",
+        "sort": 2
+    },
+    "columns": [
+        {
+            "id": "ip_address",
+            "title_i18n": "ip_address",
+            "data_field": "host",
+            "sortable": true,
+            "class": [
+                "text-nowrap"
+            ]
+        },
+        {
+            "id": "name",
+            "title_i18n": "name",
+            "data_field": "name",
+            "sortable": true,
+            "class": [
+                "text-nowrap"
+            ]
+        },
+        {
+            "id": "local_traffic",
+            "title_i18n": "local_traffic",
+            "data_field": "local_traffic",
+            "sortable": true,
+            "class": [
+                "text-nowrap",
+                "text-end"
+            ]
+        },
+        {
+            "id": "remote_traffic",
+            "title_i18n": "remote_traffic",
+            "data_field": "remote_traffic",
+            "sortable": true,
+            "class": [
+                "text-nowrap",
+                "text-end"
+            ]
+        },
+        {
+            "id": "total_traffic",
+            "title_i18n": "total_traffic",
+            "data_field": "total_traffic",
+            "sortable": true,
+            "class": [
+                "text-nowrap",
+                "text-end"
+            ]
+        }
+    ]
+}

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -31,13 +31,24 @@ class BlacklistedCountryAlert : public FlowAlert {
   ndpi_serializer* getAlertJSON(ndpi_serializer* serializer);
 
  public:
-  static FlowAlertType getClassType()  { return { flow_alert_blacklisted_country, alert_category_security }; }
-  static u_int8_t      getDefaultScore() { return SCORE_LEVEL_ERROR; };
+  static FlowAlertType getClassType() {
+    return {NDPI_NO_RISK, flow_alert_blacklisted_country,
+            alert_category_security};
+  }
+  static u_int8_t getDefaultScore() { return SCORE_LEVEL_ERROR; };
 
-  BlacklistedCountryAlert(FlowCheck *c, Flow *f, bool _is_server) : FlowAlert(c, f) { is_server = _is_server; };
-  ~BlacklistedCountryAlert() { };
+  inline bool get_is_server() { return is_server; };
 
-  FlowAlertType getAlertType() const { return getClassType();  }
+  BlacklistedCountryAlert(FlowCheck* c, Flow* f, bool _is_server)
+      : FlowAlert(c, f) {
+    is_server = _is_server;
+    setAlertScore(getDefaultScore());
+  };
+  ~BlacklistedCountryAlert() {};
+
+  bool autoAck() const { return false; };
+
+  FlowAlertType getAlertType() const { return getClassType(); }
 
   bool isServer() { return is_server; }
 };

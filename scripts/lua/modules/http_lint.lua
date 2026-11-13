@@ -1,14 +1,19 @@
 --
--- (C) 2017-22 - ntop.org
+-- (C) 2017-26 - ntop.org
 --
+local clock_start = os.clock()
+
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
-local pragma_once = 1
 local http_lint = {}
 
 local json = require "dkjson"
 local tracker = require "tracker"
+local locales_utils = require "locales_utils"
+local validation_utils = require "validation_utils"
+require "ntop_utils"
+require "label_utils"
 
 -- #################################################################
 
@@ -21,12 +26,12 @@ tracker.track_interface()
 
 -- UTILITY FUNCTIONS
 
-function starts(String,Start)
-   if((String == nil) or (Start == nil)) then
-      return(false)
+function starts(String, Start)
+   if ((String == nil) or (Start == nil)) then
+      return (false)
    end
 
-   return string.sub(String,1,string.len(Start))==Start
+   return string.sub(String, 1, string.len(Start)) == Start
 end
 
 -- Searches into the keys of the table
@@ -38,18 +43,23 @@ local function validateChoiceByKeys(defaults, v)
    end
 end
 
+-- Placeholder for pcap file validation
+local function validatePcap(defaults, v)
+   return true
+end
+
 -- Searches into the value of the table
 -- Optional key can be used to access fields of the array element
 local function validateChoice(defaults, v, key)
-   for _,d in pairs(defaults) do
+   for _, d in pairs(defaults) do
       if key ~= nil then
-         if d[key] == v then
-            return true
-         end
+	 if d[key] == v then
+	    return true
+	 end
       else
-         if d == v then
-            return true
-         end
+	 if d == v then
+	    return true
+	 end
       end
    end
 
@@ -59,9 +69,9 @@ end
 local function validateChoiceInline(choices)
    return function(choice)
       if (validateChoice(choices, choice)) then
-         return true
+	 return true
       else
-         return false
+	 return false
       end
    end
 end
@@ -69,17 +79,18 @@ http_lint.validateChoiceInline = validateChoiceInline
 
 local function validateListOfType(l, validate_callback, separator)
    local separator = separator or ","
-   if isEmptyString(l) then
+
+   if (isEmptyString(l) or (l == "-1")) then
       return true
    end
 
    local items = split(l, separator)
 
-   for _,item in pairs(items) do
-      if item ~= "" then
-         if not validate_callback(item) then
-            return false
-         end
+   for _, item in pairs(items) do
+      if item and item ~= "" then
+	 if not validate_callback(item) then
+	    return false
+	 end
       end
    end
 
@@ -97,9 +108,9 @@ end
 local function validateEmptyOr(other_validation)
    return function(s)
       if (validateEmpty(s) or other_validation(s)) then
-         return true
+	 return true
       else
-         return false
+	 return false
       end
    end
 end
@@ -109,11 +120,37 @@ http_lint.validateEmptyOr = validateEmptyOr
 
 -- FRONT-END VALIDATORS
 
+local function validateSNMPIfidNumber(p)
+   -- integer SNMP Ifid validation
+
+   if p == "*" then
+      return true
+   end
+
+   local num = tonumber(p)
+
+   if (num == nil) then
+      return false
+   end
+
+   if math.floor(num) == num then
+      return true
+   else
+      -- this is a float number
+      return false
+   end
+end
+http_lint.validateSNMPIfidNumber = validateSNMPIfidNumber
+
+-- #################################################################
+
+-- FRONT-END VALIDATORS
+
 local function validateNumber(p)
    -- integer number validation
    local num = tonumber(p)
 
-   if(num == nil) then
+   if (num == nil) then
       return false
    end
 
@@ -126,6 +163,22 @@ local function validateNumber(p)
 end
 http_lint.validateNumber = validateNumber
 
+-- #################################################################
+
+-- FRONT-END VALIDATORS
+
+local function validateVlan(p)
+   -- integer number validation
+   if (validateNumber(p)) then
+      local num = tonumber(p)
+      if (-1 <= num and num < 4095) then
+	 return true
+      end
+   end
+
+   return false
+end
+http_lint.validateVlan = validateVlan
 
 -- ##############################################
 
@@ -133,7 +186,7 @@ local function validateFloat(p)
    -- integer number validation
    local num = tonumber(p)
 
-   if(num == nil) then
+   if (num == nil) then
       return false
    end
 
@@ -143,11 +196,7 @@ end
 -- ##############################################
 
 local function validateSyslogFormat(p)
-   if p == "plaintext" or
-      p == "plaintextrfc" or
-      p == "json" or
-      p == "ecs"
-   then
+   if p == "plaintext" or p == "plaintextrfc" or p == "json" or p == "ecs" or p == "checkmk" or p == "cef" then
       return true
    end
 
@@ -155,7 +204,49 @@ local function validateSyslogFormat(p)
 end
 http_lint.validateSyslogFormat = validateSyslogFormat
 
-local function validatePort(p)   
+-- ##############################################
+
+local function validateHostInfoType(p)
+   if p == "minimal_one_host" or p == "minimal_all_host" or p == "more_one_host" or p == "more_all_host" then
+      return true
+   end
+
+   return false
+end
+
+local function validateFlowType(p)
+   if p == "peers" or p == "description" then
+      return true
+   end
+
+   return false
+end
+
+local function validateInterfaceType(p)
+   if p == "show" then
+      return true
+   end
+
+   return false
+end
+
+local function validatePort(p)
+   local items = split(p, "/")
+
+   if (items == nil) then
+      return false
+   else
+      p = items[1]
+
+      if (items[2] ~= nil) then
+	 if ((items[2] == "tcp") or (items[2] == "udp")) then
+	    -- Good: example 80/tcp
+	 else
+	    return false
+	 end
+      end
+   end
+
    if not validateNumber(p) then
       return false
    end
@@ -168,6 +259,39 @@ local function validatePort(p)
    end
 end
 http_lint.validatePort = validatePort
+
+-- ##############################################
+
+-- @brief Validates the scan_ports parameter used for nmap.
+-- Allow plain numeric port lists/ranges only ("80,443" or "1-1000")
+local function validateScanPorts(w)
+   if isEmptyString(w) then
+      return true
+   end
+
+   if (#w > 256) or not w:match("^[%d,%-]+$") then
+      return false
+   end
+
+   for token in w:gmatch("[^,]+") do
+      local from, to = token:match("^(%d+)%-(%d+)$")
+
+      if from and to then
+         from, to = tonumber(from), tonumber(to)
+         if not (from and to and from >= 1 and from <= to and to <= 65535) then
+            return false
+         end
+      else
+         local port = token:match("^%d+$") and tonumber(token)
+         if not (port and port >= 1 and port <= 65535) then
+            return false
+         end
+      end
+   end
+
+   return true
+end
+http_lint.validateScanPorts = validateScanPorts
 
 -- ##############################################
 local function validateASN(p)
@@ -190,10 +314,48 @@ http_lint.validateUnquoted = validateUnquoted
 local function validateLuaScriptPath(p)
    local os_utils = require("os_utils")
 
-   if (string.find(p, "'") ~= nil) then return false end
-   return(starts(p, os_utils.getPathDivider() .. "scripts"))
+   if (string.find(p, "'") ~= nil) then
+      return false
+   end
+   return (starts(p, os_utils.getPathDivider() .. "scripts"))
 end
 http_lint.validateLuaScriptPath = validateLuaScriptPath
+
+local function validateUploadedFile(p)
+   local os_utils = require("os_utils")
+   local dirs = ntop.getDirs()
+   local divider = os_utils.getPathDivider()
+   local upload_dir = dirs.workingdir .. divider .. "tmp" .. divider .. "upload" .. divider
+
+   if not starts(p, upload_dir) then
+      return false
+   end
+
+   local name = string.sub(p, string.len(upload_dir) + 1)
+
+   return ((name ~= "") and (name ~= ".") and (name ~= "..") and (not name:find("[/\\]")))
+end
+http_lint.validateLuaScriptPath = validateLuaScriptPath
+
+local function validateReferer(referer)
+   -- Not a string
+   if type(referer) ~= "string" then return false end
+
+   -- Reject Unicode control/directional characters (U+202A–U+202F, U+200B–U+200F)
+   if referer:match("[\xE2\x80\xAA-\xE2\x80\xAF]") then return false end
+   if referer:match("[\xE2\x80\x8B-\xE2\x80\x8F]") then return false end
+
+   -- Must be a relative URL (no open redirect)
+   --if referer:sub(1,1) ~= "/" then return false end
+
+   -- Whitelist safe URL characters only
+   if not referer:match("^[a-zA-Z0-9%-%_%/%.%?%=%&%:%%+#@!~,;]+$") then
+      return false
+   end
+
+   return true
+end
+http_lint.validateReferer = validateReferer
 
 local function validateUnchecked(p)
    -- This function does not perform any validation, so only the C side validation takes place.
@@ -203,7 +365,14 @@ local function validateUnchecked(p)
 end
 http_lint.validateUnchecked = validateUnchecked
 
+local function validateAuthProto(p)
+   return (p == "pap" or p == "chap")
+end
+http_lint.validateAuthProto = validateAuthProto
+
 local function validateSingleWord(w)
+   if(w == nil) then return(false) end
+      
    if (string.find(w, "% ") ~= nil) then
       return false
    else
@@ -211,6 +380,32 @@ local function validateSingleWord(w)
    end
 end
 http_lint.validateSingleWord = validateSingleWord
+
+-- Syslog rules (ClickHouse backed). Values end up inside SQL literals and are matched by the
+-- collector as RE2, so they are validated on shape (UUID, 0-7, bounded text with no control
+-- chars) rather than just rejecting quotes: the SQL layer escapes them anyway.
+function http_lint.validateSyslogRuleId(p)
+   return type(p) == "string" and
+      string.match(p, "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
+end
+
+function http_lint.validateSyslogSeverity(p)
+   return type(p) == "string" and string.match(p, "^[0-7]$") ~= nil
+end
+
+-- Empty is handled by validateEmptyOr. Strict charset first, then the generic IP/network check
+function http_lint.validateSyslogSource(p)
+   return type(p) == "string" and #p <= 49 and
+      string.match(p, "^[%x:%.]+/?%d*$") ~= nil and
+      string.match(p, "^%d+%.%d+%.%d+%.%d+:") == nil and -- no ip:port
+      http_lint.validateNetwork(p)
+end
+
+function http_lint.validateSyslogText(max_len)
+   return function(p)
+      return type(p) == "string" and #p <= max_len and string.find(p, "%c") == nil
+   end
+end
 
 -- ##############################################
 
@@ -227,11 +422,11 @@ http_lint.validateScriptFilter = validateScriptFilter
 local function validateMessage(w)
    return true
 end
-http_lint.validateSingleWord = validateMessage
+http_lint.validateMessage = validateMessage
 
 local function validateSingleAlphanumericWord(w)
    if (w:match("%W")) then
-     return false
+      return false
    else
       return validateSingleWord(w)
    end
@@ -247,7 +442,7 @@ end
 
 local function validateUsername(p)
    -- A username (e.g. used in ntopng authentication)
-   return(validateSingleWord(p) and (string.find(p, "%.") == nil))
+   return (validateSingleWord(p))
 end
 
 local function licenseCleanup(p)
@@ -259,12 +454,12 @@ local function passwordCleanup(p)
 end
 
 local function webhookCleanup(p)
-   local allowed_prefixes = { "https://", "http://" }
+   local allowed_prefixes = {"https://", "http://"}
 
    for _, prefix in pairs(allowed_prefixes) do
-      if p and p:match("^"..prefix) then
+      if p and p:match("^" .. prefix) then
 	 -- Only allow the prefix to go through unpurified
-	 local purified = prefix..ntop.httpPurifyParam(p:gsub("^"..prefix, ''))
+	 local purified = prefix .. ntop.httpPurifyParam(p:gsub("^" .. prefix, ''))
 
 	 return purified
       end
@@ -283,12 +478,12 @@ end
 local function whereCleanup(p)
    -- SQL where
    -- A-Za-z0-9!=<>()
-   return(p:gsub('%W><!()','_'))
+   return (p:gsub('%W><!()', '_'))
 end
 
 -- NOTE: keep in sync with getLicensePattern()
 local function validateLicense(p)
-   return string.match(p,"[%l%u%d/+=]+") == p or validateEmpty(p)
+   return string.match(p, "[%l%u%d/+=]+") == p or validateEmpty(p)
 end
 
 local function validatePassword(p)
@@ -306,22 +501,48 @@ local function validateNumMinutes(m)
 end
 
 local function validateJSON(j)
+   if (j == "") then
+      return true
+   end
    return (json.decode(j) ~= nil)
 end
 
+local function validatePoolCSV(v)
+   if (v == "") then
+      return true
+   end
+   
+   local ip_pat_vlan = "^%d+%.%d+%.%d+%.%d+/%d+@%d+$"
+   local ip_pat_bare = "^%d+%.%d+%.%d+%.%d+/%d+$"
+   local mac_pat = "^%x%x[:%-%.]%x%x[:%-%.]%x%x[:%-%.]%x%x[:%-%.]%x%x[:%-%.]%x%x$"
+   for line in v:gmatch("[^\r\n]+") do
+      line = line:match("^%s*(.-)%s*$")
+      if line ~= "" and not line:match("^#") then
+         local member, _ = line:match("^(%S+)[%s,;]+(%S+)%s*$")
+         if member then
+            if member:match(ip_pat_vlan) or member:match(ip_pat_bare) or member:match(mac_pat) then
+               return true
+            end
+         end
+      end
+   end
+   return false
+
+end
+
 local function validateMeasurement(p)
-  --[[ FIXX include loop check (pragma_once_checks)
-  local am_utils = require "am_utils"
+   --[[ FIXX include loop check (pragma_once_checks)
+      local am_utils = require "am_utils"
 
-  if am_utils then
-    local available_measurements = am_utils.getMeasurementsInfo()
+      if am_utils then
+      local available_measurements = am_utils.getMeasurementsInfo()
 
-    return(available_measurements[p] ~= nil)
-  end
+      return(available_measurements[p] ~= nil)
+      end
 
-  return(false)
-  --]]
-  return validateSingleWord(p)
+      return(false)
+   --]]
+   return validateSingleWord(p)
 end
 
 -- #################################################################
@@ -333,15 +554,22 @@ local function validateOnOff(mode)
 end
 
 local function validateMode(mode)
-   local modes = {"all", "local", "remote", "broadcast_domain", "filtered", "blacklisted",
-		  "dhcp", "restore", "client_duration", "server_duration",
-		  "client_frequency", "server_frequency"  }
+   local modes = {"all", "local", "local_no_tx", "local_no_tcp_tx", "remote", "remote_no_tx", "remote_no_tcp_tx",
+		  "broadcast_domain", "filtered", "blacklisted", "dhcp", "restore", "client_duration",
+		  "server_duration", "client_frequency", "server_frequency", "broadcast_multicast"}
 
    return validateChoice(modes, mode)
 end
 
+-- Host locality filter of the aggregated live flows page (per-host criteria)
+local function validateHostLocality(locality)
+   local localities = {"local", "remote"}
+
+   return validateChoice(localities, locality)
+end
+
 local function validateDashboardMode(mode)
-   local modes = {"community", "pro", "enterprise"  }
+   local modes = {"community", "pro", "enterprise"}
 
    return validateChoice(modes, mode)
 end
@@ -355,15 +583,7 @@ end
 http_lint.validateOperator = validateOperator
 
 local function validateAlertValue(value)
-  return validateEmpty(value) or
-    validateNumber(value) or
-    validateOnOff(value)
-end
-
-local function validateHttpMode(mode)
-   local modes = {"responses", "queries"}
-
-   return validateChoice(modes, mode)
+   return validateEmpty(value) or validateNumber(value) or validateOnOff(value)
 end
 
 local function validateEBPFData(mode)
@@ -445,7 +665,7 @@ local function validateSendersReceivers(mode)
 end
 
 local function validateFingerprintType(ft)
-   local fingerprint_types = {"ja3", "hassh"}
+   local fingerprint_types = {"ja4", "hassh"}
 
    return validateChoice(fingerprint_types, ft)
 end
@@ -457,9 +677,7 @@ local function validateClientOrServer(mode)
 end
 
 local function validateBroadcastUnicast(mode)
-   local modes = {"unicast", "broadcast_multicast",
-		  "one_way",
-		  "one_way_unicast", "one_way_broadcast_multicast",
+   local modes = {"unicast", "broadcast_multicast", "one_way", "one_way_unicast", "one_way_broadcast_multicast",
 		  "bidirectional"}
 
    return validateChoice(modes, mode)
@@ -471,11 +689,11 @@ local function validateAlertTypeNumber(status)
    end
 
    local num = tonumber(status)
-   return((num >= 0) and (num < 2^32))
+   return ((num >= 0) and (num < 2 ^ 32))
 end
 
 local function validateAlertType(mode)
-   local modes = {"normal", "alerted", "filtered"}
+   local modes = {"normal", "alerted", "filtered", "periodic"}
 
    if validateAlertTypeNumber(mode) then
       return true
@@ -484,14 +702,28 @@ local function validateAlertType(mode)
    return validateChoice(modes, mode)
 end
 
+local function validateAlertFamily(family)
+   local modes = {"active_monitoring", "flow", "host", "interface", "mac", "network", "snmp", "system", "user"}
+
+   if validateAlertTypeNumber(family) then
+      return true
+   end
+
+   return validateChoice(modes, family)
+end
+
 local function validateAlertTypeSeverity(mode)
-   local modes = {"group_none", "notice_or_lower", "warning", "error_or_higher"}
+   local modes = {"group_none", "notice_or_lower", "warning", "error", "critical", "emergency"}
 
    return validateChoice(modes, mode)
 end
 
+local function validateAlertTypeAndSeverity(mode)
+   return validateAlertType(mode) or validateAlertTypeSeverity(mode)
+end
+
 local function validateTCPFlowState(mode)
-   local modes = { "established", "connecting", "closed", "reset" }
+   local modes = {"established", "connecting", "closed", "reset"}
 
    return validateChoice(modes, mode)
 end
@@ -503,36 +735,27 @@ local function validatePolicyPreset(mode)
 end
 
 local function validateStatsType(mode)
-   local modes = {"severity_pie", "type_pie", "count_sparkline", "top_origins",
-      "top_targets", "duration_pie", "longest_engaged", "counts_pie",
-      "counts_plain", "top_talkers", "top_applications"}
+   local modes = {"severity_pie", "type_pie", "count_sparkline", "top_origins", "top_targets", "duration_pie",
+		  "longest_engaged", "counts_pie", "counts_plain", "top_talkers", "top_applications"}
 
    return validateChoice(modes, mode)
 end
 
 local function validateAlertStatsType(mode)
-   local modes = {"severity_pie", "type_pie", "count_sparkline", "top_origins",
-      "top_targets", "duration_pie", "longest_engaged", "counts_pie",
-      "counts_plain"}
+   local modes = {"severity_pie", "type_pie", "count_sparkline", "top_origins", "top_targets", "duration_pie",
+		  "longest_engaged", "counts_pie", "counts_plain"}
 
    return validateChoice(modes, mode)
 end
 
 local function validateFlowHostsType(mode)
-   local modes = {"local_only", "remote_only",
-      "local_origin_remote_target", "remote_origin_local_target", "all_hosts"}
+   local modes = {"local_only", "remote_only", "local_origin_remote_target", "remote_origin_local_target", "all_hosts"}
 
    return validateChoice(modes, mode)
 end
 
 local function validateConsolidationFunction(mode)
    local modes = {"AVERAGE", "MAX", "MIN"}
-
-   return validateChoice(modes, mode)
-end
-
-local function validateAlertStatus(mode)
-   local modes = {"engaged", "historical", "historical-flows"}
 
    return validateChoice(modes, mode)
 end
@@ -567,20 +790,19 @@ local function validateViewPreferences(view)
 end
 
 local function validateFavouriteType(mode)
-   local modes = {"apps_per_host_pair", "top_applications", "talker", "app",
-      "host_peers_by_app"}
+   local modes = {"apps_per_host_pair", "top_applications", "talker", "app", "host_peers_by_app"}
 
    return validateChoice(modes, mode)
 end
 
 local function validateAjaxFormat(mode)
-   local modes = {"d3"}
+   local modes = {"d3", "pie"}
 
    return validateChoice(modes, mode)
 end
 
 local function validatePrintFormat(mode)
-   local modes = {"txt", "json"}
+   local modes = {"txt", "json", "csv"}
 
    return validateChoice(modes, mode)
 end
@@ -598,7 +820,7 @@ local function validateFlowMode(mode)
 end
 
 local function validateDevicesMode(mode)
-   local modes = {"source_macs_only", "dhcp_macs_only"}
+   local modes = {"source_macs_only", "dhcp_macs_only", "inactive_macs_only"}
 
    return validateChoice(modes, mode)
 end
@@ -606,18 +828,11 @@ end
 local function validateDeviceType(tp)
    local discover = require("discover_utils")
 
-   return(discover.isValidDevtype(tp))
-end
-
-local function validateUnassignedDevicesMode(mode)
-   local modes = {"active_only", "inactive_only"}
-
-   return validateChoice(modes, mode)
+   return (discover.isValidDevtype(tp))
 end
 
 local function validateSnmpAction(mode)
-   local modes = {"delete", "delete_all", "add",
-		  "addNewDevice", "startPolling", "prune", "ping_all"}
+   local modes = {"delete", "delete_all", "add", "addNewDevice", "startPolling", "prune", "ping_all"}
 
    return validateChoice(modes, mode)
 end
@@ -628,12 +843,12 @@ local function validateSnmpLevel(level)
 end
 
 local function validateSnmpAuthProtocol(protocol)
-   local protocols = {"md5", "sha"}
+   local protocols = {"md5", "sha","sha256","sha384","sha512"}
    return validateChoice(protocols, protocol)
 end
 
 local function validateSnmpPrivacyProtocol(protocol)
-   local protocols = {"des", "aes"}
+   local protocols = {"des", "aes", "aes128"}
    return validateChoice(protocols, protocol)
 end
 
@@ -676,7 +891,7 @@ local function validateTimeZoneName(tz)
 end
 
 local function validateNotificationSeverity(tz)
-   return validateChoiceInline({"error","warning","info"})
+   return validateChoiceInline({"error", "warning", "info"})
 end
 
 http_lint.validateNotificationSeverity = validateNotificationSeverity
@@ -690,13 +905,26 @@ local function validateTransformation(t)
 end
 
 local function validateIpAddress(p)
-   if (isIPv4(p) or isIPv6(p)) then
+   local ip = p:gsub("%s+", "") -- Remove the spaces
+   if (isIPv4(ip) or isIPv6(ip)) then
       return true
    else
       return false
    end
 end
 http_lint.validateIpAddress = validateIpAddress
+
+local function validateIpAddressWithOptionalVlan(p)
+   local ip_part, vlan_part = p:match("^([^@]+)@?(%d*)$")
+   if not ip_part then return false end
+   local ip = ip_part:gsub("%s+", "")
+   if not (isIPv4(ip) or isIPv6(ip)) then return false end
+   if vlan_part and vlan_part ~= "" then
+      local vlan = tonumber(vlan_part)
+      if not vlan or vlan < 1 or vlan > 4095 then return false end
+   end
+   return true
+end
 
 local function validateIpRange(p)
    local range = string.split(p, "%-")
@@ -705,8 +933,7 @@ local function validateIpRange(p)
       return false
    end
 
-   return validateIpAddress(range[1]) and
-      validateIpAddress(range[2])
+   return validateIpAddress(range[1]) and validateIpAddress(range[2])
 end
 
 local function validateHTTPHost(p)
@@ -735,6 +962,100 @@ local function validateServer(v)
    return validateIpAddress(v) or validateSingleWord(v)
 end
 
+-- Validates a ZMQ TCP endpoint string.
+--   tcp://  <host|ip|*>:<port>   e.g. tcp://127.0.0.1:11060  tcp://*:5555
+local function validateZMQEndpoint(v)
+   if isEmptyString(v) then
+      return false
+   end
+
+   local tcp_host, tcp_port = v:match("^tcp://([%w%.%-%*]+):(%d+)$")
+   if tcp_host and tcp_port then
+      local port = tonumber(tcp_port)
+      if port and port >= 1 and port <= 65535 then
+         return true
+      end
+   end
+
+   return false
+end
+
+local function validateDomain(p)
+   if type(p) ~= "string" or #p == 0 or #p > 253 then
+      return false
+   end
+
+   -- Remove the . at the end
+   if p:sub(-1) == "." then
+      p = p:sub(1, -2)
+   end
+
+   -- It needs to have a .it/.com/ecc
+   if not p:find("%.") then
+      return false
+   end
+
+   -- Validate each label separated by .
+   for label in p:gmatch("[^%.]+") do
+      -- Max 1–63 characters
+      if #label == 0 or #label > 63 then
+         return false
+      end
+
+      -- Cannot start or end with -
+      if label:sub(1, 1) == "-" or label:sub(-1) == "-" then
+         return false
+      end
+
+      -- Only letters, numbers and - (LDH rule)
+      if not label:match("^[a-zA-Z0-9%-]+$") then
+         return false
+      end
+   end
+
+   -- TLD (last label) cannot only be numeric
+   local tld = p:match("[^%.]+$")
+   if tld:match("^%d+$") then
+      return false
+   end
+
+   return true
+end
+
+local function validateHostName(v)
+   if (isEmptyString(v)) then
+      return false
+   end
+
+   if (not validateSingleWord(v)) then
+      for str in ipairs(split(v, " ")) do
+	 if (not validateSingleWord(str)) then
+	    return false
+	 end
+      end
+   end
+
+   return true
+end
+
+local function validateColumnsIds(v)
+   return validateUnchecked(v)
+   -- An Array is composed by a series of string separated by commas
+   -- e.g.     column1,column2,column3
+   -- So split by comma and check each single column with validateSingleWord
+   -- local columns = string.split(v, ",")
+
+   -- if((column == nil) or (type(column) ~= table)) then return false end
+
+   -- for _, column_id in pairs(columns) do
+   --     if not validateSingleWord(column_id) then
+   --         return false
+   --     end
+   -- end
+
+   -- return true
+end
+
 local function validateDate(p)
    -- TODO this validation function should be removed and dates should always be passed as timestamp
    if string.find(p, ":") ~= nil then
@@ -742,6 +1063,11 @@ local function validateDate(p)
    else
       return false
    end
+end
+
+-- YYYY-MM-DD day (traffic model)
+local function validateISODay(p)
+   return type(p) == "string" and p:match("^%d%d%d%d%-%d%d%-%d%d$") ~= nil
 end
 
 local function validateMemberRelaxed(m)
@@ -756,7 +1082,7 @@ local function validateMemberRelaxed(m)
 end
 
 local function validateMember(m)
-   if isValidPoolMember(m) then
+   if isValidPoolMember(m, true) then
       return true
    else
       return false
@@ -787,14 +1113,14 @@ local function validateLocalGlobal(p)
 end
 
 local function validateBool(p)
-   if((p == "true") or (p == "false")) then
+   if (isEmptyString(p) or p == "false") or (p == "true") then
       return true
    else
       local n = tonumber(p)
       if ((n == 0) or (n == 1)) then
-         return true
+	 return true
       else
-         return false
+	 return false
       end
    end
 end
@@ -818,13 +1144,13 @@ local function validateApplication(app)
    local dot = string.find(app, "%.")
 
    if dot ~= nil then
-      local master = string.sub(app, 1, dot-1)
+      local master = string.sub(app, 1, dot - 1)
       if not validateChoiceByKeys(ndpi_protos, master) then
 	 -- try to see if app is just an app with a dot (e.g., Musical.ly)
 	 return validateChoiceByKeys(ndpi_protos, app)
       else
 	 -- master is a valid protocol, let's see if the application is valid as well
-	 local sub = string.sub(app, dot+1)
+	 local sub = string.sub(app, dot + 1)
 	 return validateChoiceByKeys(ndpi_protos, sub)
       end
    else
@@ -833,53 +1159,93 @@ local function validateApplication(app)
 end
 
 local function validateTagsOperator(p)
-   local tag_utils = require "tag_utils"
-   return (tag_utils.tag_operators[p] ~= nil)
+   local flowfilter_utils = require "flowfilter_utils"
+   return (flowfilter_utils.flowfilter_operators_label[p] ~= nil)
 end
+
+--[[ 
+   -- Note: this has been simplified and replaced by the function below
+   -- (Why is this splitting by '-'? Do we have '-' in filters? Values may contain '-'...)
+   local function validateFilters(other_validation)
+   return function(s)
+   local param = split(s, ";") or split(s, "-")
+
+   if param and #param == 1 then
+   param = split(s, "-")
+   end
+
+   if param and #param == 2 then
+   local tmp = split(param[1], "-")
+
+   if tmp and #tmp == 2 then
+   return (other_validation(tmp[1]) and (other_validation(tmp[2])) and (validateTagsOperator(param[2])))
+   else
+   if isEmptyString(param[1]) then
+   return validateTagsOperator(param[2])
+   else
+   return (other_validation(param[1]) and (validateTagsOperator(param[2])))
+   end
+   end
+   end
+
+   -- Note: comma is deprecated, use ';'
+   -- Checking comma for backward compatibility
+   param = split(s, ",")
+   if param and #param == 2 then
+   return (other_validation(param[1]) and (validateTagsOperator(param[2])))
+   end
+
+   return other_validation(s)
+   end
+   end
+--]]
 
 local function validateFilters(other_validation)
    return function(s)
-      local param = split(s, ";") or split(s, "-")
-      
-      if param and #param == 1 then
-         param = split(s, "-")
-      end
-      
-      if param and #param == 2 then
-         local tmp = split(param[1], "-")
+      local param = split(s, ";")
 
-         if tmp and #tmp == 2 then
-            return (other_validation(tmp[1]) and (other_validation(tmp[2])) and(validateTagsOperator(param[2])))
-         else
-            return (other_validation(param[1]) and
-          (validateTagsOperator(param[2])))
-         end
-      end
-
-      -- Note: comma is deprecated, use ';'
-      -- Checking comma for backward compatibility
-      param = split(s, ",")
       if param and #param == 2 then
-	 return (other_validation(param[1]) and
-		    (validateTagsOperator(param[2])))
+	 if isEmptyString(param[1]) then
+	    return validateTagsOperator(param[2])
+	 else
+	    return (other_validation(param[1]) and (validateTagsOperator(param[2])))
+	 end
       end
 
       return other_validation(s)
    end
 end
 http_lint.validateFilters = validateFilters
-  
+
+local L4_PROTO_KEYS = {
+   tcp = 6,
+   udp = 17,
+   icmp = 1,
+   eigrp = 88,
+   other_ip = -1
+}
+
 local function validateProtocolIdOrName(p)
    -- Lower used because TCP instead of tcp wasn't seen as a l4proto
    local tmp = string.lower(p)
-   
-   return (validateChoice(ndpi_protos, p) or
-	      validateChoiceByKeys(L4_PROTO_KEYS, p) or
+   local param = string.split(p, "%.")
+
+   if param and #param == 2 then
+      -- Example 5.26
+      return (validateChoice(ndpi_protos, param[1]) and validateChoice(ndpi_protos, param[2]))
+   else
+      return (validateChoice(ndpi_protos, p) or validateChoiceByKeys(L4_PROTO_KEYS, p) or
 	      validateChoiceByKeys(ndpi_protos, p)) or
-      (validateChoice(ndpi_protos, tmp) or
-	  validateChoiceByKeys(L4_PROTO_KEYS, tmp) or
-	  validateChoiceByKeys(ndpi_protos, tmp))
-      or (p == 'none')
+	 (validateChoice(ndpi_protos, tmp) or validateChoiceByKeys(L4_PROTO_KEYS, tmp) or
+	  validateChoiceByKeys(ndpi_protos, tmp)) or (p == 'none')
+   end
+end
+
+local function validateProtocolAction(p)
+   if p == "0" or p == "1" then
+      return true
+   end
+   return false
 end
 
 http_lint.validateProtocolIdOrName = validateProtocolIdOrName
@@ -888,9 +1254,8 @@ local function validateDoubleProtocolIdOrName(p)
    local param = string.split(p, "%.")
 
    if param and #param == 2 then
-    return (validateProtocolIdOrName(param[1]) and
-          (validateProtocolIdOrName(param[2])))
-      end
+      return (validateProtocolIdOrName(param[1]) and (validateProtocolIdOrName(param[2])))
+   end
 
    return (validateProtocolIdOrName(p))
 end
@@ -903,7 +1268,7 @@ end
 local function validateSortColumn(p)
    -- Note: this is also used in some scripts to specify the ordering, so the "column_"
    -- prefix is not honored
-   if((validateSingleWord(p)) --[[and (string.starts(p, "column_"))]]) then
+   if ((validateSingleWord(p)) --[[and (string.starts(p, "column_"))]] ) then
       return true
    else
       return false
@@ -918,8 +1283,16 @@ local function validateCountry(p)
    end
 end
 
+-- #################################
+
+local function validateStatus(p)
+   return (p == 'allowed' or p == 'denied')
+end
+
+-- #################################
+
 local function validateInterface(i)
-   return interface.isValidIfId(i)
+   return interface.isValidIfId(tonumber(i))
 end
 http_lint.validateInterface = validateInterface
 
@@ -930,26 +1303,26 @@ local function validateNetwork(i)
       -- Mask
       local ip_mask = split(i, "/")
       if #ip_mask ~= 2 then
-         return false
+	 return false
       end
       local ip = ip_mask[1]
       local mask = ip_mask[2]
 
       if not validateNumber(mask) then
-         return false
+	 return false
       end
 
       local prefix = tonumber(mask)
       if prefix >= 0 then
-         -- IP
-         local is_ipv6 = isIPv6(ip)
-         local is_ipv4 = isIPv4(ip)
+	 -- IP
+	 local is_ipv6 = isIPv6(ip)
+	 local is_ipv4 = isIPv4(ip)
 
-         if is_ipv6 and prefix <= 128 then
-            return true
-         elseif is_ipv4 and prefix <= 32 then
-            return true
-         end
+	 if is_ipv6 and prefix <= 128 then
+	    return true
+	 elseif is_ipv4 and prefix <= 32 then
+	    return true
+	 end
       end
 
       return false
@@ -957,17 +1330,29 @@ local function validateNetwork(i)
 end
 http_lint.validateNetwork = validateNetwork
 
+local function validateIpAddressOrNetwork(p)
+   return (validateIpAddress(p) or validateNetwork(p))
+end
+
 local function validateHost(p)
+   -- traffic rules wildcardp
+   if p == "*" then
+      return true
+   end
+
+   -- hostkey2hostinfo removes everything after "/", validate the CIDR part
+   -- to not accept "8.8.8.8/;payload"
+   local address = p:match("^([^@]*)")
+   if address and address:find("/", 1, true) and not (address:match("^[^/]+/%d+$") and validateNetwork(address)) then
+      return false
+   end
+
    local host = hostkey2hostinfo(p)
 
-   if (host.host ~= nil)
-      and (host.vlan ~= nil)
-      and (isIPv4(host.host) 
-           or isIPv6(host.host) 
-           or isMacAddress(host.host)) then
+   if (host.host ~= nil) and (host.vlan ~= nil) and (isIPv4(host.host) or isIPv6(host.host) or isMacAddress(host.host)) then
       return true
    else
-      return validateNetwork(p)
+      return validateNetwork(p) or validateDomain(p)
    end
 end
 http_lint.validateHost = validateHost
@@ -981,14 +1366,14 @@ local function validateNetworkWithVLAN(i)
       local net = net_vlan[1]
 
       if #net_vlan < 1 then
-         return false
+	 return false
       end
 
       if #net_vlan == 2 then
-         local vlan = net_vlan[2]
-         if not validateNumber(vlan) then
-            return false
-         end
+	 local vlan = net_vlan[2]
+	 if not validateNumber(vlan) then
+	    return false
+	 end
       end
 
       return validateNetwork(net)
@@ -1004,6 +1389,38 @@ local function validateMac(p)
    end
 end
 
+-- ##############################################
+
+local function validatePolicy(p)
+   local policies = {"accept", "deny"}
+
+   if validateNumber(p) or validateChoice(policies, p) then
+      return true
+   end
+
+   return false
+end
+http_lint.validatePolicy = validatePolicy
+
+local function validatePolicyValue(p)
+   if validateNetwork(p) or validateSingleWord(p) then
+      return true
+   end
+
+   return false
+end
+http_lint.validatePolicyValue = validatePolicyValue
+
+-- ##############################################
+
+-- @brief Returns true if inputstr is a Mac or all string
+local function validateDeviceOrAll(inputstr)
+   return (validateMac(inputstr) or inputstr == 'all')
+end
+http_lint.validateDeviceOrAll = validateDeviceOrAll
+
+-- ##############################################
+
 local function validateZoom(zoom)
    if string.match(zoom, "%d+%a") == zoom then
       return true
@@ -1011,6 +1428,16 @@ local function validateZoom(zoom)
       return false
    end
 end
+
+-- ##############################################
+
+-- @brief Returns true if inputstr is a Mac or all string
+local function validateDevice(inputstr)
+   return (validateDeviceOrAll(inputstr) or validateIPV4(inputstr))
+end
+http_lint.validateDevice = validateDevice
+
+-- ##############################################
 
 local function validateCategory(cat)
    if starts(cat, "cat_") then
@@ -1030,6 +1457,29 @@ local function validateProtocolOrCategory(p)
    return validateProtocolIdOrName(p) or validateCategory(p)
 end
 
+local function validateProtocolIdOrNameorCategory(p)
+   if string.starts(p, "cat_") then
+      local category = split(p, "cat_")
+      return validateCategory(category[2])
+   end
+   return validateProtocolIdOrName(p)
+end
+
+local function validateFlowHostsTypeOrIpVersionOrIp(p)
+   if string.starts(p, "ip_version_") then
+      local version = split(p, "ip_version_")
+      return validateIpVersion(version[2])
+   else
+      local is_host_type = validateFlowHostsType(p)
+      local host = hostkey2hostinfo(p)
+      if host and not is_host_type then
+	 return validateHost(p)
+      else
+	 return is_host_type
+      end
+   end
+end
+
 local function validateShapedElement(elem_id)
    local id
    if starts(elem_id, "cat_") then
@@ -1046,7 +1496,7 @@ local function validateShapedElement(elem_id)
 end
 
 local function validateAlertDescriptor(d)
-   return(validateSingleWord(d))
+   return (validateSingleWord(d))
 end
 
 local function validateInterfacesList(l)
@@ -1098,6 +1548,14 @@ local function validateApplicationsList(l)
    return validateListOfType(l, validateApplication)
 end
 
+local function validateLocation(l)
+   if l == "wan" or l == "lan" or l == "unknown" or l == "all" then
+      return true
+   end
+   
+   return false
+end
+
 local function validateHostsList(l)
    return validateListOfType(l, validateHost)
 end
@@ -1106,6 +1564,21 @@ local function validateListOfTypeInline(t)
    return function(l)
       return validateListOfType(l, t)
    end
+end
+
+-- An alert type of an issue: <alert entity id>:<alert id> (see pro/scripts/lua/modules/issues)
+local function validateIssueProblem(p)
+   return (p:match("^%d+:%d+$") ~= nil)
+end
+
+-- A peer of the issues: an IP, * for the issues with several peers, ~ for those without
+local function validateIssuePeer(p)
+   return (p == "*") or (p == "~") or isIPv4(p) or isIPv6(p)
+end
+
+-- An assignee of the issues: a user, or ~ for the unassigned issues
+local function validateIssueAssignee(p)
+   return (p == "~") or validateUsername(p)
 end
 
 local function validateIfFilter(i)
@@ -1129,6 +1602,21 @@ end
 local function validateTopModule(m)
    -- TODO check for existence?
    return validateSingleWord(m)
+end
+
+local function validateUUID(uuid)    
+   local is_uuid = string.match(uuid, "^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") ~= nil
+   return is_uuid or validateNumber(tonumber(uuid))
+end
+
+local function validatePolicyUUID(uuid)
+   tprint(uuid)
+   tprint(string.format("[DEBUG] uuid bytes: %d [%s]", #uuid, uuid))
+   local trimmed = uuid:match("^%s*(.-)%s*$")  -- strip leading/trailing whitespace
+   local is_uuid = string.match(trimmed,
+      "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+   ) ~= nil
+   return is_uuid or validateNumber(tonumber(trimmed))
 end
 
 local function validateGatewayName(m)
@@ -1169,29 +1657,32 @@ end
 
 -- #################################################################
 
-local function validatePortRange(p)
-   local v = string.split(p, "%-") or {p, p}
-
-   if #v ~= 2 then
-      return false
-   end
-
-   if not validateNumber(v[1]) or not validateNumber(v[2]) then
-      return false
-   end
-
-   local p0 = tonumber(v[1]) or 0
-   local p1 = tonumber(v[2]) or 0
-
-   return(((p0 >= 1) and (p0 <= 65535)) and
-      ((p1 >= 1) and (p1 <= 65535) and
-      (p1 >= p0)))
+local function validateInterfaceConfMode(m)
+   return validateChoice({"dhcp", "static", "vlan_trunk"}, m)
 end
 
 -- #################################################################
 
-local function validateInterfaceConfMode(m)
-   return validateChoice({"dhcp", "static", "vlan_trunk"}, m)
+local function validateInterfaceRole(m)
+   if ntop.isPro and ntop.isPro() then
+      package.path = dirs.installdir .. "/scripts/lua/pro/modules/?.lua;" ..
+	 package.path
+      local snmp_utils = require "snmp_utils"
+      local roles_list = snmp_utils.get_snmp_interface_role_options()
+      local validation_list = {"all", "ix_transit_peering"}
+      -- Dinamically retrieve the roles list in order to not need to modify
+      -- also this function in case of future changes
+      for _, info in pairs(roles_list) do
+	      validation_list[#validation_list + 1] = info.value
+      end
+      return validateChoice(validation_list, m)
+   end
+end
+
+-- #################################################################
+
+local function validateImportantASN(m)
+   return validateChoice({"all", "my_as", "my_customer_as", "remote_as", "other_as"}, m)
 end
 
 -- #################################################################
@@ -1203,7 +1694,14 @@ local function validateAssociations(associations)
 
    for k, v in pairs(associations) do
       if not isValidPoolMember(k) then
-	 return false
+	 -- Try to fix the format (add prefix/vlan if missing)
+	 local fixedk = fixPoolMemberFormat(k)
+	 if fixedk and isValidPoolMember(fixedk) then
+	    associations[fixedk] = v
+	    associations[k] = nil
+	 else
+	    return false
+	 end
       end
    end
 
@@ -1213,17 +1711,26 @@ end
 -- #################################################################
 
 local function validateSNMPversion(m)
--- 0 = SNMP v1
--- 1 = SNMP v2c
--- 2 - SNMP v3
-  return validateChoice({"0", "1", "2"}, m)
+   -- 0 = SNMP v1
+   -- 1 = SNMP v2c
+   -- 2 - SNMP v3
+   return validateChoice({"0", "1", "2", "3"}, m)
 end
 http_lint.validateSNMPversion = validateSNMPversion
 
 -- #################################################################
 
+local function validateSNMPInterfaceFormat(m)
+   -- 0 = Alias
+   -- 1 = Name
+   return validateChoice({"0", "1"}, m)
+end
+http_lint.validateSNMPInterfaceFormat = validateSNMPInterfaceFormat
+
+-- #################################################################
+
 local function validateSNMPstatus(m)
-  return validateChoice({"up", "down"}, m) or validateNumber(m)
+   return validateChoice({"up", "down"}, m) or validateNumber(m)
 end
 
 -- #################################################################
@@ -1238,6 +1745,10 @@ local function validateCIDR(m)
    return validateChoice({"24", "32", "128"}, m)
 end
 
+local function validateVsCIDR(m)
+   return validateChoice({"24", "25", "26", "27", "28", "29", "30", "32", "128"}, m)
+end
+
 local function validateOperatingMode(m)
    return validateChoice({"single_port_router", "routing", "bridging", "passive"}, m)
 end
@@ -1248,10 +1759,10 @@ function http_lint.parseConfsetTargets(subdir, param)
    local values = string.split(param, ",") or {param}
    local validator = nil
 
-   if((subdir == "host") or (subdir == "snmp_device") or (subdir == "network")) then
+   if ((subdir == "host") or (subdir == "snmp_device") or (subdir == "network")) then
       -- IP addresses/CIDR
       validator = validateNetwork
-   elseif((subdir == "interface") or (subdir == "flow") or (subdir == "syslog")) then
+   elseif ((subdir == "interface") or (subdir == "flow") or (subdir == "syslog")) then
       -- interface ID
       validator = validateInterface
    else
@@ -1260,22 +1771,61 @@ function http_lint.parseConfsetTargets(subdir, param)
    end
 
    for _, v in pairs(values) do
-      if(not validator(v)) then
-         return nil, i18n("configsets.bad_target", {target = v})
+      if (not validator(v)) then
+	 return nil, i18n("configsets.bad_target", {
+			     target = v
+			 })
       end
    end
 
-   return(values)
+   return (values)
 end
 
 -- #################################################################
 
-function validateToken(token)
+function validateSankeyCriteria(criteria)
+   return (criteria == 'flow_volume_criteria' or criteria == 'flow_drops_criteria')
+end
 
-   if (not token) then return false end
-   if (string.len(token) ~= 32) then return false end
+-- #################################################################
+
+function validateSankeyExporterInterfaceCriteria(criteria)
+   return (criteria == 'traffic_with_ases')
+end
+
+-- #################################################################
+
+function validateSankeyAsCriteria(criteria)
+   return (criteria == 'as_transit_only_criteria' or criteria == 'ingress_egress_traffic_criteria'
+	   or criteria == 'traffic_between_ases' or criteria == 'user_traffic_breakdown')
+end
+-- #################################################################
+
+function validateToken(token)
+   if (not token) then
+      return false
+   end
+   if (string.len(token) ~= 32) then
+      return false
+   end
    -- iterate over each byte of the string
-   if (token:match("^%x+$") == nil) then return false end
+   if (token:match("^%x+$") == nil) then
+      return false
+   end
+
+   return true
+end
+
+-- #################################################################
+
+local function validateMattermostBearerToken(token)
+   if (not token) then
+      return false
+   end
+   if (string.len(token) ~= 26) then
+      return false
+   end
+   -- iterate over each byte of the string
 
    return true
 end
@@ -1310,44 +1860,47 @@ local function validateListItems(script, conf, key)
    key = key or "items"
    local conf_items = conf[key]
 
-   if(item_type == "country") then
+   if (item_type == "country") then
       item_validator = validateCountry
       err_label = "Bad country"
-   elseif(item_type == "proto_or_category") then
+   elseif (item_type == "proto_or_category") then
       item_validator = validateProtocolOrCategory
       err_label = "Bad protocol/category"
-   elseif(item_type == "string") then
+   elseif (item_type == "string") then
       item_validator = validateSingleWord
       err_label = "Bad string"
-   elseif(item_type == "device_type") then
+   elseif (item_type == "device_type") then
       item_validator = validateDeviceType
       err_label = "Bad device type"
-   elseif(item_type == "ip_address") then
+   elseif (item_type == "ip_address") then
       item_validator = validateIpAddress
       err_label = "Bad address"
-   elseif(item_type == "mac_address") then
+   elseif (item_type == "mac_address") then
       item_validator = validateMac
       err_label = "Bad address"
-   elseif(item_type == "server") then
+   elseif (item_type == "server") then
       item_validator = validateServer
       err_label = "Bad server IP or name"
+   elseif (item_type == "vlan") then
+      item_validator = validateVlan
+      err_label = "Bad VLAN ID (must be a value beetwen 0 and 4094)"
    end
 
-   if(type(conf_items) == "table") then
+   if (type(conf_items) == "table") then
       for _, item in ipairs(conf_items) do
-         if existing_items[item] then
-            -- Ignore duplicated items
-            goto next_item
-         end
+	 if existing_items[item] then
+	    -- Ignore duplicated items
+	    goto next_item
+	 end
 
-         if not item_validator(item) then
-            return false, err_label .. ": " .. string.format("%s", item)
-         end
+	 if not item_validator(item) then
+	    return false, err_label .. ": " .. string.format("%s", item)
+	 end
 
-         existing_items[item] = true
-         validated_items[#validated_items + 1] = item
+	 existing_items[item] = true
+	 validated_items[#validated_items + 1] = item
 
-         ::next_item::
+	 ::next_item::
       end
 
       conf[key] = validated_items
@@ -1363,1053 +1916,1829 @@ http_lint.validateListItems = validateListItems
 -- NOTE: Put here all the parameters to validate
 
 local known_parameters = {
--- UNCHECKED (Potentially Dangerous)
-   ["custom_name"]             = validateUnchecked,            -- A custom interface/host name
-   ["custom_notes"]            = validateUnchecked,            -- Host custom notes 
-   ["pool_name"]               = validateUnchecked,
-   ["query"]                   = validateUnchecked,            -- This field should be used to perform partial queries.
-                                                               -- It up to the script to implement proper validation.
-                                                               -- In NO case query should be executed directly without validation.
--- UNQUOTED (Not Generally dangerous)
-   ["referer"]                 = validateUnquoted,             -- An URL referer
-   ["url"]                     = { webhookCleanup, validateUnquoted }, -- An URL
-   ["label"]                   = validateUnquoted,             -- A device label
-   ["os"]                      = validateNumber,               -- An Operating System id
-   ["info"]                    = validateUnquoted,             -- An information message
-   ["entity_val"]              = validateUnquoted,             -- An alert entity value
-   ["full_name"]               = validateUnquoted,             -- A user full name
-   ["manufacturer"]            = validateUnquoted,             -- A MAC manufacturer
-   ["slack_sender_username"]   = validateUnquoted,
-   ["slack_webhook"]           = { webhookCleanup, validateUnquoted },
-   ["bind_dn"]                 = validateUnquoted,
-   ["bind_pwd"]                = { passwordCleanup, validatePassword }, -- LDAP Bind Authentication Password
-   ["search_path"]             = validateUnquoted,
-   ["user_group"]              = validateUnquoted,
-   ["admin_group"]             = validateUnquoted,
-   ["radius_admin_group"]      = validateUnquoted,
-   ["ts_post_data_url"]        = validateUnquoted,             -- URL for influxdb
+   -- UNCHECKED (Potentially Dangerous)
+   ["custom_name"] = validateUnchecked, -- A custom interface/host name
+   ["old_name"] = validateUnchecked, -- Old custom interface/host name
+   ["custom_notes"] = validateUnchecked, -- Host custom notes
+   ["pool_name"] = validateUnchecked,
+   ["pool_name_only"] = validateBool,
+   ["query"] = validateUnchecked, -- This field should be used to perform partial queries.
+   -- It up to the script to implement proper validation.
+   -- In NO case query should be executed directly without validation.
+   -- UNQUOTED (Not Generally dangerous)
+   ["referer"] = validateReferer, -- An URL referer
+   ["url"] = {webhookCleanup, validateUnquoted}, -- An URL
+   ["label"] = validateUnquoted, -- A device label
+   ["os"] = validateNumber, -- An Operating System id
+   ["info"] = validateUnquoted, -- An information message
+   ["entity_val"] = validateUnquoted, -- An alert entity value
+   ["full_name"] = validateUnquoted, -- A user full name
+   ["manufacturer"] = validateUnquoted, -- A MAC manufacturer
+   ["slack_sender_username"] = validateUnquoted,
+   ["slack_webhook"] = {webhookCleanup, validateUnquoted},
+   ["bind_dn"] = validateUnquoted,
+   ["bind_pwd"] = {passwordCleanup, validatePassword}, -- LDAP Bind Authentication Password
+   ["search_path"] = validateUnquoted,
+   ["user_group"] = validateUnquoted,
+   ["admin_group"] = validateUnquoted,
+   ["radius_admin_group"] = validateUnquoted,
+   ["radius_unpriv_capabilties_group"] = validateUnquoted,
+   ["ts_post_data_url"] = validateUnquoted, -- URL for influxdb
+   ["connectivity_check_url"] = validateUnquoted, -- URL for connectivity check
 
-   ["teams_url"]               = { webhookCleanup, validateUnquoted },
-   ["webhook_url"]             = { webhookCleanup, validateUnquoted },
-   ["webhook_sharedsecret"]    = validateEmptyOr(validateSingleWord),
-   ["webhook_username"]        = validateEmptyOr(validateSingleWord),
-   ["webhook_password"]        = validateEmptyOr(validateSingleWord),
+   ["teams_url"] = {webhookCleanup, validateUnquoted},
+   ["webhook_url"] = {webhookCleanup, validateUnquoted},
+   ["webhook_sharedsecret"] = validateEmptyOr(validateSingleWord),
+   ["webhook_username"] = validateEmptyOr(validateSingleWord),
+   ["webhook_password"] = validateEmptyOr(validateSingleWord),
+
+   ["mattermost_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["mattermost_token"] = validateMattermostBearerToken,
+   ["mattermost_channelname"] = http_lint.validateSingleWord,
 
    -- DB
-   ["select_clause"]           = validateUnquoted,
-   ["select_keys_clause"]      = validateUnquoted,
-   ["select_values_clause"]    = validateUnquoted,
-   ["approx_search"]           = validateBool,
+   ["select_clause"] = validateUnquoted,
+   ["select_keys_clause"] = validateUnquoted,
+   ["select_values_clause"] = validateUnquoted,
+   ["approx_search"] = validateBool,
+   ["group_by_clause"] = validateUnquoted,
+   ["group_by"] = validateSingleWord, -- HR chart group-by dimension (l7proto, l4proto, cli_asn, ...)
+   ["episode_gap"] = validateNumber, -- Alert groups: max pause (seconds) between alerts of the same episode
+   ["episodes"] = validateNumber, -- Alert groups: 0 to skip the episodes computation
+   ["totals"] = validateNumber, -- Alert groups: 1 to also return the grouping totals
+   ["strict"] = validateNumber, -- Alert groups: 0 to match the flows where the alert type is only secondary too
+   ["order_by_clause"] = validateUnquoted,
+   ["alert_family"] = validateAlertFamily, -- Alert family validation
+   ["where_clause"] = {whereCleanup, validateUnchecked}, -- previously defined as validateUnquoted
+   ["begin_time_clause"] = validateUnquoted,
+   ["end_time_clause"] = validateUnquoted,
+   ["flow_clause"] = validateSingleWord, -- deprecated (keeping for backward compatibility)
+   ["flow_info"] = validateSingleWord,
+   ["topk_clause"] = validateSingleWord,
+   ["maxhits_clause"] = validateNumber,
+   ["ni_query_type"] = validatenIndexQueryType,
+   ["ni_query_filter"] = validateListOfTypeInline(validateSingleWord),
+   ["aggregated"] = validateBool,
 
-   ["where_clause"]            = { whereCleanup, validateUnquoted },
-   ["where_clause_unck"]       = { whereCleanup, validateUnchecked },
-   ["begin_time_clause"]       = validateUnquoted,
-   ["end_time_clause"]         = validateUnquoted,
-   ["flow_clause"]             = validateSingleWord,            -- deprecated (keeping for backward compatibility)
-   ["topk_clause"]             = validateSingleWord,
-   ["maxhits_clause"]          = validateNumber,
-   ["ni_query_type"]           = validatenIndexQueryType,
-   ["ni_query_filter"]         = validateListOfTypeInline(validateSingleWord),
+   -- HOST SPECIFICATION
+   ["host"] = validateHost, -- an IPv4 (optional @vlan), IPv6 (optional @vlan), or MAC address or Domain
+   ["versus_host"] = validateHost, -- an host for comparison
+   ["filters_to_display"] = validateListOfTypeInline(validateSingleWord),
+   ["mac"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))), -- a MAC address
+   ["cli_mac"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))), -- a MAC address
+   ["srv_mac"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))), -- a MAC address
+   ["apn_mac"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))), -- a MAC address
+   ["tskey"] = validateUnquoted, -- timeseries name
+   ["ts_unify"] = validateBool, -- timeseries name
+   ["peer1"] = validateHost, -- a Peer in a connection
+   ["peer2"] = validateHost, -- another Peer in a connection
+   ["origin"] = validateUnquoted, -- the source of the alert (validateHost) or URL in case of passkey
+   ["target"] = validateHost, -- the target of the alert
+   ["member"] = validateMember, -- an IPv4 (optional @vlan, optional /suffix), IPv6 (optional @vlan, optional /suffix), or MAC address
+   ["old_member"] = validateMember,
+   ["network"] = validateListOfTypeInline(validateFilters(validateNumber)), -- A network ID/name
+   ["network_name"] = validateFilters(validateNetwork),
+   ["network_cidr"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNetworkWithVLAN))), -- An IPv4 or IPv6 subnet in CIDR format
+   ["cli_network_cidr"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNetworkWithVLAN))), -- An IPv4 or IPv6 subnet in CIDR format
+   ["srv_network_cidr"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNetworkWithVLAN))), -- An IPv4 or IPv6 subnet in CIDR format
+   ["cli_network"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A network ID
+   ["srv_network"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A network ID
+   ["network_site"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A site ID (client or server)
+   ["network_id"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A site ID (client or server)
+   ["cli_site"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A site ID
+   ["srv_site"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A netowrk ID
+   ["ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
+   ["cli_ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
+   ["srv_ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
+   ["name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
+   ["cli_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateHostName))), -- An IPv4 or IPv6 address or an Hostname
+   ["srv_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateHostName))), -- An IPv4 or IPv6 address or an Hostname
+   ["domain_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))),
+   ["requested_server_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))),
+   ["wlan_ssid"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))),
+   ["cli_port"] = validateListOfTypeInline(validateFilters(validatePort)), -- Client port
+   ["srv_port"] = validateListOfTypeInline(validateFilters(validatePort)), -- Server port
+   ["cli_asn"] = validateListOfTypeInline(validateFilters(validateASN)),
+   ["srv_asn"] = validateListOfTypeInline(validateFilters(validateASN)),
+   ["subtype"] = validateListOfTypeInline(validateFilters(validateUnquoted)),
+   ["min_incoming"] = validateEmptyOr(validateNumber), -- Minimum number of incoming edges (alerts) for a host (page-alerts-graph.vue and pro/scripts/lua/rest/v2/get/alert/graph/alerts.lua)
+   ["min_outgoing"] = validateEmptyOr(validateNumber), -- Minimum number of outgoing edges (alerts) for a host (page-alerts-graph.vue and pro/scripts/lua/rest/v2/get/alert/graph/alerts.lua)
+   ["traffic_direction"] = validateFilters(validateNumber), -- Local or Remote
+   ["observation_point_id"] = validateFilters(validateNumber), -- Observation point ID, used by db queries
+   ["interface_id"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- Interface ID, used by db queries
+   ["ntopng_interface"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- Interface ID, used by db queries
+   ["exporter_ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateHost))), -- Exporter IP, used by db queries
+   ["next_hop_ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateHost))), -- Next hop IP, used by db queries
+   ["probe_ip"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateHost))), -- Probe IP, used by db queries
+   ["tot_bytes"] = validateFilters(validateNumber), -- Total bytes, used by db queries
+   ["src2dst_dscp"] = validateEmptyOr(validateFilters(validateUnquoted)), -- Client DSCP, used by db queries
+   ["dst2src_dscp"] = validateEmptyOr(validateFilters(validateUnquoted)), -- Client DSCP, used by db queries
+   ["cli2srv_bytes"] = validateEmptyOr(validateFilters(validateNumber)), -- Client DSCP, used by db queries
+   ["srv2cli_bytes"] = validateEmptyOr(validateFilters(validateNumber)), -- Client DSCP, used by db queries
+   ["cli2srv_packets"] = validateEmptyOr(validateFilters(validateNumber)), -- Client to server packets, used by db queries
+   ["srv2cli_packets"] = validateEmptyOr(validateFilters(validateNumber)), -- Server to client packets, used by db queries
+   ["src_peer_asn"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Source peer ASN, used by db queries
+   ["dst_peer_asn"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Destination peer ASN, used by db queries
+   ["cli_proc_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))), -- Client process name, used by db queries
+   ["srv_proc_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))), -- Server process name, used by db queries
+   ["cli_user_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))), -- Client process user name, used by db queries
+   ["srv_user_name"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateUnquoted))), -- Server process user name, used by db queries
+   ["is_cli_attacker"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Client is attacker (0/1), used by db queries
+   ["is_srv_attacker"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Server is attacker (0/1), used by db queries
+   ["is_cli_victim"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Client is victim (0/1), used by db queries
+   ["is_srv_victim"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Server is victim (0/1), used by db queries
+   ["is_cli_blacklisted"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Client is blacklisted (0/1), used by db queries
+   ["is_srv_blacklisted"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Server is blacklisted (0/1), used by db queries
+   ["require_attention"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Flow requires attention (0/1), used by db queries
+   ["last_seen"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Last seen (epoch), used by db queries
+   ["cli_nw_latency"] = validateEmptyOr(validateFilters(validateFloat)), -- Client network latency
+   ["srv_nw_latency"] = validateEmptyOr(validateFilters(validateFloat)), -- Server network latency
+   ["appl_latency"] = validateEmptyOr(validateFilters(validateFloat)), -- Application latency
+   ["flow_status_num"] = validateEmptyOr(validateFilters(validateUnquoted)), -- Flow Status, used by db queries
+   ["vhost"] = validateHTTPHost, -- HTTP server name or IP address
+   ["version"] = validateIpVersion, -- To specify an IPv4 or IPv6
+   ["ip_version"] = validateListOfTypeInline(validateFilters(validateIpVersion)), -- To specify an IPv4 or IPv6
+   ["vlan"] = validateEmptyOr(validateNumber), -- A VLAN id
+   ["vlan_id"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A VLAN id
+   ["vlan_label"] = validateEmptyOr(validateUnquoted),
+   ["target_label"] = validateEmptyOr(validateUnquoted), -- Traffic rules: the name shown for the target
+   ["rule_target"] = validateSingleWord, -- Traffic rules: host, interface id, pool id, VLAN, ASN or "*" (the "target" key is host only)
+   ["input_snmp"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
+   ["output_snmp"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
+   ["snmp_interface"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
+   ["hosts"] = validateHostsList, -- A list of hosts
+   ["src2dst_tcp_flags"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Client to Server TCP flags
+   ["dst2src_tcp_flags"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Server to Client TCP flags
+   ["score"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Score
+   ["qoe_score"] = validateListOfTypeInline(validateFilters(validateNumber)), -- QoE Score
+   ["qoe"] = validateNumber, -- QoE Type, e.g. 0, 1 , 2...
+   ["chart_id"] = validateUnquoted, -- Chart id
+   ["cli_location"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["srv_location"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["host_location"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["location"] = validateEmptyOr(validateLocation),
+   ["major_connection_state"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["minor_connection_state"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["pre_nat_ipv4_src_addr"] = validateListOfTypeInline(validateFilters(validateHost)),
+   ["pre_nat_ipv4_dst_addr"] = validateListOfTypeInline(validateFilters(validateHost)),
+   ["post_nat_ipv4_src_addr"] = validateListOfTypeInline(validateFilters(validateHost)),
+   ["post_nat_ipv4_dst_addr"] = validateListOfTypeInline(validateFilters(validateHost)),
+   ["pre_nat_src_port"] = validateListOfTypeInline(validateFilters(validatePort)),
+   ["pre_nat_dst_port"] = validateListOfTypeInline(validateFilters(validatePort)),
+   ["post_nat_src_port"] = validateListOfTypeInline(validateFilters(validatePort)),
+   ["post_nat_dst_port"] = validateListOfTypeInline(validateFilters(validatePort)),
 
--- HOST SPECIFICATION
-   ["host"]                    = validateHost,                  -- an IPv4 (optional @vlan), IPv6 (optional @vlan), or MAC address
-   ["versus_host"]             = validateHost,                  -- an host for comparison
-   ["mac"]                     = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))),                   -- a MAC address
-   ["cli_mac"]                 = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))),                   -- a MAC address
-   ["srv_mac"]                 = validateEmptyOr(validateListOfTypeInline(validateFilters(validateMac))),                   -- a MAC address
-   ["tskey"]                   = validateSingleWord,            -- host identifier for timeseries
-   ["peer1"]                   = validateHost,                  -- a Peer in a connection
-   ["peer2"]                   = validateHost,                  -- another Peer in a connection
-   ["origin"]                  = validateHost,                  -- the source of the alert
-   ["target"]                  = validateHost,                  -- the target of the alert
-   ["member"]                  = validateMember,                -- an IPv4 (optional @vlan, optional /suffix), IPv6 (optional @vlan, optional /suffix), or MAC address
-   ["old_member"]              = validateMember,
-   ["network"]                 = validateNumber,  -- A network ID/name
-   ["network_name"]            = validateFilters(validateNetwork),
-   ["network_cidr"]            = validateNetwork,               -- A network expressed with the /
-   ["cli_network"]             = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),  -- A network ID
-   ["srv_network"]             = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),  -- A network ID
-   ["ip"]                      = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["cli_ip"]                  = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["srv_ip"]                  = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["name"]                    = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["cli_name"]                = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["srv_name"]                = validateEmptyOr(validateListOfTypeInline(validateFilters(validateServer))), -- An IPv4 or IPv6 address or an Hostname
-   ["cli_port"]                = validateListOfTypeInline(validateFilters(validatePort)),          --Client port
-   ["srv_port"]                = validateListOfTypeInline(validateFilters(validatePort)),          --Server port
-   ["cli_asn"]                 = validateListOfTypeInline(validateFilters(validateASN)),
-   ["srv_asn"]                 = validateListOfTypeInline(validateFilters(validateASN)),
-   ["subtype"]                 = validateListOfTypeInline(validateFilters(validateUnquoted)),
-   ["traffic_direction"]       = validateFilters(validateNumber),                --Local or Remote
-   ["observation_point_id"]    = validateFilters(validateNumber),                --Observation point ID, used by nindex query
-   ["probe_ip"]                = validateFilters(validateHost),                  --Probe IP, used by nindex query
-   ["tot_bytes"]               = validateFilters(validateNumber),                --Total bytes, used by nindex query
-   ["src2dst_dscp"]            = validateEmptyOr(validateFilters(validateUnquoted)),                               --Client DSCP, used by nindex query
-   ["dst2src_dscp"]            = validateEmptyOr(validateFilters(validateUnquoted)),                               --Client DSCP, used by nindex query
-   ["cli_nw_latency"]          = validateEmptyOr(validateFilters(validateFloat)),  --Client network latency
-   ["srv_nw_latency"]          = validateEmptyOr(validateFilters(validateFloat)),  --Server network latency
-   ["flow_status_num"]         = validateEmptyOr(validateFilters(validateUnquoted)),                               --Flow Status, used by nindex query
-   ["vhost"]                   = validateHTTPHost,              -- HTTP server name or IP address
-   ["version"]                 = validateIpVersion,             -- To specify an IPv4 or IPv6
-   ["ip_version"]              = validateListOfTypeInline(validateFilters(validateIpVersion)),             -- To specify an IPv4 or IPv6
-   ["vlan"]                    = validateEmptyOr(validateNumber), -- A VLAN id
-   ["vlan_id"]                 = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))), -- A VLAN id
-   ["input_snmp"]              = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
-   ["output_snmp"]             = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
-   ["snmp_interface"]          = validateEmptyOr(validateListOfTypeInline(validateFilters(validateSingleWord))),
-   ["hosts"]                   = validateHostsList,             -- A list of hosts
-   ["src2dst_tcp_flags"]       = validateListOfTypeInline(validateFilters(validateNumber)), -- Client to Server TCP flags
-   ["dst2src_tcp_flags"]       = validateListOfTypeInline(validateFilters(validateNumber)), -- Server to Client TCP flags
-   ["score"]                   = validateListOfTypeInline(validateFilters(validateNumber)), -- Score
-   ["chart_id"]                = validateUnquoted, -- Chart id 
-   ["cli_location"]            = validateListOfTypeInline(validateFilters(validateNumber)),
-   ["srv_location"]            = validateListOfTypeInline(validateFilters(validateNumber)),
+   -- AUTHENTICATION
+   ["username"] = validateUsername, -- A ntopng user name, new or existing
+   ["password"] = {passwordCleanup, validatePassword}, -- User password
+   ["new_password"] = {passwordCleanup, validatePassword}, -- The new user password
+   ["old_password"] = {passwordCleanup, validatePassword}, -- The old user password
+   ["confirm_password"] = {passwordCleanup, validatePassword}, -- Confirm user password
+   ["user_role"] = validateUserRole, -- User role
+   ["user_language"] = validateUserLanguage, -- User language
+   ["add_user_language"] = validateUserLanguage, -- User language in add modal
+   ["allow_pcap_download"] = validateEmptyOr(validateBool),
+   ["allow_historical_flows"] = validateBool,
+   ["allow_alerts"] = validateBool,
+   ["is_range_picker"] = validateBool,
 
+   -- NDPI
+   ["application"] = validateProtocolIdOrNameorCategory, -- An nDPI application protocol name
+   ["category"] = validateCategory, -- An nDPI protocol category name
+   ["category_alias"] = validateUnquoted, -- An nDPI protocol category alias given by the user
+   ["protocol_alias"] = validateUnquoted, -- An nDPI protocol category alias given by the user
+   ["breed"] = validateBool, -- True if nDPI breed should be shown
+   ["ndpi_category"] = validateBool, -- True if nDPI category should be shown
+   ["ndpistats_mode"] = validateNdpiStatsMode, -- A mode for rest/v2/get/interface/l7/stats.lua
+   ["l4_proto_id"] = validateProtocolIdOrName, -- get_historical_data.lua
+   ["l7_proto_id"] = validateProtocolIdOrName,
+   ["proto"] = validateSingleWord, -- An nDPI application protocol ID or name
+   ["proto_id"] = validateProtocolIdOrName,
+   ["client_action"] = validateProtocolAction,
+   ["server_action"] = validateProtocolAction,
+   -- get_historical_data.lua
+   ["l4proto"] = validateListOfTypeInline(validateFilters(validateProtocolIdOrName)), -- An nDPI application protocol ID, layer 4
+   ["l7proto"] = validateListOfTypeInline(validateFilters(validateDoubleProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
+   ["l7proto_master"] = validateListOfTypeInline(validateFilters(validateDoubleProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
+   ["l7_proto"] = validateListOfTypeInline(validateFilters(validateProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
+   ["filtered_query"] = validateBool, -- Parameter used to download historical flows
+   ["l7cat"] = validateListOfTypeInline(validateFilters(validateCategory)), -- An nDPI category, layer 7
+   ["flow_risk"] = validateListOfTypeInline(validateFilters(validateUnquoted)), -- Flow risk
+   ["tag"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Tag (bitmap bit index)
+   ["cli_tag"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Client tag (bitmap bit index)
+   ["srv_tag"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Server tag (bitmap bit index)
+   ["protocol"] = validateProtocolIdOrName, -- An nDPI application protocol ID or name
+   ["ndpi"] = validateApplicationsList, -- a list applications
+   ["ndpi_new_cat_id"] = validateNumber, -- An ndpi category id after change
+   ["ndpi_old_cat_id"] = validateNumber, -- An ndpi category id before change
+   ["new_application"] = validateSingleWord, -- A new nDPI application protocol name
 
--- AUTHENTICATION
-   ["username"]                = validateUsername,              -- A ntopng user name, new or existing
-   ["password"]                = { passwordCleanup, validatePassword },              -- User password
-   ["new_password"]            = { passwordCleanup, validatePassword },              -- The new user password
-   ["old_password"]            = { passwordCleanup, validatePassword },              -- The old user password
-   ["confirm_password"]        = { passwordCleanup, validatePassword },              -- Confirm user password
-   ["user_role"]               = validateUserRole,              -- User role
-   ["user_language"]           = validateUserLanguage,          -- User language
-   ["add_user_language"]       = validateUserLanguage,          -- User language in add modal
-   ["allow_pcap_download"]     = validateEmptyOr(validateBool),
-   ["allow_historical_flow"]   = validateBool,
+   ["subnet_2"] = validateUnquoted,
 
--- NDPI
-   ["application"]             = validateApplication,           -- An nDPI application protocol name
-   ["category"]                = validateCategory,              -- An nDPI protocol category name
-   ["category_alias"]          = validateUnquoted,            -- An nDPI protocol category alias given by the user
-   ["breed"]                   = validateBool,                  -- True if nDPI breed should be shown
-   ["ndpi_category"]           = validateBool,                  -- True if nDPI category should be shown
-   ["ndpistats_mode"]          = validateNdpiStatsMode,         -- A mode for rest/v2/get/interface/l7/stats.lua
-   ["l4_proto_id"]             = validateProtocolIdOrName,      -- get_historical_data.lua
-   ["l7_proto_id"]             = validateProtocolIdOrName,      -- get_historical_data.lua
-   ["l4proto"]                 = validateListOfTypeInline(validateFilters(validateProtocolIdOrName)),      -- An nDPI application protocol ID, layer 4
-   ["l7proto"]                 = validateListOfTypeInline(validateFilters(validateDoubleProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
-   ["l7proto_master"]          = validateListOfTypeInline(validateFilters(validateDoubleProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
-   ["l7_proto"]                = validateListOfTypeInline(validateFilters(validateProtocolIdOrName)), -- An nDPI application protocol ID, layer 7
-   ["filtered_query"]          = validateBool,            -- Parameter used to download nindex flows
-   ["l7cat"]                   = validateListOfTypeInline(validateFilters(validateCategory)), -- An nDPI category, layer 7
-   ["flow_risk"]               = validateListOfTypeInline(validateFilters(validateUnquoted)), -- Flow risk   
-   ["visible_columns"]         = validateSingleWord,        -- String containing the visible columns used by nindex raw flows   
-   ["protocol"]                = validateProtocolIdOrName,      -- An nDPI application protocol ID or name
-   ["ndpi"]                    = validateApplicationsList,      -- a list applications
-   ["ndpi_new_cat_id"]         = validateNumber,                -- An ndpi category id after change
-   ["ndpi_old_cat_id"]         = validateNumber,                -- An ndpi category id before change
-   ["new_application"]         = validateSingleWord,            -- A new nDPI application protocol name
+   -- Wireless
+   ["wifi_enabled"] = validateBool,
+   ["wifi_ssid"] = validateSingleWord,
+   ["wpa_passphrase"] = {passwordCleanup, validatePassword}, -- Wifi password
+   ["interface_filter"] = validateInterface,
 
--- Wireless
-   ["wifi_enabled"]            = validateBool,
-   ["wifi_ssid"]               = validateSingleWord,
-   ["wpa_passphrase"]          = { passwordCleanup, validatePassword }, -- Wifi password
+   -- Remote probe
+   ["ifIdx"] = validateNumber, -- A generic switch/router port id
+   ["exporter_ifid"] = validateNumber, -- Sites dashboard: collector ifid disambiguating a load-balanced exporter (same exporter_ip, different collector interface)
+   ["inIfIdx"] = validateNumber, -- A switch/router INPUT port id (%INPUT_SNMP)
+   ["outIfIdx"] = validateNumber, -- A switch/router OUTPUT port id (%OUTPUT_SNMP)
+   ["deviceIP"] = validateIpAddress, -- The switch/router probe ip address (%EXPORTER_IPV4/6_ADDRESS)
+   ["ebpf_data"] = validateEBPFData, -- mode for get_username_data.lua and get_process_data.lua
+   ["uid"] = validateNumber, -- user id
+   ["pid_mode"] = validatePidMode, -- pid mode for pid_stats.lua
+   ["pid_name"] = validateSingleWord, -- A process name
+   ["pid"] = validateNumber, -- A process ID
+   ["procstats_mode"] = validateProcessesStatsMode, -- A mode for processes_stats.lua
+   ["sflowdistro_mode"] = validateSflowDistroMode, -- A mode for host_sflow_distro
+   ["distr"] = validateSflowDistroType, -- A type for host_sflow_distro
+   ["sflow_filter"] = validateSflowFilter, -- sflow host filter
+   ["exporter_ifname"] = validateSingleWord, -- an interface name on the probe system
 
--- Remote probe
-   ["ifIdx"]                   = validateNumber,                -- A generic switch/router port id
-   ["inIfIdx"]                 = validateNumber,                -- A switch/router INPUT port id (%INPUT_SNMP)
-   ["outIfIdx"]                = validateNumber,                -- A switch/router OUTPUT port id (%OUTPUT_SNMP)
-   ["deviceIP"]                = validateIPV4,                  -- The switch/router probe ip address (%EXPORTER_IPV4_ADDRESS)
-   ["ebpf_data"]               = validateEBPFData,              -- mode for get_username_data.lua and get_process_data.lua
-   ["uid"]                     = validateNumber,                -- user id
-   ["pid_mode"]                = validatePidMode,               -- pid mode for pid_stats.lua
-   ["pid_name"]                = validateSingleWord,            -- A process name
-   ["pid"]                     = validateNumber,                -- A process ID
-   ["procstats_mode"]          = validateProcessesStatsMode,    -- A mode for processes_stats.lua
-   ["sflowdistro_mode"]        = validateSflowDistroMode,       -- A mode for host_sflow_distro
-   ["distr"]                   = validateSflowDistroType,       -- A type for host_sflow_distro
-   ["sflow_filter"]            = validateSflowFilter,           -- sflow host filter
-   ["exporter_ifname"]         = validateSingleWord,            -- an interface name on the probe system
+   -- TIME SPECIFICATION
+   ["tstamp"] = validateNumber, -- A timestamp value
+   ["epoch"] = validateNumber, -- A timestamp value
+   ["epoch_begin"] = validateNumber, -- A timestamp value to indicate start time
+   ["epoch_end"] = validateNumber, -- A timestamp value to indicate end time
+   ["period_begin_str"] = validateDate, -- Specifies a start date in JS format
+   ["period_end_str"] = validateDate, -- Specifies an end date in JS format
+   ["timezone"] = validateNumber, -- The timezone of the browser
+   ["days"] = validateNumber,
 
--- TIME SPECIFICATION
-   ["tstamp"]                  = validateNumber,                -- A timestamp value
-   ["epoch"]                   = validateNumber,                -- A timestamp value
-   ["epoch_begin"]             = validateNumber,                -- A timestamp value to indicate start time
-   ["epoch_end"]               = validateNumber,                -- A timestamp value to indicate end time
-   ["period_begin_str"]        = validateDate,                  -- Specifies a start date in JS format
-   ["period_end_str"]          = validateDate,                  -- Specifies an end date in JS format
-   ["timezone"]                = validateNumber,                -- The timezone of the browser
+   -- PAGINATION
+   ["perPage"] = validateNumber, -- Number of results per page (used for pagination)
+   ["sortOrder"] = validateSortOrder, -- A sort order
+   ["sortColumn"] = validateSortColumn, -- A sort column
+   ["currentPage"] = validateNumber, -- The currently displayed page number (used for pagination)
+   ["table_page"] = validateNumber, -- Page of the table, kept in the url by table.vue (sent with every table request)
+   ["totalRows"] = validateNumber, -- The total number of rows
 
--- PAGINATION
-   ["perPage"]                 = validateNumber,                -- Number of results per page (used for pagination)
-   ["sortOrder"]               = validateSortOrder,             -- A sort order
-   ["sortColumn"]              = validateSortColumn,            -- A sort column
-   ["currentPage"]             = validateNumber,                -- The currently displayed page number (used for pagination)
-   ["totalRows"]               = validateNumber,                -- The total number of rows
+   -- AGGREGATION
+   ["grouped_by"] = validateSingleWord, -- A group criteria
+   ["count"] = validateSingleWord, -- Sql count parameter
+   ["aggregation"] = validateAggregation, -- A mode for graphs aggregation
+   ["limit"] = validateNumber, -- To limit results
+   ["all"] = validateBool, -- To remove limit on results
 
--- AGGREGATION
-   ["grouped_by"]              = validateSingleWord,            -- A group criteria
-   ["count"]                   = validateSingleWord,            -- Sql count parameter
-   ["aggregation"]             = validateAggregation,           -- A mode for graphs aggregation
-   ["limit"]                   = validateNumber,                -- To limit results
-   ["all"]                     = validateEmpty,                 -- To remove limit on results
+   -- NAVIGATION
+   ["gui"] = validateBool, -- Return data in html format (backward compatibility)
+   ["page"] = validateSingleWord, -- Currently active subpage tab
+   ["category_id"] = validateNumber, -- rest/v2/add/category/host_rule.lua: nDPI category id
+   ["application_id"] = validateNumber, -- rest/v2/add/category/host_rule.lua: nDPI application id
+   ["bgp"] = validateBool, -- rest/v2/get/flow/live/overview.lua: also the BGP info of the flow
+   ["llm"] = validateBool, -- rest/v2/get/flow/historical/overview.lua: also the flow for the nAnalyst assistant
+   ["counters"] = validateBool, -- Detail pages overview REST: only the live counters (polling)
+   ["tab"] = validateSingleWord, -- Currently active tab, handled by javascript
+   ["template"] = validateSingleWord, -- Currently selected template
+   ["template_name"] = validateUnquoted,
+   ["endpoint"] = validateSingleWord,
+   ["component"] = validateSingleWord,
+   ["component_title"] = validateUnquoted,
+   ["component_width"] = validateNumber,
+   ["component_height"] = validateNumber,
+   ["component_time_offset"] = validateSingleWord,
+   ["component_time_window"] = validateSingleWord,
+   ["component_params"] = {jsonCleanup, validateJSON},
+   ["components"] = validateColumnsIds, -- Comma separated list of component ids
+   ["top_field"] = validateSingleWord,
+   ["system_interface"] = validateBool,
 
--- NAVIGATION
-   ["page"]                    = validateSingleWord,            -- Currently active subpage tab
-   ["tab"]                     = validateSingleWord,            -- Currently active tab, handled by javascript
-   ["system_interface"]        = validateBool,
+   -- CONFIGSETS
+   ["filters"] = validateScriptFilter, -- Currently active exclusion list for the alert
+   ["filter"] = validateScriptFilter, -- Currently active exclusion list for the alert
+   ["delete_alerts"] = validateBool,
+   ["alert_generation"] = {jsonCleanup, validateJSON},
 
--- CONFIGSETS
-   ["filters"]	       	       = validateScriptFilter,		-- Currently active exclusion list for the alert
-   ["delete_alerts"]           = validateBool,
-   ["alert_generation"]	       = { jsonCleanup, validateJSON },
-   ["script_exclusion_list"]    = validateListOfTypeInline(validateSingleWord),  -- Currently active exclusion list for the alert
+   -- EXCLUDE DEVICES
+   ["device"] = validateDevice,
+   ["mac_list"] = validateUnquoted,
+   ["mac_alias"] = validateSingleWord,
+   ["mac_status"] = validateStatus,
+   ["devices_status_during_learning"] = validateBool,
+   ["devices_status_post_learning"] = validateBool,
 
--- UI TOASTS
-   ["toast_id"]        = validateSingleWord,
+   -- UI TOASTS
+   ["toast_id"] = validateSingleWord,
 
--- NOTIFICATIONS ENDPOINT
-   ["recipient_name"]         = validateUnquoted,
-   ["bind_to_all_pools"]      = validateBool,
-   ["recipient_id"]           = validateNumber,
+   -- NOTIFICATIONS ENDPOINT
+   ["recipient_name"] = validateUnquoted,
+   ["bind_to_all_pools"] = validateBool,
+   ["recipient_id"] = validateNumber,
    ["recipient_check_categories"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+   ["recipient_check_entities"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
    ["recipient_host_pools"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
    ["recipient_am_hosts"] = validateEmptyOr(validateListOfTypeInline(validateUnquoted)),
+   ["recipient_labels"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
    ["recipient_interface_pools"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
-   ["recipient_minimum_severity"]       = validateNumber,
-   ["endpoint_conf_name"]     = validateUnquoted,
-   ["endpoint_id"]       = validateNumberOrUnquoted,
-   ["endpoint_conf_type"]     = validateUnquoted,
-   ["cc"]                     = validateEmptyOr(validateSingleWord),
+   ["recipient_minimum_severity"] = validateNumber,
+   ["recipient_delivery_mode"] = validateEmptyOr(validateChoiceInline({ "alerts", "issues" })),
+   ["recipient_checks"] = validateEmptyOr(validateListOfTypeInline(validateUnquoted)),
+   ["recipient_notifications_type"] = validateEmptyOr(validateSingleWord),
+   ["endpoint_conf_name"] = validateUnquoted,
+   ["endpoint_id"] = validateNumberOrUnquoted,
+   ["endpoint_conf_type"] = validateUnquoted,
+   ["cc"] = validateEmptyOr(validateSingleWord),
+   ["ioc_ip"] = validateIpAddress,
+   ["ioc_string"] = validateDomain,
 
--- NOTIFICATIONS ENDPOINT/RECIPIENT
-   ["discord_url"]       = { http_lint.webhookCleanup, http_lint.validateUnquoted },
-   ["discord_sender"]    = http_lint.validateUnquoted,
-   ["discord_username"]  = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   -- NOTIFICATIONS ENDPOINT/RECIPIENT
+   ["discord_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["discord_sender"] = http_lint.validateUnquoted,
+   ["discord_username"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
 
+   ["flowtriq_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["flowtriq_api_key"] = http_lint.validateSingleWord,
+   -- delete/notification/recipient.lua: also delete its connection when no other recipient uses it
+   ["delete_endpoint"] = http_lint.validateBool,
+
+   ["script_keys"] = validateUnquoted,
    ["shell_script"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["shell_script_execution"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
    ["shell_script_options"] = http_lint.validateEmptyOr(http_lint.validateUnquoted),
 
    ["syslog_alert_format"] = http_lint.validateEmptyOr(http_lint.validateSyslogFormat),
-   ["syslog_protocol"]  = http_lint.validateEmptyOr(http_lint.validateChoiceInline({"tcp", "udp", ""})),
-   ["syslog_host"]  = http_lint.validateEmptyOr(http_lint.validateHost),
-   ["syslog_port"]  = http_lint.validateEmptyOr(http_lint.validatePort),
+   ["syslog_protocol"] = http_lint.validateEmptyOr(http_lint.validateChoiceInline({"tcp", "udp", ""})),
+   ["syslog_host"] = http_lint.validateEmptyOr(validateServer),
+   ["syslog_port"] = http_lint.validateEmptyOr(http_lint.validatePort),
 
    ["telegram_channel"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
-   ["telegram_token"]   = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["telegram_token"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
 
-   ["fail2ban_jail"]     = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["thehive_token"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["thehive_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["thehive_org_name"] = http_lint.validateSingleWord,
+   ["thehive_obs_mail"] = http_lint.validateSingleWord,
+   ["thehive_obs_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
 
-   ["elasticsearch_url"]       = { http_lint.webhookCleanup, http_lint.validateUnquoted },
-   ["elasticsearch_username"]  = http_lint.validateEmptyOr(http_lint.validateSingleWord),
-   ["elasticsearch_password"]  = http_lint.validateEmptyOr(http_lint.validateSingleWord),
-   ["elasticsearch_index"]     = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["pagerduty_integration_key"] = http_lint.validateSingleWord,
 
--- POOLS
-   ["pool_members"]           = validateEmptyOr(validateListOfTypeInline(validateSingleWord)),
-   ["recipients"]             = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+   ["fail2ban_jail"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
 
--- OTHER
-   ["get_all_values"]          = validateBool,                  -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know if all the values have to be returned
-   ["collapse_stats"]          = validateBool,                  -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know if stats need to be collapsed
-   ["max_values"]              = validateNumber,                -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know the max number of stats to be returned
-   ["_"]                       = validateEmptyOr(validateNumber), -- jQuery nonce in ajax requests used to prevent browser caching
-   ["__"]                      = validateUnquoted,              -- see LDAP prefs page
-   ["ifid"]                    = validateInterface,             -- An ntopng interface ID
-   ["observationPointId"]      = validateNumber,
-   ["ifname"]                  = validateSingleWord,
-   ["iffilter"]                = validateIfFilter,              -- An interface ID or 'all'
-   ["mode"]                    = validateMode,                  -- Remote or Local users
-   ["dashboard_mode"]          = validateDashboardMode,         -- Dashboard mode
-   ["device_responsiveness"]   = validateDeviceResponsiveness,  -- Device responsiveness
-   ["counters_since"]          = validateCounterSince,          -- Select actual or absolute counters
-   ["err_counters_filter"]     = validateErrorsFilter,          -- Filter by errrrs, discards, both
-   ["country"]                 = validateListOfTypeInline(validateFilters(validateCountry)),               -- Country code
-   ["cli_country"]             = validateListOfTypeInline(validateFilters(validateCountry)),               -- Country code
-   ["srv_country"]             = validateListOfTypeInline(validateFilters(validateCountry)),               -- Country code
-   ["flow_key"]                = validateNumber,                -- The key of the flow
-   ["flow_hash_id"]            = validateNumber,                -- The ID uniquely identifying the flow in the hash table
-   ["user"]                    = validateSingleWord,            -- The user ID
-   ["pool"]                    = validateNumber,                -- A pool ID
-   ["pool_id"]                 = validateNumber,                -- A pool ID
-   ["direction"]               = validateDirection,             -- Sent or Received direction
-   ["download"]                = validateBool,
-   ["item"]                    = validateSingleWord,            -- Used by the Import/Export page to select the item to import/export
-   ["stats_type"]              = validateStatsType,             -- A mode for historical stats queries
-   ["alertstats_type"]         = validateAlertStatsType,        -- A mode for alerts stats queries
-   ["flowhosts_type"]          = validateFlowHostsType,         -- A filter for local/remote hosts in each of the two directions
-   ["talking_with"]            = validateHost,                  -- A filter for hosts in each of the two directions
-   ["status"]                  = validateUnquoted,              -- An alert type to filter
-   ["enabled_status"]          = validateSingleWord,            -- Can be: All, Enabled, Disabled
-   ["hash_table"]              = validateSingleWord,            -- An internal ntopng hash_table
-   ["periodic_script"]         = validateSingleWord,            -- A script under callbacks/interface executed by ntopng
-   ["periodic_script_issue"]   = validateSingleWord,            -- Script issues under callbacks/interface executed by ntopng
-   ["check"]                   = validateSingleWord,            -- A user script key
-   ["check_target"]            = validateSingleWord,            -- A user script target, e.g., Flow, Host, Interface
-   ["subdir"]                  = validateSingleWord,            -- A user script subdir
-   ["profile"]                 = http_lint.validateTrafficProfile,        -- Traffic Profile name
-   ["delete_profile"]          = http_lint.validateTrafficProfile,        -- A Traffic Profile to delete
-   ["alert_id"]                = validateListOfTypeInline(validateFilters(validateNumber)),-- An alert type enum
-   ["alert_l7_proto"]          = validateNumber,                -- An alert l7 protocol
-   ["alert_subtype"]           = validateSingleWord,            -- An alert subtype string
-   ["alert_severity"]          = validateNumber,                -- An alert severity enum
-   ["severity"]                = validateListOfTypeInline(validateFilters(validateNumber)), -- Same as alert_severity
-   ["alert_granularity"]       = validateNumber,                -- An alert granularity
-   ["entity"]                  = validateNumber,                -- An alert entity type
-   ["by_24h"]                  = validateBool,                  -- Used to know if the new or the old timeseries format is requested
-   ["role"]                    = validateListOfTypeInline(validateFilters(validateSingleWord)), -- attacker/victim
-   ["role_cli_srv"]            = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
-   ["l7_error_id"]             = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
-   ["confidence"]              = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
-   ["acknowledged"]            = validateListOfTypeInline(validateFilters(validateSingleWord)), -- acknowledged
-   ["asn"]                     = validateNumber,                -- An ASN number
-   ["module"]                  = validateTopModule,             -- A top script module
-   ["step"]                    = validateNumber,                -- A step value
-   ["cf"]                      = validateConsolidationFunction, -- An RRD consolidation function
-   ["verbose"]                 = validateBool,                  -- True if script should be verbose
-   ["num_minutes"]             = validateNumMinutes,            -- number of minutes
-   ["zoom"]                    = validateZoom,                  -- a graph zoom specifier
-   ["column_key"]              = validateSingleWord,            -- SNMP Column Key
-   ["community"]               = validateSingleWord,            -- SNMP community
-   ["snmp_read_community"]     = validateSingleWord,            -- SNMP Read community
-   ["snmp_write_community"]    = validateSingleWord,            -- SNMP Write community
-   ["snmp_level"]              = validateSnmpLevel,             -- SNMP Level
-   ["snmp_auth_protocol"]      = validateSnmpAuthProtocol,
-   ["snmp_auth_passphrase"]    = validateSingleWord,
-   ["snmp_privacy_protocol"]   = validateSnmpPrivacyProtocol,
-   ["observation_point"]       = validateNumber,
+   ["elasticsearch_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["elasticsearch_username"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["elasticsearch_password"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+   ["elasticsearch_index"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+
+   ["wechat_url"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["wechat_index"] = http_lint.validateEmptyOr(http_lint.validateSingleWord),
+
+   -- POOLS
+   ["pool_members"] = validateEmptyOr(validateListOfTypeInline(validateSingleWord)),
+   ["recipients"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+
+   -- OTHER
+   ["sync"] = validateBool, -- synchronous request (wait for the change to be applied)
+   ["rsp_format"] = validateBool,
+   ["interface"] = validateNetworkInterface,
+   ["showjson"] = validateBool,
+   ["hostinfotype"] = validateHostInfoType,
+   ["interfacetype"] = validateHostInfoType,
+   ["flowtype"] = validateFlowType,
+   ["all_values"] = validateBool, -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know if all the values have to be returned
+   ["collapse_stats"] = validateBool, -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know if stats need to be collapsed
+   ["show_top"] = validateBool, -- Used by rest/v2/get/interface/l7/stats.lua to know whether to display the top max_value statistics
+   ["max_values"] = validateNumber, -- Used by scripts/lua/rest/v2/get/interface/l7/stats.lua to know the max number of stats to be returned
+   ["_"] = validateEmptyOr(validateNumber), -- jQuery nonce in ajax requests used to prevent browser caching
+   ["__"] = validateUnquoted, -- see LDAP prefs page
+   ["ifid"] = validateInterface, -- An ntopng interface ID
+   ["any"] = validateBool,
+   ["any_interface"] = validateBool,
+   ["rule_ifid"] = validateInterface, -- An ntopng interface ID
+   ["observationPointId"] = validateNumber,
+   ["ifname"] = validateSingleWord,
+   ["iffilter"] = validateIfFilter, -- An interface ID or 'all'
+   ["mode"] = validateMode, -- Remote or Local users
+   ["dashboard_mode"] = validateDashboardMode, -- Dashboard mode
+   ["device_responsiveness"] = validateDeviceResponsiveness, -- Device responsiveness
+   ["counters_since"] = validateCounterSince, -- Select actual or absolute counters
+   ["timeframe"] = validateUnquoted, -- alerts_analysis_utils.lua
+   ["err_counters_filter"] = validateErrorsFilter, -- Filter by errrrs, discards, both
+   ["country"] = validateListOfTypeInline(validateFilters(validateCountry)), -- Country code
+   ["cli_country"] = validateListOfTypeInline(validateFilters(validateCountry)), -- Country code
+   ["srv_country"] = validateListOfTypeInline(validateFilters(validateCountry)), -- Country code
+   ["flow_key"] = validateNumber, -- The key of the flow
+   ["flow_hash_id"] = validateNumber, -- The ID uniquely identifying the flow in the hash table
+   ["user"] = validateSingleWord, -- The user ID
+   ["snapshot_name"] = validateSingleWord, -- The user ID
+   ["command"] = validateSingleWord, -- The user ID
+   ["report_name"] = validateSingleWord, -- The report name
+   ["report_template"] = validateSingleWord, -- The report template
+   ["report_title"] = validateSingleWord, -- The report title (used in vs reports)
+   ["pool"] = validateNumber, -- A pool ID
+   ["pool_id"] = validateNumber, -- A pool ID
+   ["direction"] = validateDirection, -- Sent or Received direction
+   ["download"] = validateBool,
+   ["item"] = validateSingleWord, -- Used by the Import/Export page to select the item to import/export
+   ["config"] = validateUnquoted, -- Used by the Import/Export page to select the item to import/export
+   ["asset_key"] = validateSingleWord, -- Used by network configuration
+   ["stats_type"] = validateStatsType, -- A mode for historical stats queries
+   ["alertstats_type"] = validateAlertStatsType, -- A mode for alerts stats queries
+   ["flowhosts_type"] = validateFlowHostsTypeOrIpVersionOrIp, -- A filter for local/remote hosts in each of the two directions
+   ["hosts_type"] = validateFlowHostsType, -- A filter for local/remote hosts in each of the two directions
+   ["talking_with"] = validateHost, -- A filter for hosts in each of the two directions
+   ["status"] = validateUnquoted, -- An alert type to filter
+   ["risk"] = validateNumber, -- An nDPI flow risk id to filter live flows
+   ["enabled_status"] = validateSingleWord, -- Can be: All, Enabled, Disabled
+   ["hash_table"] = validateSingleWord, -- An internal ntopng hash_table
+   ["periodic_script"] = validateSingleWord, -- A script under callbacks/interface executed by ntopng
+   ["periodic_script_issue"] = validateSingleWord, -- Script issues under callbacks/interface executed by ntopng
+   ["check"] = validateUnquoted, -- A user script name
+   ["check_target"] = validateSingleWord, -- A user script target, e.g., Flow, Host, Interface
+   ["subdir"] = validateSingleWord, -- A user script subdir
+   ["profile"] = http_lint.validateTrafficProfile, -- Traffic Profile name
+   ["delete_profile"] = http_lint.validateTrafficProfile, -- A Traffic Profile to delete
+   ["delete_vlan"] = validateSingleWord, -- A Traffic Profile to delete
+   ["alert_id"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An alert type enum
+   ["issue_id"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An issue id (see pro/scripts/lua/modules/issues)
+   ["entity_id"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An alert entity id
+   ["assignee"] = validateListOfTypeInline(validateIssueAssignee), -- Users the issues are assigned to (~: unassigned, empty: unassign)
+   ["suppressed"] = validateListOfTypeInline(validateNumber), -- Suppressed issues (1) or not (0)
+   ["resolve_policy"] = validateListOfTypeInline(validateNumber), -- How issues are resolved (issue_consts.resolve_policy)
+   ["opened_within"] = validateNumber, -- Issues first seen in the last seconds
+   ["issue_assignee"] = validateListOfTypeInline(validateUsername), -- Group action: users to assign the issues to (empty: unassign)
+   ["issue_severity"] = validateNumber, -- Group action: the severity to set (assignee and severity are filters there)
+   ["opened"] = validateSingleWord, -- Issues page: time window of the issues first seen (all, 48h, 24h, 1h)
+   ["comment"] = validateMessage, -- A comment of an issue (escaped when stored)
+   ["exclusion"] = validateChoiceInline({ "check", "entity", "server" }), -- Resolve an issue: disable its check, exclude its host from it, or add its servers to the Network Configuration
+   ["show_suppressed"] = validateBool, -- Include the suppressed issues
+   ["only_suppressed"] = validateBool, -- Only the suppressed issues
+   ["problem"] = validateListOfTypeInline(validateIssueProblem), -- Alert types of the issues (entity id:alert id)
+   ["issue_entity"] = validateUnquoted, -- The entity of the issues (entity id|entity value)
+   ["issue_peer"] = validateIssuePeer, -- The only peer of the issues (IP), * several peers, ~ none
+   ["group_levels"] = validateListOfTypeInline(validateSingleWord), -- Issues page: dimensions of the custom grouping
+   ["alert_category"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An alert category enum
+   ["mitre_id"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["mitre_tactic"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["mitre_technique"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["mitre_subtechnique"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["alert_map"] = validateSingleWord,
+   ["alert_type"] = validateNumber,
+   ["mitre_subtechnique"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["description"] = validateUnquoted,
+   ["alert_l7_proto"] = validateNumber, -- An alert l7 protocol
+   ["alert_subtype"] = validateSingleWord, -- An alert subtype string
+   ["alert_severity"] = validateNumber, -- An alert severity enum
+   ["severity"] = validateListOfTypeInline(validateFilters(validateNumber)), -- Same as alert_severity
+   ["alert_status"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An alert status enum
+   ["alert_granularity"] = validateNumber, -- An alert granularity
+   ["entity"] = validateNumber, -- An alert entity type
+   ["by_24h"] = validateBool, -- Used to know if the new or the old timeseries format is requested
+   ["dns_answer"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["dns_query"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["role"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- attacker/victim
+   ["role_cli_srv"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["l7_error_id"] = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
+   ["http_method"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["http_return"] = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
+   ["verdict"] = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
+   ["http_url"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["user_agent"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["netbios_name"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["mdns_answer"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["mdns_name"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["mdns_name_txt"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["mdns_ssid"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- client/server
+   ["confidence"] = validateListOfTypeInline(validateFilters(validateNumber)), -- client/server
+   ["acknowledged"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- acknowledged
+   ["community_id"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- Community ID
+   ["app_name"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- Community ID
+   ["user_name"] = validateListOfTypeInline(validateFilters(validateSingleWord)), -- Community ID
+   ["cli_fingerprint"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["ja4_client"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["ndpi_fingerprint"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["tcp_fingerprint"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["issuer_dn"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["last_server"] = validateListOfTypeInline(validateFilters(validateSingleWord)),
+   ["retransmissions"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["out_of_order"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["lost"] = validateListOfTypeInline(validateFilters(validateNumber)),
+
+   ["asn"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An ASN number
+   ["src_asn"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An ASN number
+   ["dst_asn"] = validateListOfTypeInline(validateFilters(validateNumber)), -- An ASN number
+   ["country_id"] = validateNumber, -- A Country Code
+   ["module"] = validateTopModule, -- A top script module
+   ["step"] = validateNumber, -- A step value
+   ["cf"] = validateConsolidationFunction, -- An RRD consolidation function
+   ["verbose"] = validateBool, -- True if script should be verbose
+   ["num_minutes"] = validateNumMinutes, -- number of minutes
+   ["zoom"] = validateZoom, -- a graph zoom specifier
+   ["column_key"] = validateSingleWord, -- SNMP Column Key
+   ["community"] = validateSingleWord, -- SNMP community
+   ["snmp_read_community"] = validateSingleWord, -- SNMP Read community
+   ["snmp_write_community"] = validateSingleWord, -- SNMP Write community
+   ["snmp_level"] = validateSnmpLevel, -- SNMP Level
+   ["snmp_auth_protocol"] = validateSnmpAuthProtocol,
+   ["snmp_auth_passphrase"] = validateSingleWord,
+   ["snmp_privacy_protocol"] = validateSnmpPrivacyProtocol,
+   ["observation_point"] = validateNumber,
+   ["obs_point"] = validateNumber,
    ["snmp_privacy_passphrase"] = validateSingleWord,
-   ["lldp_cdp_mode"]           = validateBool,                  -- LLDP/CDP mode
-   ["default_snmp_community"]  = validateSingleWord,            -- Default SNMP community for non-SNMP-configured local hosts
-   ["snmp_host"]               = validateServer,                -- Either an IPv4/v6 or a hostname
-   ["default_snmp_version"]    = validateSNMPversion,           -- Default SNMP protocol version
-   ["snmp_version"]            = validateSNMPversion,           -- 0:v1 1:v2c 2:v3
-   ["snmp_username"]           = validateSingleWord,            -- SNMP Username
-   ["cidr"]                    = validateCIDR,                  -- /32 or /24
-   ["snmp_port_idx"]           = validateNumber,                -- SNMP port index
-   ["snmp_recache" ]           = validateBool,                  -- forces SNMP queries to be re-executed and cached
-   ["request_discovery" ]      = validateBool,                  -- forces device discovery to be re-cached
-   ["intfs"]                   = validateInterfacesList,        -- a list of network interfaces ids
-   ["search"]                  = validateBool,                  -- When set, a search should be performed
-   ["search_flows"]            = validateBool,                  -- When set, a flow search should be performed
-   ["custom_column"]           = validateCustomColumn,
-   ["criteria"]                = validateCustomColumn,
-   ["row_id"]                  = validateUnquoted,              -- A number used to identify a record in a database
-   ["rrd_file"]                = validateUnquoted,              -- A path or special identifier to read an RRD file
-   ["port"]                    = validatePort,                  -- An application port
-   ["ntopng_license"]          = {licenseCleanup, validateLicense},          -- ntopng licence string
-   ["syn_attacker_threshold"]        = validateEmptyOr(validateNumber),
+   ["snmp_context"] = validateSingleWord,
+   ["lldp_cdp_mode"] = validateBool, -- LLDP/CDP mode
+   ["default_snmp_community"] = validateSingleWord, -- Default SNMP community for non-SNMP-configured local hosts
+   ["snmp_host"] = validateServer, -- Either an IPv4/v6 or a hostname
+   ["default_snmp_version"] = validateSNMPversion, -- Default SNMP protocol version
+   ["snmp_interface_format"] = validateSNMPInterfaceFormat, -- SNMP interface label format
+   ["snmp_version"] = validateSNMPversion, -- 0:v1 1:v2c 2:v3
+   ["snmp_username"] = validateSingleWord, -- SNMP Username
+   ["cidr"] = validateCIDR, -- /32 or /24
+   ["vs_cidr"] = validateVsCIDR, -- /24 /25 /26 /27 /28 /29 /30 /32 or /128
+   ["snmp_port_idx"] = validateNumber, -- SNMP port index
+   ["port_index"] = validateNumber, -- SNMP port index
+   ["uplink_speed"] = validateFloat, -- Flow Exporter uplink speed
+   ["downlink_speed"] = validateFloat, -- Flow Exporter downlink speed
+   ["if_index"] = validateNumber, -- SNMP port index
+   ["snmp_recache"] = validateBool, -- forces SNMP queries to be re-executed and cached
+   ["request_discovery"] = validateBool, -- forces device discovery to be re-cached
+   ["intfs"] = validateInterfacesList, -- a list of network interfaces ids
+   ["search"] = validateBool, -- When set, a search should be performed
+   ["search_flows"] = validateBool, -- When set, a flow search should be performed
+   ["custom_column"] = validateCustomColumn,
+   ["criteria"] = validateSankeyCriteria,
+   ["criteria_as"] = validateSankeyAsCriteria,
+   ["criteria_exporter_interface_view"] = validateSankeyExporterInterfaceCriteria,
+   ["aggregation_criteria"] = validateSingleWord,
+   ["host_locality"] = validateEmptyOr(validateHostLocality), -- Local/remote host filter of the per-host aggregation
+   ["row_id"] = validateUnquoted, -- A number used to identify a record in a database
+   ["rrd_file"] = validateUnquoted, -- A path or special identifier to read an RRD file
+   ["port"] = validateNumber, -- An application port
+   ["ntopng_license"] = {licenseCleanup, validateLicense}, -- ntopng licence string
+   ["update_version"] = validateSingleWord, -- dismissed update version string
+   ["syn_attacker_threshold"] = validateEmptyOr(validateNumber),
    ["global_syn_attacker_threshold"] = validateEmptyOr(validateNumber),
-   ["syn_victim_threshold"]          = validateEmptyOr(validateNumber),
-   ["global_syn_victim_threshold"]   = validateEmptyOr(validateNumber),
-   ["flow_attacker_threshold"]         = validateEmptyOr(validateNumber),
-   ["global_flow_attacker_threshold"]  = validateEmptyOr(validateNumber),
-   ["flow_victim_threshold"]           = validateEmptyOr(validateNumber),
-   ["global_flow_victim_threshold"]    = validateEmptyOr(validateNumber),
-   ["re_arm_minutes"]          = validateEmptyOr(validateNumber),                -- Number of minute before alert re-arm check
-   ["device_type"]             = validateNumber,
-   ["ewma_alpha_percent"]      = validateNumber,
-   ["sidebar_collapsed"]       = validateNumber,
-   ["senders_receivers"]       = validateSendersReceivers,      -- Used in top scripts
-   ["fingerprint_type"]        = validateFingerprintType,
-   ["granularity"]             = validateSingleWord,
-   ["old_granularity"]         = validateSingleWord,
-   ["script_type"]             = validateSingleWord,
-   ["check_subdir"]            = validateSingleWord,
-   ["script_key"]              = validateSingleWord,
-   ["alert_key"]               = validateNumber,
-   ["flow_alert_key"]          = validateNumber,
-   ["host_alert_key"]          = validateNumber,
-   ["alert_addr"]              = validateSingleWord,
-   ["alert_domain"]            = validateSingleWord,
-   ["alert_certificate"]       = validateUnquoted,
-   ["search_script"]           = validateSingleWord,
-   ["field_alias"]             = validateListOfTypeInline(validateFieldAlias),
-   ["dscp_class"]              = validateSingleWord,
-   ["host_pool_members"]       = validateUnquoted,
-   ["type"]                    = validateSingleWord,
+   ["syn_victim_threshold"] = validateEmptyOr(validateNumber),
+   ["global_syn_victim_threshold"] = validateEmptyOr(validateNumber),
+   ["flow_attacker_threshold"] = validateEmptyOr(validateNumber),
+   ["global_flow_attacker_threshold"] = validateEmptyOr(validateNumber),
+   ["flow_victim_threshold"] = validateEmptyOr(validateNumber),
+   ["global_flow_victim_threshold"] = validateEmptyOr(validateNumber),
+   ["re_arm_minutes"] = validateEmptyOr(validateNumber), -- Number of minute before alert re-arm check
+   ["device_type"] = validateNumber,
+   ["site_mode"] = validateNumber,
+   ["ewma_alpha_percent"] = validateNumber,
+   ["sidebar_collapsed"] = validateNumber,
+   ["senders_receivers"] = validateSendersReceivers, -- Used in top scripts
+   ["fingerprint_type"] = validateFingerprintType,
+   ["granularity"] = validateSingleWord,
+   ["old_granularity"] = validateSingleWord,
+   ["script_type"] = validateSingleWord,
+   ["check_subdir"] = validateSingleWord,
+   ["script_key"] = validateSingleWord,
+   ["tag_ids"] = validateEmptyOr(validateListOfTypeInline(validateNumber)), -- comma-separated tag ids, empty for none
+   ["alert_key"] = validateNumber,
+   ["flow_alert_key"] = validateNumber,
+   ["host_alert_key"] = validateNumber,
+   ["alert_addr"] = validateSingleWord,
+   ["alert_domain"] = validateSingleWord,
+   ["custom_script"] = validateUnquoted, -- Title of a custom flow script (alerts filter)
+   ["alert_certificate"] = validateUnchecked,
+   ["old_type"] = validateSingleWord,
+   ["old_subdir"] = validateSingleWord,
+   ["old_alert_domain"] = validateSingleWord,
+   ["old_alert_certificate"] = validateSingleWord,
+   ["old_alert_addr"] = validateSingleWord,
+   ["old_flow_alert_key"] = validateSingleWord,
+   ["old_host_alert_key"] = validateSingleWord,
+   ["search_script"] = validateSingleWord,
+   ["field_alias"] = validateListOfTypeInline(validateFieldAlias),
+   ["dscp_class"] = validateSingleWord,
+   ["host_pool_members"] = validateUnquoted,
+   ["type"] = validateSingleWord,
+   ["frequency"] = validateSingleWord,
+   ["metric_type"] = validateSingleWord,
+   ["rule_id"] = validateSingleWord,
+   ["new_rule_id"] = validateSingleWord,
+   ["extra_metric"] = validateSingleWord,
+   ["rule_type"] = validateSingleWord,
+   ["rule_threshold_sign"] = validateNumber,
+   ["is_ifname"] = validateBool,
+   ["metric_label"] = validateUnquoted,
+   ["flows_page_type"] = validateSingleWord,
+   ["view"] = validateSingleWord,
+   ["enabled"] = validateBool,
+   ["showGraph"] = validateBool,
+   ["range"] = validateUnquoted,
+   ["threshold_sign"] = validateNumber,
 
-   ["bytes"]                   = validateListOfTypeInline(validateFilters(validateNumber)),
-   ["packets"]                 = validateListOfTypeInline(validateFilters(validateNumber)),
+   -- CLASSIFICAION
+   ["classification_user_id"] = validateUnquoted,
+   ["classification_user_token"] = validateSingleWord,
 
-   ["cli_host_pool_id"]        = validateListOfTypeInline(validateFilters(validateNumber)),
-   ["srv_host_pool_id"]        = validateListOfTypeInline(validateFilters(validateNumber)),
+   -- LLM PROVIDERS
+   ["anthropic_url"] = validateUnquoted,
+   ["anthropic_token"] = {passwordCleanup, validatePassword},
+   ["anthropic_model"] = validateUnquoted,
+   ["openai_url"] = validateUnquoted,
+   ["openai_token"] = {passwordCleanup, validatePassword},
+   ["openai_model"] = validateUnquoted,
+   ["local_llm_url"] = validateUnquoted,
+   ["local_llm_token"] = {passwordCleanup, validatePassword},
+   ["local_llm_model"] = validateUnquoted,
+   ["qwen_url"] = validateUnquoted,
+   ["qwen_token"] = {passwordCleanup, validatePassword},
+   ["qwen_model"] = validateUnquoted,
+   ["provider"] = validateUnquoted,
+   ["prompt"] = validateUnquoted,
+   ["stream"] = validateBool,
+   ["content"] = validateUnchecked,
+   ["chatId"] = validateUUID,
+   ["sequence"] = validateNumber,
+   ["edit_from_sequence"] = validateNumber,
+   ["title"] = validateUnquoted,
+   ["concise"] = validateBool,
+   ["no_store"] = validateBool, -- when true, completion.lua skips persisting chat/token-usage rows (used by test/regression harnesses)
+   ["output_price_usd"] = validateFloat,
+   ["input_price_usd"] = validateFloat,
+   ["model"] = validateUnquoted,
+   ["llm_token"] = validateUnquoted,  -- LLM API key / bearer token (test_llm_connectivity)
+   ["llm_key"] = validateSingleWord,  -- entry key name for provider detection (test_llm_connectivity)
+   ["edit"] = validateBool,
+   ["page_context"] = validateUnquoted,
+   ["is_active"] = validateBool,
+   ["sql_query"] = {jsonCleanup, validatePcap},          -- SQL may contain <>/operators; bypass httpPurifyParam
+   ["widget"] = {jsonCleanup, validatePcap},             -- JSON widget spec, embeds a raw sql_query
+   ["dashboard_id"] = validateSingleWord,                -- AI dashboard slug id (not numeric — "id" reserved for validateNumber)
+   ["widget_id"] = validateSingleWord,                   -- AI dashboard widget slug id, same reason
+   ["dashboard"] = validateSingleWord,                   -- page-ai-dashboard.vue deep-link param, same id space
+   ["pos_x"] = validateNumber,                           -- AI dashboard widget grid position (not "x" — collides elsewhere)
+   ["pos_y"] = validateNumber,
+   ["grid_w"] = validateNumber,                          -- AI dashboard widget grid size (not "w"/"h" — collides elsewhere)
+   ["grid_h"] = validateNumber,
+   ["new_dashboard_name"] = validateUnquoted,            -- free-text dashboard name, may contain spaces
+   ["dashboard_name"] = validateUnquoted,                -- AI dashboard save/rename (not "name" — that's reserved globally for a stricter filter-list shape)
+   ["reviewed"] = validateBool,
+   ["explanation"] = {jsonCleanup, validatePcap},        -- free-text explanation, no lint restriction needed
+   ["policy_description"] = {jsonCleanup, validatePcap}, -- ai policy description, may contain special chars
+   ["periodicity"] = validateUnquoted,
+   ["ai_policy_name"] = {jsonCleanup, validatePcap},
+   ["ai_policy_id"] = validateUUID,
+   ["active"] = validateBool,
+   ["page_filter"] = validateUnquoted,
+   ["alert_description"] = validateUnquoted,
+   ["pinned"] = validateNumber,
+   ["custom_score"] = validateNumber,
+   ["message_variables"] = {jsonCleanup, validateJSON}, -- used for policy template formatting of custom alert
+   ["message_template"] = validateUnchecked, -- free-text template string for custom alert messages
+   ["sql_template"] = validateUnchecked, -- free-text template string for custom alert messages
+   ["column"] = validateUnquoted, -- free-text template string for custom alert messages
+   ["chart_view"] = validateSingleWord, -- free-text template string for custom alert messages
+
+   -- Analyst Pipeline
+   ["definition"]            = {jsonCleanup, validateJSON},
+   ["stages"]                = {jsonCleanup, validateJSON},
+   ["params"]                = {jsonCleanup, validateJSON},
+   ["columns"]               = {jsonCleanup, validateJSON},
+   ["post_hook"]             = {jsonCleanup, validateJSON},
+   ["pipeline_id"]           = validateUUID,
+   ["pipeline_name"]         = validateUnquoted,             -- pipeline human-readable name (may contain spaces)
+   ["pipeline_description"]  = {jsonCleanup, validatePcap}, -- pipeline description, may contain special chars / UTF-8
+   
+   -- MCP
+   ["jsonrpc"] = validateUnquoted,
+   ["id"] = validateNumber,
+   ["method"] = validateUnquoted,
+   
+   -- WAZUH
+   ["wazuh_url"] = validateUnquoted,
+   ["wazuh_password"] = {passwordCleanup, validatePassword},
+   ["wazuh_username"] = validateUnquoted,
+   ["wazuh_available"] = validateNumber,
+   ["toggle_wazuh_automerge"] = validateBool,
+
+   -- MOSAIC
+   ["mosaic_url"] = validateUnquoted,
+   ["mosaic_api_key"] = {passwordCleanup, validatePassword},
+
+   -- Syslog rules
+   ["syslog_rule_id"] = validateSingleWord,
+   ["syslog_rule_enabled"] = validateBool,
+   ["syslog_rule_min_severity"] = validateChoiceInline({"0", "1", "2", "3", "4", "5", "6", "7"}),
+   ["syslog_rule_discard"] = validateBool,
+   ["syslog_rule_source"] = validateEmptyOr(validateNetwork),
+   ["syslog_rule_pattern"] = validateEmptyOr(validateMessage),
+   ["syslog_rule_comment"] = validateEmptyOr(validateMessage),
+   ["syslog_test_pattern"] = validateMessage,
+   ["syslog_test_message"] = validateMessage,
+
+   -- Syslog events
+   ["syslog_ip"] = validateEmptyOr(validateIpAddress),
+   ["syslog_severity"] = validateEmptyOr(validateChoiceInline({"0", "1", "2", "3", "4", "5", "6", "7"})),
+   ["syslog_hostname"] = validateMessage,
+   ["syslog_app_name"] = validateMessage,
+   ["syslog_facility"] = validateMessage,
+   ["syslog_facet_id"] = validateChoiceInline({"severity", "ip", "hostname", "app_name", "facility"}),
+   ["syslog_facet_search"] = validateMessage,
+
+   -- WAZUH Alert Rules / Alert Exceptions (private config)
+   ["wazuh_rule_id"] = validateSingleWord,
+   ["wazuh_rule_new_id"] = validateSingleWord,
+   ["wazuh_rule_priority"] = validateNumber,
+   ["wazuh_rule_min_level"] = validateNumber,
+   ["wazuh_rule_groups"] = validateUnquoted,
+   ["wazuh_rule_immediate"] = validateBool,
+   ["wazuh_rule_subject"] = validateUnquoted,
+   ["wazuh_rule_enabled"] = validateBool,
+   ["wazuh_rule_comment"] = validateUnquoted,
+   ["old_wazuh_exception_id"] = validateSingleWord,
+   ["wazuh_exception_id"] = validateSingleWord,
+   ["wazuh_exception_rule_id"] = validateNumber,
+   ["wazuh_exception_agent_name"] = validateUnquoted,
+   ["wazuh_exception_src_ip"] = validateUnquoted,
+   ["wazuh_exception_dst_ip"] = validateUnquoted,
+   ["wazuh_exception_username"] = validateUnquoted,
+   ["wazuh_exception_process"] = validateUnquoted,
+   ["wazuh_exception_rule_group"] = validateUnquoted,
+   ["wazuh_rule_pattern"] = validateUnquoted,
+   ["wazuh_exception_enabled"] = validateBool,
+   ["wazuh_exception_comment"] = validateUnquoted,
+   ["wazuh_exception_pattern"] = validatePassword,
+   ["wazuh_exception_test_string"] = validatePassword,
+   ["wazuh_alert_id"] = validateSingleWord,
+   ["min_level"] = validateNumber,
+
+   -- VULNERABILITY SCAN
+   ["scan_type"] = validateSingleWord,
+   ["discovered_host_scan_type"] = validateListOfTypeInline(validateSingleWord),
+   ["scan_ports"] = validateScanPorts,
+   ["scan_params"] = validateUnquoted,
+   ["scan_single_host"] = validateBool,
+   ["delete_all_scan_hosts"] = validateBool,
+   ["delete_failed_scan_hosts"] = validateBool,
+   ["scan_return_result"] = validateBool,
+   ["scan_date"] = validateSingleWord,
+   ["scan_frequency"] = validateSingleWord,
+   ["scan_id"] = validateSingleWord,
+   ["is_va"] = validateBool,
+   ["is_edit"] = validateBool,
+   ["was_down"] = validateBool,
+   ["netscan_report"] = validateBool,
+
+   ["snmp_device"] = validateDevice,
+   ["snmp_device_port"] = validateSNMPIfidNumber,
+   ["snmp_device_port_label"] = validateUnquoted,
+   ["snmp_device_label"] = validateUnquoted,
+   ["snmp_threshold_value"] = validateNumber,
+   ["snmp_threshold_unit"] = validateUnquoted,
+   ["snmp_metric_type_label"] = validateUnquoted,
+
+   ["bytes"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["packets"] = validateListOfTypeInline(validateFilters(validateNumber)),
+
+   ["host_pool"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["cli_host_pool_id"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["srv_host_pool_id"] = validateListOfTypeInline(validateFilters(validateNumber)),
+   ["first_flow_dump"] = validateListOfTypeInline(validateFilters(validateBool)),
 
    -- Widget and Datasources
-   ["ds_type"]                 = validateSingleWord,
-   ["ds_name"]                 = validateSingleWord,
-   ["transformation"]          = validateTransformation,
+   ["ds_type"] = validateSingleWord,
+   ["ds_name"] = validateSingleWord,
+   ["transformation"] = validateTransformation,
 
--- Topology SNMP Devices
-   ["topology_host"]                   = validateIPV4,
+   -- Topology SNMP Devices
+   ["topology_host"] = validateIPV4,
+   ["toggle_snmp_trap"] = validateBool,
+   ["toggle_snmp_excluded_from_usage"] = validateBool,
 
    -- Active monitoring
-   ["am_host"]                = { http_lint.webhookCleanup, http_lint.validateUnquoted },
-   ["old_am_host"]            = { http_lint.webhookCleanup, http_lint.validateUnquoted },
-   ["threshold"]              = http_lint.validateEmptyOr(http_lint.validateNumber),
-   ["measurement"]            = validateMeasurement,
-   ["old_measurement"]        = validateMeasurement,
+   ["am_host"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["old_am_host"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["old_host"] = {http_lint.webhookCleanup, http_lint.validateUnquoted},
+   ["threshold"] = http_lint.validateEmptyOr(http_lint.validateNumber),
+   ["measurement"] = validateMeasurement,
+   ["old_measurement"] = validateMeasurement,
 
    -- Infrastructure Dashboard
-   ["alias"]                  = validateUnquoted,
-   ["token"]                  = validateToken,
-   ["instance_id"]            = validateSingleWord,
-   ["stats"]                  = validateBool,
-   ["rtt_threshold"]          = validateNumber,
-   ["bandwidth_threshold"]    = validateNumber,
+   ["alias"] = validateUnquoted,
+   ["token"] = validateToken,
+   ["instance_id"] = validateSingleWord,
 
--- Service Map
-   ["service_id"]          = validateNumber,
-   ["service_status"]      = validateNumber,
-   ["set_service_state"]   = validateNumber,
-   ["service_l7proto"]     = validateSingleWord,
-   ["map"]                 = validateUnquoted,
-   ["age"]                 = validateSingleWord,
-   ["first_seen"]          = validateNumber,
-   ["only_memory"]         = validateBool,
-   ["only_alerted_hosts"]  = validateBool,
-   ["map_search"]          = validateUnquoted,
-   ["view"]                = validateSingleWord,
+   -- Custom LLM providers
+   ["provider_id"] = validateSingleWord,
+   ["provider_name"] = validateUnquoted,
+   ["provider_token"] = validateEmptyOr(validateUnquoted),
+   ["timeout_sec"] = validateNumber,
 
--- Script editor
-   ["script_file_path"]         = validateLuaScriptPath,
+   -- nAnalyst MCP client servers (mcp_servers.lua checks the values again before saving)
+   ["mcp_server_id"] = validateSingleWord,
+   ["mcp_name"] = validateUnquoted,
+   ["mcp_url"] = validateUnquoted,
+   ["mcp_enabled"] = validateBool,
+   ["mcp_header_name"] = validateEmptyOr(validateSingleWord),
+   ["mcp_header_value"] = validateUnchecked, -- secret, only sent as an HTTP header (control chars refused)
+   ["mcp_timeout"] = validateNumber,
+   ["mcp_enabled_tools"] = validateUnchecked, -- comma separated tool names, only compared with the cached list
 
--- PREFERENCES - see prefs.lua for details
+   -- AI Audit Log deep-link filter (page-ai-audit.vue)
+   ["tool_name"] = validateSingleWord,
+   ["triggered_by"] = validateChoiceInline({"llm", "user"}),
+   ["stats"] = validateBool,
+   ["rtt_threshold"] = validateNumber,
+   ["bandwidth_threshold"] = validateNumber,
+   ["toggle_netbox"] = validateBool,
+   ["toggle_ntopng_assets_inventory"] = validateBool,
+   ["netbox_activation_url"] = validateSingleWord,
+   ["netbox_default_site"] = validateSingleWord,
+   ["netbox_personal_access_token"] = validateSingleWord,
+   ["is_infrastructure"] = validateBool,
+
+   -- Service Map
+   ["service_id"] = validateNumber,
+   ["service_status"] = validateNumber,
+   ["set_service_state"] = validateNumber,
+   ["service_l7proto"] = validateSingleWord,
+   ["map"] = validateUnquoted,
+   ["age"] = validateSingleWord,
+   ["first_seen"] = validateNumber,
+   ["only_memory"] = validateBool,
+   ["only_alerted_hosts"] = validateBool,
+   ["map_search"] = validateUnquoted,
+
+   -- Script editor
+   ["script_file_path"] = validateLuaScriptPath,
+
+   -- PREFERENCES - see prefs.lua for details
    -- Toggle Buttons
-   ["toggle_flow_begin"]                           = validateBool,
-   ["flow_table_time"]                             = validateBool,
-   ["flow_table_probe_order"]                      = validateBool,
-   ["interface_rrd_creation"]                      = validateBool,
-   ["interface_one_way_hosts_rrd_creation"]        = validateBool,
-   ["interface_top_talkers_creation"]              = validateBool,
-   ["interface_flow_dump"]                         = validateBool,
-   ["is_mirrored_traffic"]                         = validateBool,
-   ["discard_probing_traffic"]                     = validateBool,
-   ["show_dyn_iface_traffic"]                      = validateBool,
-   ["interface_network_discovery"]                 = validateBool,
-   ["dynamic_iface_vlan_creation"]                 = validateBool,
-   ["toggle_mysql_check_open_files_limit"]         = validateBool,
-   ["disable_alerts_generation"]                   = validateBool,
-   ["alert_page_refresh_rate_enabled"]             = validateBool,
-   ["enable_score"]                                = validateBool,
-   ["toggle_alert_probing"]                        = validateBool,
-   ["toggle_geo_map_score"]                        = validateBool,
-   ["toggle_geo_map_asname"]                       = validateBool,
-   ["toggle_geo_map_alerted_flows"]                = validateBool,
-   ["toggle_geo_map_blacklisted_flows"]            = validateBool,
-   ["toggle_geo_map_host_name"]                    = validateBool,
-   ["toggle_geo_map_rxtx_data"]                    = validateBool,
-   ["toggle_geo_map_num_flows"]                    = validateBool,
-   ["toggle_flow_alerts_iface"]                    = validateBool,
-   ["toggle_tls_alerts"]                           = validateBool,
-   ["toggle_dns_alerts"]                           = validateBool,
-   ["toggle_mining_alerts"]                        = validateBool,
-   ["toggle_remote_to_remote_alerts"]              = validateBool,
-   ["toggle_dropped_flows_alerts"]                 = validateBool,
-   ["toggle_malware_probing"]                      = validateBool,
-   ["toggle_potentially_dangerous_protocols_alerts"] = validateBool,
-   ["toggle_device_protocols_alerts"]              = validateBool,
-   ["toggle_elephant_flows_alerts"]                = validateBool,
-   ["toggle_ip_reassignment_alerts"]               = validateBool,
-   ["toggle_longlived_flows_alerts"]               = validateBool,
-   ["toggle_data_exfiltration"]                    = validateBool,
-   ["toggle_enable_runtime_flows_dump"]            = validateBool,
-   ["toggle_tiny_flows_dump"]                      = validateBool,
-   ["toggle_alert_syslog"]                         = validateBool,
-   ["toggle_slack_notification"]                   = validateBool,
-   ["toggle_email_notification"]                   = validateBool,
-   ["toggle_top_sites"]                            = validateBool,
-   ["toggle_captive_portal"]                       = validateBool,
-   ["toggle_informative_captive_portal"]           = validateBool,
-   ["toggle_autologout"]                           = validateBool,
-   ["toggle_interface_name_only"]                  = validateBool,
-   ["toggle_autoupdates"]                          = validateBool,
-   ["toggle_ldap_anonymous_bind"]                  = validateBool,
-   ["toggle_local"]                                = validateBool,
-   ["toggle_local_host_cache_enabled"]             = validateBool,
-   ["toggle_active_local_host_cache_enabled"]      = validateBool,
-   ["toggle_network_discovery"]                    = validateBool,
-   ["toggle_interface_traffic_rrd_creation"]       = validateBool,
-   ["toggle_local_hosts_traffic_rrd_creation"]     = validateBool,
-   ["toggle_local_hosts_stats_rrd_creation"]       = validateBool,
-   ["toggle_l2_devices_traffic_rrd_creation"]      = validateBool,
-   ["toggle_observation_points_rrd_creation"]      = validateBool,
-   ["toggle_system_probes_timeseries"]             = validateBool,
-   ["toggle_flow_rrds"]                            = validateBool,
-   ["toggle_pools_rrds"]                           = validateBool,
-   ["toggle_flow_snmp_ports_rrds"]                 = validateBool,
-   ["toggle_access_log"]                           = validateBool,
-   ["toggle_host_pools_log"]                       = validateBool,
-   ["toggle_log_to_file"]                          = validateBool,
-   ["toggle_snmp_rrds"]                            = validateBool,
-   ["toggle_tiny_flows_export"]                    = validateBool,
-   ["toggle_vlan_rrds"]                            = validateBool,
-   ["toggle_asn_rrds"]                             = validateBool,
-   ["toggle_country_rrds"]                         = validateBool,
-   ["toggle_os_rrds"]                              = validateBool,
-   ["toggle_shaping_directions"]                   = validateBool,
-   ["toggle_dst_with_post_nat_dst"]                = validateBool,
-   ["toggle_src_with_post_nat_src"]                = validateBool,
-   ["toggle_behaviour_analysis"]                   = validateBool,
-   ["behaviour_analysis_learning_period"]          = validateNumber,
+   ["toggle_enable_full_stats"] = validateBool,
+   ["toggle_flow_begin"] = validateBool,
+   ["flow_table_time"] = validateBool,
+   ["flow_table_probe_order"] = validateBool,
+   ["interface_rrd_creation"] = validateBool,
+   ["interface_one_way_hosts_rrd_creation"] = validateBool,
+   ["interface_top_talkers_creation"] = validateBool,
+   ["automatic_reports_creation"] = validateBool,
+   ["interface_flow_dump"] = validateBool,
+   ["is_mirrored_traffic"] = validateBool,
+   ["discard_probing_traffic"] = validateBool,
+   ["show_dyn_iface_traffic"] = validateBool,
+   ["push_host_filters"] = validateBool,
+   ["interface_network_discovery"] = validateBool,
+   ["dynamic_iface_vlan_creation"] = validateBool,
+   ["disable_alerts_generation"] = validateBool,
+   ["alert_page_refresh_rate_enabled"] = validateBool,
+   ["enable_score"] = validateBool,
+   ["toggle_alert_probing"] = validateBool,
+   ["toggle_geo_map_score"] = validateBool,
+   ["toggle_geo_map_asname"] = validateBool,
+   ["toggle_geo_map_alerted_flows"] = validateBool,
+   ["toggle_geo_map_blacklisted_flows"] = validateBool,
+   ["toggle_geo_map_host_name"] = validateBool,
+   ["toggle_geo_map_rxtx_data"] = validateBool,
+   ["toggle_geo_map_num_flows"] = validateBool,
+   ["toggle_flow_alerts_iface"] = validateBool,
+   ["toggle_tls_alerts"] = validateBool,
+   ["toggle_dns_alerts"] = validateBool,
+   ["toggle_mining_alerts"] = validateBool,
+   ["toggle_remote_to_remote_alerts"] = validateBool,
+   ["toggle_dropped_flows_alerts"] = validateBool,
+   ["toggle_malware_probing"] = validateBool,
+   ["toggle_device_protocols_alerts"] = validateBool,
+   ["toggle_elephant_flows_alerts"] = validateBool,
+   ["toggle_ip_reassignment_alerts"] = validateBool,
+   ["toggle_longlived_flows_alerts"] = validateBool,
+   ["toggle_data_exfiltration"] = validateBool,
+   ["toggle_enable_automatic_reports"] = validateBool,
+   ["toggle_enable_runtime_flows_dump"] = validateBool,
+   ["toggle_tiny_flows_dump"] = validateBool,
+   ["toggle_alert_syslog"] = validateBool,
+   ["toggle_slack_notification"] = validateBool,
+   ["toggle_email_notification"] = validateBool,
+   ["toggle_top_sites"] = validateBool,
+   ["toggle_sites_collection"] = validateBool,
+   ["toggle_dns_cache"] = validateBool,
+   ["toggle_http_enable_access_log"] = validateBool,
+   ["toggle_asset_inventory_log"] = validateBool,
+   ["toggle_active_monitoring_log"] = validateBool,
+   ["toggle_assets_inventory"] = validateBool,
+   ["toggle_captive_portal"] = validateBool,
+   ["toggle_mdns_repeater"] = validateBool,
+   ["toggle_informative_captive_portal"] = validateBool,
+   ["toggle_external_auth_captive_portal"] = validateBool,
+   ["toggle_autologout"] = validateBool,
+   ["toggle_interface_name_only"] = validateBool,
+   ["toggle_autoupdates"] = validateBool,
+   ["toggle_ldap_anonymous_bind"] = validateBool,
+   ["toggle_local"] = validateBool,
+   ["toggle_local_host_cache_enabled"] = validateBool,
+   ["toggle_active_local_host_cache_enabled"] = validateBool,
+   ["toggle_network_discovery"] = validateBool,
+   ["toggle_periodic_network_discovery"] = validateBool,
+   ["toggle_network_discovery_debug"] = validateBool,
+   ["toggle_interface_traffic_rrd_creation"] = validateBool,
+   ["toggle_local_hosts_traffic_rrd_creation"] = validateBool,
+   ["toggle_local_hosts_stats_rrd_creation"] = validateBool,
+   ["toggle_l2_devices_traffic_rrd_creation"] = validateBool,
+   ["toggle_observation_points_rrd_creation"] = validateBool,
+   ["toggle_intranet_traffic_rrd_creation"] = validateBool,
+   ["toggle_system_probes_timeseries"] = validateBool,
+   ["toggle_interface_usage_probes_timeseries"] = validateBool,
+   ["toggle_flow_rrds"] = validateBool,
+   ["toggle_pools_rrds"] = validateBool,
+   ["toggle_flow_snmp_ports_rrds"] = validateBool,
+   ["toggle_access_log"] = validateBool,
+   ["toggle_host_pools_log"] = validateBool,
+   ["toggle_log_to_file"] = validateBool,
+   ["toggle_assets_log"] = validateBool,
+   ["toggle_snmp_rrds"] = validateBool,
+   ["toggle_snmp_polling"] = validateBool,
+   ["toggle_active_monitoring"] = validateBool,
+   ["toggle_tiny_flows_export"] = validateBool,
+   ["toggle_vlan_rrds"] = validateBool,
+   ["toggle_asn_rrds"] = validateBool,
+   ["toggle_country_rrds"] = validateBool,
+   ["toggle_os_rrds"] = validateBool,
+   ["toggle_shaping_directions"] = validateBool,
+   ["toggle_dst_with_post_nat_dst"] = validateBool,
+   ["toggle_src_with_post_nat_src"] = validateBool,
+   ["toggle_behaviour_analysis"] = validateBool,
+   ["toggle_use_mac_in_flow_key"] = validateBool,
+   ["toggle_use_host_pools_for_local"] = validateBool,
+   ["toggle_fingerprint_stats"] = validateBool,
+   ["toggle_starttls"] = validateBool,
+   ["toggle_dump_pcap_to_clickhouse"] = validateBool,
+   ["toggle_dump_duplicated_flows_to_clickhouse"] = validateBool,
+   ["toggle_query_performance_log"] = validateBool,
+   ["behaviour_analysis_learning_period"] = validateNumber,
    ["behaviour_analysis_learning_status_during_learning"] = validateNumber,
-   ["behaviour_analysis_learning_status_post_learning"]   = validateNumber,
-   ["iec60870_learning_period"]                    = validateNumber,
-   ["toggle_src_and_dst_using_ports"]              = validateBool,
-   ["toggle_device_activation_alert"]              = validateBool,
-   ["toggle_device_first_seen_alert"]              = validateBool,
-   ["toggle_pool_activation_alert"]                = validateBool,
-   ["toggle_quota_exceeded_alert"]                 = validateBool,
-   ["toggle_external_alerts"]                      = validateBool,
-   ["toggle_influx_auth"]                          = validateBool,
-   ["toggle_ldap_auth"]                            = validateBool,
-   ["toggle_local_auth"]                           = validateBool,
-   ["toggle_radius_auth"]                          = validateBool,
-   ["toggle_http_auth"]                            = validateBool,
-   ["toggle_ldap_referrals"]                       = validateBool,
-   ["toggle_webhook_notification"]                 = validateBool,
-   ["toggle_elasticsearch_notification"]           = validateBool,
-   ["toggle_auth_session_midnight_expiration"]     = validateBool,
-   ["toggle_client_x509_auth"]                     = validateBool,
-   ["toggle_snmp_debug"]                           = validateBool,
-   ["toggle_snmp_port_admin_status"]               = validateBool,
+   ["behaviour_analysis_learning_status_post_learning"] = validateNumber,
+   ["iec60870_learning_period"] = validateNumber,
+   ["modbus_learning_period"] = validateNumber,
+   ["s7comm_learning_period"] = validateNumber,
+   ["devices_learning_period"] = validateNumber,
+   ["host_port_learning_period"] = validateNumber,
+   ["toggle_src_and_dst_using_ports"] = validateBool,
+   ["toggle_device_activation_alert"] = validateBool,
+   ["toggle_device_first_seen_alert"] = validateBool,
+   ["toggle_pool_activation_alert"] = validateBool,
+   ["toggle_quota_exceeded_alert"] = validateBool,
+   ["toggle_external_alerts"] = validateBool,
+   ["toggle_influx_auth"] = validateBool,
+   ["toggle_ldap_auth"] = validateBool,
+   ["toggle_ldap_ext_user_cap"] = validateBool,
+   ["toggle_local_auth"] = validateBool,
+   ["toggle_radius_accounting"] = validateBool,
+   ["toggle_radius_external_auth_for_local_users"] = validateBool,
+   ["toggle_radius_auth"] = validateBool,
+   ["toggle_http_auth"] = validateBool,
+   ["toggle_oidc_auth"] = validateBool,
+   ["toggle_oidc_auto_create_users"] = validateBool,
+   ["toggle_ldap_referrals"] = validateBool,
+   ["toggle_ldap_debug"] = validateBool,
+   ["toggle_webhook_notification"] = validateBool,
+   ["toggle_elasticsearch_notification"] = validateBool,
+   ["toggle_auth_session_midnight_expiration"] = validateBool,
+   ["toggle_client_x509_auth"] = validateBool,
+   ["toggle_snmp_debug"] = validateBool,
+   ["toggle_snmp_port_admin_status"] = validateBool,
    ["toggle_snmp_alerts_port_duplexstatus_change"] = validateBool,
-   ["toggle_snmp_alerts_port_status_change"]       = validateBool,
-   ["toggle_snmp_alerts_port_errors"]              = validateBool,
-   ["snmp_port_load_threshold"]                    = validateNumber,
-   ["toggle_midnight_stats_reset"]                 = validateBool,
-   ["toggle_ndpi_flows_rrds"]                      = validateBool,
-   ["toggle_internals_rrds"]                       = validateBool,
-   ["toggle_local_hosts_one_way_ts"]               = validateBool,
-   ["toggle_dark_theme"]                           = validateBool,
+   ["toggle_snmp_qos_mib_polling"] = validateBool,
+   ["toggle_snmp_alerts_port_status_change"] = validateBool,
+   ["toggle_snmp_alerts_port_errors"] = validateBool,
+   ["snmp_interface_role_change"] = validateSingleWord,
+   ["snmp_port_load_threshold"] = validateNumber,
+   ["toggle_midnight_stats_reset"] = validateBool,
+   ["toggle_ndpi_flows_rrds"] = validateBool,
+   ["toggle_internals_rrds"] = validateBool,
+   ["toggle_local_hosts_one_way_ts"] = validateBool,
+   ["toggle_dark_theme"] = validateBool,
+   ["toggle_menu_entry_help"] = validateBool,
+   ["toggle_menu_entry_developer"] = validateBool,
+   ["toggle_menu_entry_experimental_features"] = validateBool,
+   ["toggle_search_in_all_interfaces"] = validateBool,
+   ["toggle_flow_aggregated_alerted_flows"] = validateBool,
+   ["toggle_slow_mode"] = validateBool,
+   ["toggle_message_broker"] = validateBool,
+   ["toggle_tls_quic_hostnaming"] = validateBool,
+   ["toggle_exclude_from_usage_page"] = validateBool,
+
+   ["show_as"] = validateImportantASN,
+   ["interface_role"] = validateInterfaceRole,
+   ["interface_name_filter"] = validateUnquoted,
+   ["iface_role"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),
+   ["in_iface_role"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),
+   ["out_iface_role"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),
+   ["interface_filter"] = validateSingleWord,
 
    -- Input fields
-   ["companion_interface"]                         = validateEmptyOr(validateInterface),
-   ["flows_and_alerts_data_retention_days"]        = validateNumber,
-   ["ts_and_stats_data_retention_days"]            = validateNumber,
-   ["max_entity_alerts"]                           = validateNumber,
-   ["max_num_secs_before_delete_alert"]            = validateNumber,
-   ["alert_page_refresh_rate"]                     = validateNumber,
-   ["elephant_flow_remote_to_local_bytes"]         = validateNumber,
-   ["elephant_flow_local_to_remote_bytes"]         = validateNumber,
-   ["max_num_packets_per_tiny_flow"]               = validateNumber,
-   ["max_num_bytes_per_tiny_flow"]                 = validateNumber,
-   ["google_apis_browser_key"]                     = validateSingleWord,
-   ["ldap_server_address"]                         = validateSingleWord,
-   ["radius_server_address"]                       = validateSingleWord,
-   ["http_auth_url"]                               = validateSingleWord,
-   ["radius_secret"]                               = validateUnquoted,
-   ["local_host_max_idle"]                         = validateNumber,
-   ["longlived_flow_duration"]                     = validateNumber,
-   ["non_local_host_max_idle"]                     = validateNumber,
-   ["flow_max_idle"]                               = validateNumber,
-   ["active_local_host_cache_interval"]            = validateNumber,
-   ["auth_session_duration"]                       = validateNumber,
-   ["local_host_cache_duration"]                   = validateNumber,
-   ["intf_rrd_raw_days"]                           = validateNumber,
-   ["intf_rrd_1min_days"]                          = validateNumber,
-   ["intf_rrd_1h_days"]                            = validateNumber,
-   ["intf_rrd_1d_days"]                            = validateNumber,
-   ["other_rrd_raw_days"]                          = validateNumber,
-   ["other_rrd_1min_days"]                         = validateNumber,
-   ["other_rrd_1h_days"]                           = validateNumber,
-   ["other_rrd_1d_days"]                           = validateNumber,
-   ["host_activity_rrd_1h_days"]                   = validateNumber,
-   ["host_activity_rrd_1d_days"]                   = validateNumber,
-   ["host_activity_rrd_raw_hours"]                 = validateNumber,
-   ["max_ui_strlen"]                               = validateNumber,
-   ["http_acl_management_port"]                    = validateACLNetworksList,
-   ["safe_search_dns"]                             = validateIPV4,
-   ["global_dns"]                                  = validateEmptyOr(validateIPV4),
-   ["secondary_dns"]                               = validateEmptyOr(validateIPV4),
-   ["redirection_url"]                             = validateEmptyOr(validateSingleWord),
-   ["email_sender"]                                = validateSingleWord,
-   ["email_recipient"]                             = validateSingleWord,
-   ["smtp_server"]                                 = validateServer,
-   ["smtp_username"]                               = validateEmptyOr(validateSingleWord),
-   ["smtp_password"]                               = validateEmptyOr(validatePassword),
-   ["influx_dbname"]                               = validateSingleWord,
-   ["influx_username"]                             = validateEmptyOr(validateSingleWord),
-   ["influx_password"]                             = validateEmptyOr(validateSingleWord),
-   ["influx_query_timeout"]                        = validateNumber,
+   ["companion_interface"] = validateEmptyOr(validateInterface),
+   ["flows_and_alerts_data_retention_days"] = validateNumber,
+   ["aggregated_flows_data_retention_days"] = validateNumber,
+   ["aggregated_asn_data_retention_days"] = validateNumber,
+   ["vs_reports_retention_days"] = validateNumber,
+   ["traffic_model_retention_days"] = validateNumber,
+   ["reports_data_retention_days"] = validateNumber,
+   ["ts_and_stats_data_retention_days"] = validateNumber,
+   ["wazuh_alerts_data_retention_days"] = validateNumber,
+   ["syslog_events_retention_days"] = validateNumber,
+   ["clickhouse_max_size_gb"] = validateNumber,
+   ["rrd_files_retention_days"] = validateNumber,
+   ["max_entity_alerts"] = validateNumber,
+   ["max_num_secs_before_delete_alert"] = validateNumber,
+   ["alert_page_refresh_rate"] = validateNumber,
+   ["elephant_flow_remote_to_local_bytes"] = validateNumber,
+   ["elephant_flow_local_to_remote_bytes"] = validateNumber,
+   ["max_num_packets_per_tiny_flow"] = validateNumber,
+   ["dump_frequency"] = validateNumber,
+   ["max_num_bytes_per_tiny_flow"] = validateNumber,
+   ["max_aggregated_flows_traffic_upperbound"] = validateNumber,
+   ["max_aggregated_flows_upperbound"] = validateNumber,
+   ["google_apis_browser_key"] = validateSingleWord,
+   ["ldap_server_address"] = validateSingleWord,
+   ["radius_server_address"] = validateSingleWord,
+   ["radius_acct_server_address"] = validateSingleWord,
+   ["os_type"] = validateSingleWord,
+   ["server_type"] = validateNumber,
+   ["section"] = validateSingleWord,
+   ["day"] = validateISODay,
+   ["day_from"] = validateISODay,
+   ["day_to"] = validateISODay,
+   ["day_old"] = validateISODay,
+   ["day_new"] = validateISODay,
+   ["max_edges"] = validateNumber,
+   ["host_role"] = validateSingleWord, -- traffic model graph: client or server
+   ["switch_ip"] = validateIpAddress,
+   ["switch_port"] = validateNumber,
+   ["http_auth_url"] = validateSingleWord,
+   ["radius_secret"] = validateUnquoted,
+   ["oidc_issuer_url"] = validateSingleWord,
+   ["oidc_client_id"] = validateSingleWord,
+   ["oidc_client_secret"] = validateUnquoted,
+   ["oidc_base_redirect_uri"] = validateSingleWord,
+   ["oidc_scopes"] = validateUnquoted,
+   ["oidc_group_claim"] = validateSingleWord,
+   ["oidc_admin_group"] = validateUnquoted,
+   ["claim_ifname"] = validateSingleWord,
+   ["claim_nets"] = validateSingleWord,
+   ["claim_host_pools"] = validateSingleWord,
+   ["claim_allow_pcap"] = validateSingleWord,
+   ["claim_allow_historical"] = validateSingleWord,
+   ["claim_allow_alerts"] = validateSingleWord,
+   ["radius_auth_proto"] = validateAuthProto,
+   ["local_host_max_idle"] = validateNumber,
+   ["longlived_flow_duration"] = validateNumber,
+   ["non_local_host_max_idle"] = validateNumber,
+   ["flow_max_idle"] = validateNumber,
+   ["active_local_host_cache_interval"] = validateNumber,
+   ["mac_address_cache_duration"] = validateNumber,
+   ["toggle_flow_swap_heuristic"] = validateBool,
+   ["toggle_skip_dpi_for_collected_flows"] = validateBool,
+   ["auth_session_duration"] = validateNumber,
+   ["local_host_cache_duration"] = validateNumber,
+   ["intf_rrd_raw_days"] = validateNumber,
+   ["intf_rrd_1min_days"] = validateNumber,
+   ["intf_rrd_1h_days"] = validateNumber,
+   ["intf_rrd_1d_days"] = validateNumber,
+   ["other_rrd_raw_days"] = validateNumber,
+   ["other_rrd_1min_days"] = validateNumber,
+   ["other_rrd_1h_days"] = validateNumber,
+   ["other_rrd_1d_days"] = validateNumber,
+   ["host_activity_rrd_1h_days"] = validateNumber,
+   ["host_activity_rrd_1d_days"] = validateNumber,
+   ["host_activity_rrd_raw_hours"] = validateNumber,
+   ["max_ui_strlen"] = validateNumber,
+   ["ntopng_host_address"] = validateSingleWord,
+   ["http_acl_management_port"] = validateACLNetworksList,
+   ["http_index_page"] = validateUnquoted,
+   ["clickhouse_flows_archive_path"] = validateUnquoted,
+   ["toggle_data_archive_before_ttl_delete"] = validateBool,
+   ["asn_mode_enabled"] = validateBool,
+   ["ip_address"] = validateIpAddress,
+   ["safe_search_dns"] = validateIPV4,
+   ["global_dns"] = validateEmptyOr(validateIPV4),
+   ["secondary_dns"] = validateEmptyOr(validateIPV4),
+   ["informative_captive_portal_url"] = validateEmptyOr(validateSingleWord),
+   ["redirection_url"] = validateEmptyOr(validateSingleWord),
+   ["email_sender"] = validateSingleWord,
+   ["email_recipient"] = validateSingleWord,
+   ["email"] = validateSingleWord,
+   ["auth_token"] = validateSingleWord,
+   ["force_new"] = validateBool,
+   ["smtp_server"] = validateServer,
+   ["smtp_port"] = validateEmptyOr(validation_utils.validatePortRange),
+   ["smtp_username"] = validateEmptyOr(validateSingleWord),
+   ["smtp_password"] = validateEmptyOr(validatePassword),
+   ["use_proxy"] = validateBool,
+   ["use_startssl"] = validateBool,
+   ["influx_dbname"] = validateSingleWord,
+   ["influx_username"] = validateEmptyOr(validateSingleWord),
+   ["influx_password"] = validateEmptyOr(validateSingleWord),
+   ["influx_query_timeout"] = validateNumber,
+   ["host_to_scan_max_num_scans"] = validateNumber,
+   ["serial_key"] = validateSingleWord,
+   ["who"] = validateUsername,
+   ["subaction"] = validateSingleWord,
+   ["acl_port"] = validateSingleWord, -- ACL rules port filter: number, range ("80-90") or "*"
+   ["message_broker_username"] = validateEmptyOr(validateSingleWord),
+   ["message_broker_password"] = validateEmptyOr(validateSingleWord),
+   ["message_broker_url"] = validateEmptyOr(validateSingleWord),
+   ["message_broker_topics_list"] = validateEmptyOr(validateUnquoted),
 
    -- Multiple Choice
-   ["disaggregation_criterion"]                    = validateChoiceInline({"none", "vlan", "probe_ip", "iface_idx", "ingress_iface_idx", "ingress_vrf_id", "probe_ip_and_ingress_iface_idx"}),
-   ["ignored_interfaces"]                          = validateEmptyOr(validateListOfTypeInline(validateNumber)),
-   ["hosts_ndpi_timeseries_creation"]              = validateChoiceInline({"none", "per_protocol", "per_category", "both"}),
-   ["interfaces_ndpi_timeseries_creation"]         = validateChoiceInline({"none", "per_protocol", "per_category", "both"}),
-   ["l2_devices_ndpi_timeseries_creation"]         = validateChoiceInline({"none", "per_category"}),
-   ["slack_notification_severity_preference"]      = validateNotificationSeverity,
-   ["email_notification_severity_preference"]      = validateNotificationSeverity,
-   ["webhook_notification_severity_preference"]    = validateNotificationSeverity,
-   ["notification_severity_preference"]            = validateNotificationSeverity,
-   ["multiple_ldap_authentication"]                = validateChoiceInline({"local","ldap","ldap_local"}),
-   ["multiple_ldap_account_type"]                  = validateChoiceInline({"posix","samaccount"}),
-   ["toggle_logging_level"]                        = validateChoiceInline({"trace", "debug", "info", "normal", "warning", "error"}),
-   ["toggle_thpt_content"]                         = validateChoiceInline({"bps", "pps"}),
-   ["toggle_theme"]                                = validateChoiceInline({"default", "light", "dark"}),
-   ["toggle_host_mask"]                            = validateChoiceInline({"0", "1", "2"}),
-   ["topk_heuristic_precision"]                    = validateChoiceInline({"disabled", "more_accurate", "accurate", "aggressive"}),
-   ["timeseries_driver"]                           = validateChoiceInline({"rrd", "influxdb", "prometheus"}),
-   ["edition"]                                     = validateEmptyOr(validateChoiceInline({"community", "pro", "enterprise", "enterprise_m", "enterprise_l"})),
-   ["hosts_ts_creation"]                           = validateChoiceInline({"off", "light", "full"}),
-   ["ts_high_resolution"]                          = validateNumber,
-   ["lbd_hosts_as_macs"]                           = validateBool,
-   ["toggle_send_telemetry_data"]                  = validateBool,
-   ["toggle_emit_flow_alerts"]                     = validateBool,   
-   ["toggle_emit_host_alerts"]                     = validateBool,   
-   ["telemetry_email"]                             = validateSingleWord,
-   ["toggle_date_type"]                            = validateSingleWord,
+   ["disaggregation_criterion"] = validateChoiceInline({"none", "vlan", "exporter_ip", "iface_idx", "ingress_iface_idx",
+							"ingress_vrf_id", "exporter_ip_and_ingress_iface_idx",
+							-- Old keys (backward compatibility)
+							"probe_ip", "probe_ip_and_ingress_iface_idx"}),
+   ["ignored_interfaces"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+   ["hosts_ndpi_timeseries_creation"] = validateChoiceInline({"none", "per_protocol", "per_category", "both"}),
+   ["interfaces_ndpi_timeseries_creation"] = validateChoiceInline({"none", "per_protocol", "per_category", "both"}),
+   ["l2_devices_ndpi_timeseries_creation"] = validateChoiceInline({"none", "per_category"}),
+   ["exporters_ndpi_ts_creation"] = validateChoiceInline({"none", "per_protocol"}),
+   ["slack_notification_severity_preference"] = validateNotificationSeverity,
+   ["email_notification_severity_preference"] = validateNotificationSeverity,
+   ["webhook_notification_severity_preference"] = validateNotificationSeverity,
+   ["notification_severity_preference"] = validateNotificationSeverity,
+   ["multiple_ldap_authentication"] = validateChoiceInline({"local", "ldap", "ldap_local"}),
+   ["multiple_ldap_account_type"] = validateChoiceInline({"posix", "samaccount"}),
+   ["toggle_logging_level"] = validateChoiceInline({"trace", "debug", "info", "normal", "warning", "error"}),
+   ["toggle_thpt_content"] = validateChoiceInline({"bps", "pps"}),
+   ["toggle_theme"] = validateChoiceInline({"default", "white", "dark"}),
+   ["toggle_host_mask"] = validateChoiceInline({"0", "1", "2"}),
+   ["topk_heuristic_precision"] = validateChoiceInline({"enabled", "disabled"}),
+   ["timeseries_driver"] = validateChoiceInline({"rrd", "influxdb", "clickhouse"}),
+   ["split_ts_direction"] = validateChoiceInline({"total", "rx_tx"}),
+   ["edition"] = validateEmptyOr(validateChoiceInline(
+				    {"community", "pro", "enterprise", "enterprise_m", "enterprise_l"})),
+   ["hosts_ts_creation"] = validateChoiceInline({"off", "light", "full"}),
+   ["ts_high_resolution"] = validateNumber,
+   ["lbd_hosts_as_macs"] = validateBool,
+   ["toggle_emit_flow_alerts"] = validateBool,
+   ["toggle_emit_host_alerts"] = validateBool,
+   ["toggle_issues"] = validateBool,
+   ["issues_min_severity"] = validateNumber,
+   ["issues_max_open"] = validateNumber,
+   ["issues_reopen_window"] = validateNumber,
+   ["toggle_date_type"] = validateSingleWord,
 
+   ["exporters_ts_resolution"] = validateNumber,
+   ["snmp_devices_exporters_rrd"] = validateNumber,
 
+   -- MFA
+   ["totp"] = validateNumber,
+
+   -- PassKey
+   ["challenge"] = validateSingleWord,
+   ["cred_id"] = validateSingleWord,
+   ["client_data"] = validateSingleWord,
+   ["cred_name"] = validateSingleWord,
+   ["rd_id"] = validateSingleWord,
+   ["rp_id"] = validateSingleWord,
+   ["att_obj"] = validateSingleWord,
+   
    -- Other
-   ["send_test_email"]                             = validateEmpty,
-   ["send_test_slack"]                             = validateEmpty,
-   ["send_test_webhook"]                           = validateEmpty,
-   ["send_test_elasticsearch"]                     = validateEmpty,
-   ["network_discovery_interval"]                  = validateNumber,
-   ["blog_notification_id"]                        = validateNumber,
-   ["captive_portal_id_method"]                    = validateChoiceInline({"mac", "ip"}),
+   ["send_test_email"] = validateEmpty,
+   ["send_test_slack"] = validateEmpty,
+   ["send_test_webhook"] = validateEmpty,
+   ["send_test_elasticsearch"] = validateEmpty,
+   ["network_discovery_interval"] = validateNumber,
+   ["blog_notification_id"] = validateNumber,
+   ["captive_portal_id_method"] = validateChoiceInline({"mac", "ip"}),
+
+   -- Save columns config new tables
+   ["visible_columns_ids"] = validateColumnsIds,
+   ["table_id"] = validateSingleWord,
 
    -- Error report
-   ["message"]                                     = validateSingleWord,
-   ["script_path"]                                 = validateLuaScriptPath,
-   ["error_message"]                               = validateMessage,
-   ["reason"]                                      = validateSingleWord,
+   ["message"] = validateSingleWord,
+   ["script_path"] = validateLuaScriptPath,
+   ["error_message"] = validateMessage,
+   ["reason"] = validateSingleWord,
 
---
+   --
+   ["assets"] = validateMessage,
+   
+   --
+   ["is_snmp"] = validateBool,
 
--- LIVE CAPTURE
-   ["capture_id"]              = validateNumber,                -- Live capture id
-   ["duration"]                = validateNumber,                --
-   ["bpf_filter"]              = validateEmptyOr(validateUnquoted), --
+   -- LIVE CAPTURE
+   ["capture_id"] = validateNumber, -- Live capture id
+   ["duration"] = validateEmptyOr(validateListOfTypeInline(validateFilters(validateNumber))),
+   ["bpf_filter"] = validateEmptyOr(validateUnquoted), --
 
--- TRAFFIC RECORDING
-   ["disk_space"]                                  = validateNumber,
-   ["file_id"]                                     = validateNumber,
-   ["job_action"]                                  = validateExtractionJobAction,
-   ["job_id"]                                      = validateNumber,
-   ["n2disk_license"]                              = {licenseCleanup, validateLicense},
-   ["record_traffic"]                              = validateBool,
-   ["max_extracted_pcap_bytes"]                    = validateNumber,
-   ["traffic_recording_provider"]                  = validateTrafficRecordingProvider,
-   ["dismiss_external_providers_reminder"]         = validateBool,
-   ["dismiss_missing_geoip_reminder"]              = validateBool,
---
+   -- TRAFFIC RECORDING
+   ["snaplen"] = validateNumber,
+   ["disk_space"] = validateNumber,
+   ["smart_disk_space"] = validateNumber,
+   ["max_file_size"] = validateEmptyOr(validateNumber),
+   ["file_id"] = validateNumber,
+   ["job_action"] = validateExtractionJobAction,
+   ["job_id"] = validateNumber,
+   ["n2disk_license"] = {licenseCleanup, validateLicense},
+   ["record_traffic"] = validateBool,
+   ["flow_export"] = validateBool,
+   ["smart_record_traffic"] = validateBool,
+   ["max_extracted_pcap_bytes"] = validateNumber,
+   ["max_extracted_pcap_files"] = validateNumber,
+   ["traffic_recording_provider"] = validateTrafficRecordingProvider,
+   ["dismiss_external_providers_reminder"] = validateBool,
+   ["dismiss_missing_geoip_reminder"] = validateBool,
+   --
 
--- TOP STATS
-   ["only_data"]               = validateEmptyOr(validateBool),                  -- Used by top talkers, if true then only important data is returned
---   
+   -- TOP STATS
+   ["only_data"] = validateEmptyOr(validateBool), -- Used by top talkers, if true then only important data is returned
+   --
 
--- PAGE SPECIFIC
-   ["hour"]                    = validateEmptyOr(validateSingleWord),
-   ["unicast_only"]           = validateBool,
-   ["iflocalstat_mode"]        = validateIfaceLocalStatsMode,   -- A mode for iface_local_stats.lua
-   ["clisrv"]                  = validateClientOrServer,        -- Client or Server filter
-   ["report"]                  = validateReportMode,            -- A mode for traffic report
-   ["use_server_timezone"]     = validateBool,
-   ["report_zoom"]             = validateBool,                  -- True if we are zooming in the report
-   ["format"]                  = validatePrintFormat,           -- a print format
-   ["nedge_config_action"]     = validatenEdgeAction,           -- system_setup_ui_utils.lua
-   ["fav_action"]              = validateFavouriteAction,       -- get_historical_favourites.lua
-   ["favourite_type"]          = validateFavouriteType,         -- get_historical_favourites.lua
-   ["locale"]                  = validateCountry,               -- locale used in test_locale.lua
-   ["render"]                  = validateBool,                  -- True if report should be rendered
-   ["printable"]               = validateBool,                  -- True if report should be printable
-   ["daily"]                   = validateBool,                  -- used by report.lua
-   ["json"]                    = validateBool,                  -- True if json output should be generated
-   ["extended"]                = validateBool,                  -- Flag for extended report
-   ["tracked"]                 = validateNumber,                --
-   ["ajax_format"]             = validateAjaxFormat,            -- iface_hosts_list
-   ["host_stats_flows"]        = validateBool,                  -- True if host_get_json should return statistics regarding host flows
-   ["showall"]                 = validateBool,                  -- report.lua
-   ["addvlan"]                 = validateBool,                  -- True if VLAN must be added to the result
-   ["http_mode"]               = validateHttpMode,              -- HTTP mode for host_http_breakdown.lua
-   ["refresh"]                 = validateNumber,                -- top flow refresh in seconds, index.lua
-   ["always_show_hist"]        = validateBool,                  -- host_details.lua
-   ["host_stats"]              = validateBool,                  -- host_get_json
-   ["captive_portal_users"]    = validateBool,                  -- to show or hide captive portal users
-   ["long_names"]              = validateBool,                  -- get_hosts_data
-   ["id_to_delete"]            = validateIdToDelete,            -- alert_utils.lua, alert ID to delete
-   ["to_delete"]               = validateLocalGlobal,           -- alert_utils.lua, set if alert configuration should be dropped
-   ["SaveAlerts"]              = validateEmpty,                 -- alert_utils.lua, set if alert configuration should change
-   ["host_pool_id"]            = validateNumber,                -- change_user_prefs, new pool id for host
-   ["old_host_pool_id"]        = validateNumber,                -- change_user_prefs, old pool id for host
-   ["del_l7_proto"]            = validateShapedElement,         -- if_stats.lua, ID of the protocol to delete from rule
-   ["target_pool"]             = validateNumber,                -- if_stats.lua, ID of the pool to perform the action on
-   ["add_shapers"]             = validateEmpty,                 -- if_stats.lua, set when adding shapers
-   ["delete_shaper"]           = validateNumber,                -- shaper ID to delete
-   ["empty_pool"]              = validateNumber,                -- host_pools.lua, action to empty a pool by ID
-   ["pool_to_delete"]          = validateNumber,                -- host_pools.lua, pool ID to delete
-   ["edit_pools"]              = validateEmpty,                 -- host_pools.lua, set if pools are being edited
-   ["member_to_delete"]        = validateMemberRelaxed,         -- host_pools.lua, member to delete from pool
-   ["sampling_rate"]           = validateEmptyOr(validateNumber),            -- if_stats.lua
-   ["resetstats_mode"]         = validateResetStatsMode,        -- reset_stats.lua
-   ["snmp_action"]             = validateSnmpAction,            -- snmp specific
-   ["snmp_status"]             = validateSNMPstatus,            -- snmp specific status (up: 1, down: 2, testing: 3)
-   ["snmp_admin_status"]       = validateSNMPstatus,            -- same as snmp_status but for the admin status
-   ["snmp_if_type"]            = validateNumber,                -- snmp interface type (see snmp_utils.lua fnmp_iftype)
-   ["iftype_filter"]           = validateSingleWord,            -- SNMP iftype filter name
-   ["host_quota"]              = validateEmptyOr(validateNumber),            -- max traffi quota for host
-   ["allowed_interface"]       = validateEmptyOr(validateInterface),         -- the interface an user is allowed to configure
-   ["allowed_networks"]        = validateNetworksList,          -- a list of networks the user is allowed to monitor
-   ["switch_interface"]        = validateInterface,             -- a new active ntopng interface
-   ["edit_members"]            = validateEmpty,                 -- set if we are editing pool members
-   ["trigger_alerts"]          = validateBool,                  -- true if alerts should be active for this entity
-   ["show_advanced_prefs"]     = validateBool,                  -- true if advanced preferences should be shown
-   ["ifSpeed"]                 = validateEmptyOr(validateNumber), -- interface speed
-   ["scaling_factor"]          = validateEmptyOr(validateNumber), -- interface scaling factor
-   ["drop_host_traffic"]       = validateBool,                  -- to drop an host traffic
-   ["lifetime_limited"]        = validateEmptyOr(validateOnOff), -- set if user should have a limited lifetime
-   ["lifetime_unlimited"]      = validateEmptyOr(validateOnOff), -- set if user should have an unlimited lifetime
-   ["edit_profiles"]           = validateEmpty,                 -- set when editing traffic profiles
-   ["edit_policy"]             = validateEmpty,                 -- set when editing policy
-   ["edit_device_policy"]      = validateEmpty,                 -- set when editing device policy
-   ["delete_user"]             = validateSingleWord,
-   ["drop_flow_policy"]        = validateBool,                  -- true if target flow should be dropped
-   ["traffic_type"]            = validateBroadcastUnicast,      -- flows_stats.lua
-   ["alert_type"]              = validateAlertType,            -- flows_stats.lua
-   ["flow_status"]             = validateAlertType,            -- flows_stats.lua
-   ["alert_type_severity"]     = validateAlertTypeSeverity,    -- flows_stats.lua
-   ["alert_type_num"]          = validateAlertTypeNumber,      -- charts
-   ["tcp_flow_state"]          = validateTCPFlowState,          -- flows_stats.lua
-   ["traffic_profile"]         = http_lint.validateTrafficProfile, -- flows_stats.lua
-   ["include_unlimited"]       = validateBool,                  -- pool_details_ndpi.lua
-   ["policy_preset"]           = validateEmptyOr(validatePolicyPreset), -- a traffic bridge policy set
-   ["members_filter"]          = validateMembersFilter,         -- host_pools.lua
-   ["devices_mode"]            = validateDevicesMode,           -- macs_stats.lua
-   ["flow_mode"]               = validateFlowMode   ,           -- if_stats.lua
-   ["unassigned_devices"]      = validateUnassignedDevicesMode, -- unknown_device.lua
-   ["delete_all_policies"]     = validateEmpty,                 -- traffic policies
-   ["safe_search"]             = validateBool,                  -- users
-   ["device_protocols_policing"] = validateBool,                -- users
-   ["forge_global_dns"]        = validateBool,                  -- users
-   ["default_policy"]          = validateNumber,                -- users
-   ["lan_interfaces"]          = validateListOfTypeInline(validateNetworkInterface),
-   ["wan_interfaces"]          = validateListOfTypeInline(validateNetworkInterface),
-   ["static_route_name"]       = validateStaticRouteName,
-   ["old_static_route_name"]   = validateStaticRouteName,
-   ["delete_static_route"]     = validateStaticRouteName,
-   ["gateway_name"]            = validateGatewayName,
-   ["old_gateway_name"]        = validateGatewayName,
-   ["delete_gateway"]          = validateGatewayName,
-   ["ping_address"]            = validateIPV4,
-   ["policy_name"]             = validateRoutingPolicyName,
-   ["old_policy_name"]         = validateRoutingPolicyName,
-   ["delete_policy"]           = validateRoutingPolicyName,
-   ["policy_id"]               = validateNumber,
-   ["timezone_name"]           = validateTimeZoneName,
-   ["custom_date_str"]         = validateDate,
-   ["custom_date_str_orig"]    = validateDate,
-   ["global_dns_preset"]       = validateSingleWord,
-   ["child_dns_preset"]        = validateSingleWord,
-   ["global_primary_dns"]      = validateIPV4,
-   ["global_secondary_dns"]    = validateEmptyOr(validateIPV4),
-   ["child_primary_dns"]       = validateIPV4,
-   ["child_secondary_dns"]     = validateEmptyOr(validateIPV4),
-   ["lan_recovery_ip"]         = validateIPV4,
-   ["lan_recovery_netmask"]    = validateIPV4,
-   ["dhcp_server_enabled"]     = validateBool,
-   ["ntp_sync_enabled"]        = validateBool,
-   ["activate_remote_assist"]  = validateBool,
-   ["dhcp_first_ip"]           = validateIPV4,
-   ["dhcp_last_ip"]            = validateIPV4,
-   ["factory"]                 = validateBool,
-   ["factory_reset"]           = validateEmpty,
-   ["data_reset"]              = validateEmpty,
-   ["policy_filter"]           = validateEmptyOr(validateNumber),
-   ["hostname"]                = validateSingleWord,
-   ["delete"]                  = validateEmpty,
-   ["delete_active_if_data"]   = validateEmpty,
+   -- PAGE SPECIFIC
+   ["hosts_category"] = validateNumber,
+   ["hour"] = validateEmptyOr(validateSingleWord),
+   ["unicast_only"] = validateBool,
+   ["iflocalstat_mode"] = validateIfaceLocalStatsMode, -- A mode for iface_local_stats.lua
+   ["clisrv"] = validateClientOrServer, -- Client or Server filter
+   ["client"] = validateHost,
+   ["server"] = validateHost,
+   ["report"] = validateReportMode, -- A mode for traffic report
+   ["use_server_timezone"] = validateBool,
+   ["report_zoom"] = validateBool, -- True if we are zooming in the report
+   ["format"] = validatePrintFormat, -- a print format
+   ["nedge_config_action"] = validatenEdgeAction, -- system_setup_ui_utils.lua
+   ["fav_action"] = validateFavouriteAction, -- get_historical_favourites.lua
+   ["favourite_type"] = validateFavouriteType, -- get_historical_favourites.lua
+   ["locale"] = validateCountry, -- locale used in test_locale.lua
+   ["render"] = validateBool, -- True if report should be rendered
+   ["printable"] = validateBool, -- True if report should be printable
+   ["daily"] = validateBool, -- used by report.lua
+   ["json"] = validateBool, -- True if json output should be generated
+   ["extended"] = validateBool, -- Flag for extended report
+   ["tracked"] = validateNumber, --
+   ["ajax_format"] = validateAjaxFormat, -- iface_hosts_list
+   ["host_stats_flows"] = validateBool, -- True if host_get_json should return statistics regarding host flows
+   ["showall"] = validateBool, -- report.lua
+   ["addvlan"] = validateBool, -- True if VLAN must be added to the result
+   ["refresh"] = validateNumber, -- top flow refresh in seconds, index.lua
+   ["always_show_hist"] = validateBool, -- host_details.lua
+   ["host_stats"] = validateBool, -- host_get_json
+   ["captive_portal_users"] = validateBool, -- to show or hide captive portal users
+   ["long_names"] = validateBool, -- get_hosts_data
+   ["id_to_delete"] = validateIdToDelete, -- alert_utils.lua, alert ID to delete
+   ["to_delete"] = validateLocalGlobal, -- alert_utils.lua, set if alert configuration should be dropped
+   ["SaveAlerts"] = validateEmpty, -- alert_utils.lua, set if alert configuration should change
+   ["host_pool_id"] = validateNumber, -- change_user_prefs, new pool id for host
+   ["host_pool_label"] = validateSingleWord,
+   ["old_host_pool_id"] = validateNumber, -- change_user_prefs, old pool id for host
+   ["del_l7_proto"] = validateShapedElement, -- if_stats.lua, ID of the protocol to delete from rule
+   ["target_pool"] = validateNumber, -- if_stats.lua, ID of the pool to perform the action on
+   ["add_shapers"] = validateEmpty, -- if_stats.lua, set when adding shapers
+   ["delete_shaper"] = validateNumber, -- shaper ID to delete
+   ["empty_pool"] = validateNumber, -- host_pools.lua, action to empty a pool by ID
+   ["pool_to_delete"] = validateNumber, -- host_pools.lua, pool ID to delete
+   ["edit_pools"] = validateEmpty, -- host_pools.lua, set if pools are being edited
+   ["member_to_delete"] = validateMemberRelaxed, -- host_pools.lua, member to delete from pool
+   ["sampling_rate"] = validateEmptyOr(validateNumber), -- if_stats.lua
+   ["resetstats_mode"] = validateResetStatsMode, -- reset_stats.lua
+   ["snmp_action"] = validateSnmpAction, -- snmp specific
+   ["snmp_status"] = validateSNMPstatus, -- snmp specific status (up: 1, down: 2, testing: 3)
+   ["snmp_admin_status"] = validateSNMPstatus, -- same as snmp_status but for the admin status
+   ["snmp_if_type"] = validateNumber, -- snmp interface type (see snmp_utils.lua fnmp_iftype)
+   ["iftype_filter"] = validateSingleWord, -- SNMP iftype filter name
+   ["snmp_interface_role"] = validateSingleWord, -- SNMP Interface Role
+   ["host_quota"] = validateEmptyOr(validateNumber), -- max traffi quota for host
+   ["allowed_interface"] = validateEmptyOr(validateInterface), -- the interface an user is allowed to configure
+   ["allowed_networks"] = validateNetworksList, -- a list of networks the user is allowed to monitor
+   ["allowed_host_pools"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+   ["switch_interface"] = validateInterface, -- a new active ntopng interface
+   ["switch_instance"] = validateInterface, -- a new active ntopng infrastructure instance
+   ["qos_class_id"] = validateNumber,
+   ["edit_members"] = validateEmpty, -- set if we are editing pool members
+   ["trigger_alerts"] = validateBool, -- true if alerts should be active for this entity
+   ["show_advanced_prefs"] = validateBool, -- true if advanced preferences should be shown
+   ["pref_section"] = validateSingleWord,  -- section id for POST /set/ntopng/preferences
+   ["pref_key"]     = validateSingleWord,  -- entry key for POST /set/ntopng/preferences
+   ["pref_value"]   = {jsonCleanup, validatePcap},        -- value for POST /set/ntopng/preferences (free-form, may contain API keys/URLs)
+   ["ifSpeed"] = validateEmptyOr(validateNumber), -- interface speed
+   ["scaling_factor"] = validateEmptyOr(validateNumber), -- interface scaling factor
+   ["drop_host_traffic"] = validateBool, -- to drop an host traffic
+   ["drop_host_traffic_policy"] = validateBool, -- to drop an host traffic
+   ["drop_host_active_flows_policy"] = validateBool, -- to drop active host traffic flows
+   ["lifetime_limited"] = validateEmptyOr(validateOnOff), -- set if user should have a limited lifetime
+   ["lifetime_unlimited"] = validateEmptyOr(validateOnOff), -- set if user should have an unlimited lifetime
+   ["edit_profiles"] = validateEmpty, -- set when editing traffic profiles
+   ["edit_policy"] = validateEmpty, -- set when editing policy
+   ["edit_device_policy"] = validateEmpty, -- set when editing device policy
+   ["delete_user"] = validateSingleWord,
+   ["drop_flow_policy"] = validateBool, -- true if target flow should be dropped
+   ["drop_host_policy"] = validateBool, -- true if target flow should be dropped
+   ["traffic_type"] = validateBroadcastUnicast, -- flows_stats.lua
+   ["alert_type"] = validateAlertTypeAndSeverity, -- flows_stats.lua
+   ["flow_status"] = validateAlertType, -- flows_stats.lua
+   ["alert_type_severity"] = validateAlertTypeSeverity, -- flows_stats.lua
+   ["alert_type_num"] = validateAlertTypeNumber, -- charts
+   ["tcp_flow_state"] = validateTCPFlowState, -- flows_stats.lua
+   ["traffic_profile"] = http_lint.validateTrafficProfile, -- flows_stats.lua
+   ["include_unlimited"] = validateBool, -- pool_details_ndpi.lua
+   ["policy_preset"] = validateEmptyOr(validatePolicyPreset), -- a traffic bridge policy set
+   ["members_filter"] = validateMembersFilter, -- host_pools.lua
+   ["devices_mode"] = validateDevicesMode, -- macs_stats.lua
+   ["flow_mode"] = validateFlowMode, -- if_stats.lua
+   ["by"] = validateChoiceInline({"application", "category"}), -- if_stats.lua?page=ndpi grouping (page-interface-applications.vue)
+   ["delete_all_policies"] = validateEmpty, -- traffic policies
+   ["safe_search"] = validateBool, -- users
+   ["block_blacklisted"] = validateBool, -- users
+   ["max_flow_size"] = validateNumber, -- users
+   ["dynamic_blacklist"] = validateBool, -- users
+   ["flush_dynamic_blacklist"] = validateEmpty, -- users
+   ["device_protocols_policing"] = validateBool, -- users
+   ["forge_global_dns"] = validateBool, -- users
+   ["lan_interfaces"] = validateListOfTypeInline(validateNetworkInterface),
+   ["wan_interfaces"] = validateListOfTypeInline(validateNetworkInterface),
+   ["static_route_name"] = validateStaticRouteName,
+   ["old_static_route_name"] = validateStaticRouteName,
+   ["delete_static_route"] = validateStaticRouteName,
+   ["gateway_name"] = validateGatewayName,
+   ["old_gateway_name"] = validateGatewayName,
+   ["interface_name"] = validateGatewayName,
+   ["old_interface_name"] = validateGatewayName,
+   ["delete_gateway"] = validateGatewayName,
+   ["ping_address"] = validateIPV4,
+   ["flowdev_ip"] = validateIPV4,
+   ["device_ip"] = validateIPV4,
+   ["policy_name"] = validateRoutingPolicyName,
+   ["old_policy_name"] = validateRoutingPolicyName,
+   ["delete_policy"] = validateRoutingPolicyName,
+   ["policy_id"] = validateNumber,
+   ["timezone_name"] = validateTimeZoneName,
+   ["custom_date_str"] = validateDate,
+   ["custom_date_str_orig"] = validateDate,
+   ["global_dns_preset"] = validateSingleWord,
+   ["child_dns_preset"] = validateSingleWord,
+   ["global_primary_dns"] = validateIPV4,
+   ["global_secondary_dns"] = validateEmptyOr(validateIPV4),
+   ["child_primary_dns"] = validateIPV4,
+   ["child_secondary_dns"] = validateEmptyOr(validateIPV4),
+   ["lan_recovery_ip"] = validateIPV4,
+   ["lan_recovery_netmask"] = validateIPV4,
+   ["dhcp_server_enabled"] = validateBool,
+   ["ntp_sync_enabled"] = validateBool,
+   ["is_live"] = validateBool,
+   ["activate_remote_assist"] = validateBool,
+   ["dhcp_first_ip"] = validateIPV4,
+   ["dhcp_last_ip"] = validateIPV4,
+   ["factory"] = validateBool,
+   ["factory_reset"] = validateEmpty,
+   ["data_reset"] = validateEmpty,
+   ["rescan_interfaces"] = validateEmpty,
+   ["policy_filter"] = validateEmptyOr(validateNumber),
+   ["hostname"] = validateSingleWord,
+   ["delete"] = validateEmpty,
+   ["delete_active_if_data"] = validateEmpty,
    ["delete_inactive_if_data"] = validateEmpty,
    ["delete_inactive_if_data_system"] = validateEmpty,
-   ["delete_active_if_data_system"] =   validateEmpty,
-   ["reset_quotas"]            = validateEmpty,
-   ["bandwidth_allocation"]    = validateChoiceInline({"min_guaranteed", "max_enforced"}),
-   ["quotas_control"]           = validateChoiceInline({"daily", "weekly", "monthly"}),
-   ["bind_to"]                 = validateChoiceInline({"lan", "any"}),
-   ["slow_pass_shaper_perc"]   = validateNumber,
+   ["delete_active_if_data_system"] = validateEmpty,
+   ["clickhouse"] = validateBool,
+   ["datadir"] = validateBool,
+   ["reset_quotas"] = validateEmpty,
+   ["bandwidth_allocation"] = validateChoiceInline({"min_guaranteed", "max_enforced"}),
+   ["quotas_control"] = validateChoiceInline({"daily", "weekly", "monthly"}),
+   ["bind_to"] = validateChoiceInline({"lan", "any"}),
+   ["slow_pass_shaper_perc"] = validateNumber,
    ["slower_pass_shaper_perc"] = validateNumber,
-   ["skip_critical"]           = validateBool,
-   ["reboot"]                  = validateEmpty,
-   ["poweroff"]                = validateEmpty,
-   ["operating_mode"]          = validateOperatingMode,
-   ["per_ip_pass_rate"]        = validateNumber,
-   ["per_ip_slow_rate"]        = validateNumber,
-   ["per_ip_slower_rate"]      = validateNumber,
-   ["user_policy"]             = validateNumber,
-   ["hide_from_top"]           = validateNetworksWithVLANList,
-   ["gw_macs"]                 = validateMacList,
-   ["top_hidden"]              = validateBool,
-   ["packets_drops_perc"]      = validateEmptyOr(validateNumber),
-   ["operating_system"]        = validateNumber,
-   ["action"]                  = validateSingleWord, -- generic
-   ["table"]                   = validateSingleWord,
-   ["columns"]                 = validateListOfTypeInline(validateNumber),
-   ["ts_schema"]               = validateSingleWord,
-   ["ts_query"]                = validateListOfTypeInline(validateUnquoted),
-   ["ts_compare"]              = validateZoom,
-   ["no_fill"]                 = validateBool,
-   ["detail_view"]             = validateSingleWord,
-   ["initial_point"]           = validateBool,
-   ["extract_now"]             = validateBool,
-   ["custom_hosts"]            = validateListOfTypeInline(validateSingleWord),
-   ["assistance_key"]          = validateUnquoted,
-   ["assistance_community"]    = validateUnquoted,
-   ["allow_admin_access"]      = validateBool,
-   ["accept_tos"]              = validateBool,
-   ["no_timeout"]              = validateBool,
-   ["bubble_mode"]             = validateNumber,
-   ["supernode"]               = validateSingleWord,
-   ["ts_aggregation"]          = validateChoiceInline({"raw", "1h", "1d"}),
-   ["fw_rule_id"]              = validateSingleWord,
-   ["external_port"]           = validatePortRange,
-   ["internal_port"]           = validatePortRange,
-   ["internal_ip"]             = validateIPV4,
-   ["fw_proto"]                = validateChoiceInline({"tcp", "udp", "both"}),
-   ["wan_interface"]           = validateNetworkInterface,
-   ["list_name"]               = validateUnquoted,
-   ["list_enabled"]            = validateOnOff,
-   ["list_update"]             = validateNumber,
-   ["dhcp_ranges"]             = validateListOfTypeInline(validateIpRange),
-   ["old_dhcp_ranges"]         = validateListOfTypeInline(validateIpRange),
-   ["icmp_type"]               = validateNumber,
-   ["icmp_cod"]                = validateNumber,
-   ["dscp"]                    = validateNumber,
-   ["snmp_timeout_sec"]        = validateNumber,
-   ["hosts_only"]              = validateBool,
-   ["referal_url"]             = validateUnquoted,
-   ["disabled_status"]         = validateListOfTypeInline(validateNumber),
-   ["redis_command"]           = validateSingleWord,
-   ["flow_calls_drops"]        = validateOnOff,
+   ["skip_critical"] = validateBool,
+   ["reboot"] = validateEmpty,
+   ["poweroff"] = validateEmpty,
+   ["operating_mode"] = validateOperatingMode,
+   ["per_ip_pass_rate"] = validateNumber,
+   ["per_ip_slow_rate"] = validateNumber,
+   ["per_ip_slower_rate"] = validateNumber,
+   ["user_policy"] = validateNumber,
+   ["hide_from_top"] = validateNetworksWithVLANList,
+   ["gw_macs"] = validateMacList,
+   ["top_hidden"] = validateBool,
+   ["packets_drops_perc"] = validateEmptyOr(validateNumber),
+   ["operating_system"] = validateNumber,
+   ["action"] = validateSingleWord, -- generic
+   ["table"] = validateSingleWord,
+   ["columns"] = validateUnchecked,
+   ["devices"] = {jsonCleanup, validateJSON},
+   ["devices_csv"] = {jsonCleanup, validateUnquoted},
+   ["sites_csv"] = validateUnquoted,
+   ["ts_schema"] = validateSingleWord,
+   ["ts_filter"] = validateSingleWord,
+   ["metric"] = validateSingleWord,
+   ["ts_query"] = validateListOfTypeInline(validateUnquoted),
+   ["ts_compare"] = validateZoom,
+   -- batch.lua POST body: queries array and per-query fields
+   ["queries"]   = validateUnchecked,   -- array of {id, ts_schema, ts_query, ...}
+   ["no_fill"] = validateBool,
+   ["detail_view"] = validateSingleWord,
+   ["initial_point"] = validateBool,
+   ["extract_now"] = validateBool,
+   ["custom_hosts"] = validateListOfTypeInline(validateSingleWord),
+   ["custom_rules"] = validateListOfTypeInline(validateSingleWord),
+   ["assistance_key"] = validateUnquoted,
+   ["assistance_community"] = validateUnquoted,
+   ["allow_admin_access"] = validateBool,
+   ["accept_tos"] = validateBool,
+   ["no_timeout"] = validateBool,
+   ["bubble_mode"] = validateNumber,
+   ["supernode"] = validateSingleWord,
+   ["ts_aggregation"] = validateChoiceInline({"raw", "1h", "1d"}),
+   ["fw_rule_id"] = validateSingleWord,
+   ["external_port"] = validation_utils.validatePortRange,
+   ["internal_port"] = validation_utils.validatePortRange,
+   ["internal_ip"] = validateIPV4,
+   ["fw_proto"] = validateChoiceInline({"tcp", "udp", "both"}),
+   ["wan_interface"] = validateNetworkInterface,
+   ["list_name"] = validateUnquoted,
+   ["list_enabled"] = validateOnOff,
+   ["list_update"] = validateNumber,
+   ["dhcp_ranges"] = validateListOfTypeInline(validateIpRange),
+   ["old_dhcp_ranges"] = validateListOfTypeInline(validateIpRange),
+   ["icmp_type"] = validateNumber,
+   ["icmp_cod"] = validateNumber,
+   ["dscp"] = validateNumber,
+   ["snmp_timeout_sec"] = validateNumber,
+   ["hosts_only"] = validateBool,
+   ["referal_url"] = validateUnquoted,
+   ["disabled_status"] = validateListOfTypeInline(validateNumber),
+   ["redis_command"] = validateSingleWord,
+   ["flow_calls_drops"] = validateOnOff,
    ["global_flow_calls_drops"] = validateOnOff,
-   ["syslog_producer"]         = validateSingleWord,
-   ["syslog_producer_host"]    = validateSingleWord,
-   ["old_syslog_producer"]     = validateSingleWord,
-   ["old_syslog_producer_host"]= validateSingleWord,
-   ["query_preset"]            = validateEmptyOr(validateSingleWord),
+   ["syslog_producer"] = validateSingleWord,
+   ["syslog_producer_host"] = validateSingleWord,
+   ["old_syslog_producer"] = validateSingleWord,
+   ["old_syslog_producer_host"] = validateSingleWord,
+   ["query_preset"] = validateEmptyOr(validateSingleWord),
+   ["new_charts"] = validateBool,
+   ["sankey_version"] = validateNumber,
+   ["blacklist_name"] = validateUnquoted,
+   ["reset_url"] = validateBool,
+   ["as"] = validateNumber,
+   ["exporter_source_id"] = validateUUID,
+   ["probe_uuid"] = validateUUID,
+   ["probe_source_id"] = validateUUID,
+   ["telemetry"] = validateBool,
+   ["preset"] = validateSingleWord,
+    ["rules"] = validateUnquoted,
+    ["include_empty_ts"] = validateBool,
 
-   -- Containers
-   ["pod"]                     = validateSingleWord,
-   ["container"]               = validateSingleWord,
+    -- tags
+    ["tag_id"] = validateNumber,
+    ["tag_name"] = validateUnquoted,
+    ["tag_protocols"] = validateListOfTypeInline(validateNumber),
+    ["tag_risks"] = validateListOfTypeInline(validateNumber),
+    ["tag_ttl"] = validateNumber,
+    ["color"] = validateSingleWord,
+    ["host_tags_bitmap"] = validateNumber, -- 64-bit host tag bitmap
 
-   -- Host Pools / users associations
-   ["associations"]            = { jsonCleanup, validateAssociations },
+    -- BGP
+    ["bgp_ip_address"] = validateEmptyOr(validateIpAddress),
+    ["bgp_port"] = validateEmptyOr(validatePort),
+    ["prefix_changes_endpoint"] = validateEmptyOr(validateZMQEndpoint),
 
-   -- json POST DATA
-   ["payload"]                 = { jsonCleanup, validateJSON },
-   ["JSON"]                    = { jsonCleanup, validateJSON },
+    -- exporter sites
+    ["latitude"] = validateSingleWord,
+    ["longitude"] = validateSingleWord,
+    ["site"] = validateSingleWord,
+    ["next_hop_site"] = validateSingleWord,
+    ["site_id"] = validateSingleWord,
+    ["site_parent"] = validateNumber,
+    ["site_name"] = validateUnquoted,
+    ["site_description"] = validateUnquoted,
+    ["site_networks"] = validateNetworksList,
 
-   -- See https://github.com/ntop/ntopng/issues/4275
-   ["csrf"]               = validateSingleWord,
+    -- sites dashboard
+    ["snmp_device_ip"] = validateIpAddress,
 
-   -- server side Datatables 
-   ["start"]              = validateNumber,
-   ["sort"]               = validateSingleWord,
-   ["order"]              = validateSortOrder,
-   ["length"]             = validateNumber,
-   ["draw"]               = validateNumber,
-   ["visible_columns"]          = validateEmptyOr(validateListOfTypeInline(validateSingleWord))
+    -- nEdge policy
+    ["default_policy"] = validatePolicy, -- users, nedge policies
+    ["policy"] = validatePolicy, -- nedge policies
+    ["src_type"] = validateSingleWord,
+    ["dst_type"] = validateSingleWord,
+    ["src_value"] = validatePolicyValue,
+    ["dst_value"] = validatePolicyValue,
+    ["bidirectional"] = validateBool,
+
+    -- nEdge repeaters
+    ["repeater_type"] = validateSingleWord,
+    ["repeater_id"] = validateNumber,
+    ["interfaces"] = validateSingleWord,
+    ["restricted_interfaces"] = validateSingleWord,
+    ["interface_details"] = validateUnquoted,
+    ["restricted_interface_details"] = validateUnquoted,
+    ["keep_src_address"] = validateBool,
+
+    -- Containers
+    ["pod"] = validateSingleWord,
+    ["container"] = validateSingleWord,
+
+    -- Host Pools / users associations
+    ["associations"] = {jsonCleanup, validateAssociations},
+    ["host_visibility"] = validateSingleWord,
+    ["hide"] = validateBool,
+    ["pool_CSV"]  = {jsonCleanup, validatePoolCSV},
+    ["is_csv"] = validateBool,
+
+    -- json POST DATA
+    ["payload"] = {jsonCleanup, validateJSON},
+    ["JSON"] = {jsonCleanup, validateJSON},
+    ["host_threshold_rules"] = {jsonCleanup, validateJSON},
+    ["content"] = validateUnchecked,
+
+    -- POST pcap
+    ["pcap"] = validatePcap,
+    ["uploaded_file"] = validateUploadedFile,
+    ["create_new_iface"] = validateBool,
+
+    -- See https://github.com/ntop/ntopng/issues/4275
+    ["csrf"] = validateSingleWord,
+
+    -- cloud
+    ["params"] = {jsonCleanup, validateJSON},
+    ["msg"] = {jsonCleanup, validateJSON},
+
+    ["create_new_interface"] = validateBool,
+
+    -- server side Datatables
+    ["start"] = validateNumber,
+    ["sort"] = validateSingleWord,
+    ["order"] = validateSortOrder,
+    ["length"] = validateNumber,
+    ["draw"] = validateNumber,
+    ["visible_columns"] = validateEmptyOr(validateListOfTypeInline(validateSingleWord)),
+    ["instance_name"] = validateSingleWord, -- used in flow explorer
+    ["hide_exporters_name"] = validateBool,
+    ["append_only"] = validateBool,
+    ["remove_only"] = validateBool,
+    ["dns_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["ntp_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["dhcp_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["smtp_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["gateway_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["windows_domain_controller_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["ftp_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["ssh_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["powershell_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["http_list"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressWithOptionalVlan)),
+    ["scope_filters"] = validateEmptyOr(validateListOfTypeInline(validateIpAddressOrNetwork)),
+    ["customer_asn"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+    ["sub_customer_asn"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+    ["remote_asn"] = validateEmptyOr(validateListOfTypeInline(validateNumber)),
+    ["whitelisted_networks"] = validateSingleWord,
+    ["corporate_devices"] = validateSingleWord,
+    ["local_devices"] = validateSingleWord
+
 }
 
 -- A special parameter is formed by a prefix, followed by a variable suffix
-local special_parameters = {   --[[Suffix validator]]     --[[Value Validator]]
--- The following parameter is *not* used inside ntopng
--- It allows third-party users to write their own scripts with custom
--- (unverified) parameters
-   ["p_"]                      = { validateUnquoted,         validateUnquoted },
+local special_parameters = { --[[Suffix validator]]
+    --[[Value Validator]]
+    -- The following parameter is *not* used inside ntopng
+    -- It allows third-party users to write their own scripts with custom
+    -- (unverified) parameters
+    ["p_"] = {validateUnquoted, validateUnquoted},
 
--- SHAPING
-   ["shaper_"]                 = { validateNumber,            validateNumber },      -- key: a shaper ID, value: max rate
-   ["ishaper_"]                = { validateShapedElement,     validateNumber },      -- key: category or protocol ID, value: ingress shaper ID
-   ["eshaper_"]                = { validateShapedElement,     validateNumber },      -- key: category or protocol ID, value: egress shaper ID
-   ["qtraffic_"]               = { validateShapedElement,     validateNumber },      -- key: category or protocol ID, value: traffic quota
-   ["qtime_"]                  = { validateShapedElement,     validateNumber },      -- key: category or protocol ID, value: time quota
-   ["oldrule_"]                = { validateShapedElement,     validateEmpty },       -- key: category or protocol ID, value: empty
-   ["policy_"]                 = { validateShapedElement,     validateListOfTypeInline(validateNumber) },      -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
-   ["client_policy_"]          = { validateShapedElement,     validateListOfTypeInline(validateNumber) },      -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
-   ["server_policy_"]          = { validateShapedElement,     validateListOfTypeInline(validateNumber) },      -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
+    -- SHAPING
+    ["shaper_"] = {validateNumber, validateNumber}, -- key: a shaper ID, value: max rate
+    ["ishaper_"] = {validateShapedElement, validateNumber}, -- key: category or protocol ID, value: ingress shaper ID
+    ["eshaper_"] = {validateShapedElement, validateNumber}, -- key: category or protocol ID, value: egress shaper ID
+    ["qtraffic_"] = {validateShapedElement, validateNumber}, -- key: category or protocol ID, value: traffic quota
+    ["qtime_"] = {validateShapedElement, validateNumber}, -- key: category or protocol ID, value: time quota
+    ["oldrule_"] = {validateShapedElement, validateEmpty}, -- key: category or protocol ID, value: empty
+    ["policy_"] = {validateShapedElement, validateListOfTypeInline(validateNumber)}, -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
+    ["client_policy_"] = {validateShapedElement, validateListOfTypeInline(validateNumber)}, -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
+    ["server_policy_"] = {validateShapedElement, validateListOfTypeInline(validateNumber)}, -- key: category or protocol ID, value: shaper,bytes_quota,secs_quota
 
--- ALERTS (see alert_utils.lua)
-   ["op_"]                     = { validateAlertDescriptor,   validateOperator },    -- key: an alert descriptor, value: alert operator
-   ["value_"]                  = { validateAlertDescriptor,   validateAlertValue },  -- key: an alert descriptor, value: alert value
-   ["slack_ch_"]               = { validateNumber, validateSingleWord },             -- slack channel name
-   ["enabled_"]                = { validateAlertDescriptor,   validateAlertValue },  -- key: a check module key, value: alert value
+    -- ALERTS (see alert_utils.lua)
+    ["op_"] = {validateAlertDescriptor, validateOperator}, -- key: an alert descriptor, value: alert operator
+    ["value_"] = {validateAlertDescriptor, validateAlertValue}, -- key: an alert descriptor, value: alert value
+    ["slack_ch_"] = {validateNumber, validateSingleWord}, -- slack channel name
+    ["enabled_"] = {validateAlertDescriptor, validateAlertValue}, -- key: a check module key, value: alert value
 
--- Protocol to categories match
-   ["proto_"]                  = { validateProtocolIdOrName, validateCategory },
+    -- Protocol to categories match
+    ["proto_"] = {validateProtocolIdOrName, validateCategory},
+    ["protocol"] = validateNumber,
+    --
+    ["static_route_address_"] = {validateStaticRouteName, validateIPV4},
+    ["static_route_netmask_"] = {validateStaticRouteName, validateIPV4},
+    ["static_route_via_"] = {validateStaticRouteName, validateIPV4},
+    ["static_route_is_local_"] = {validateStaticRouteName, validateBool},
 
---
-   ["static_route_address_"]        = { validateStaticRouteName, validateIPV4 },
-   ["static_route_netmask_"]        = { validateStaticRouteName, validateIPV4 },
-   ["static_route_via_"]            = { validateStaticRouteName, validateIPV4 },
-   ["static_route_is_local_"]       = { validateStaticRouteName, validateBool },
+    -- Gateways
+    ["gateway_address_"] = {validateGatewayName, validateIPV4},
+    ["gateway_ping_"] = {validateGatewayName, validateIPV4},
+    ["gw_rtt_"] = {validateGatewayName, validateNumber},
+    ["gw_loss_thresh_"] = {validateGatewayName, validateNumber},
+    ["gw_num_attempts_"] = {validateGatewayName, validateNumber},
+    ["gw_id_"] = {validateNumber, validateGatewayName},
+    ["pol_id_"] = {validateNumber, validateRoutingPolicyName},
+    ["routing_"] = {validateRoutingPolicyGateway, validateEmptyOr(validateNumber)}, -- a routing policy
+    ["router"] = validateIpAddress,
+    
+    -- DHCP Configuration
+    ["dhcp_server_enabled_"] = {validateNetworkInterface, validateBool},
+    ["dhcp_first_ip_"] = {validateNetworkInterface, validateIPV4},
+    ["dhcp_last_ip_"] = {validateNetworkInterface, validateIPV4},
+    ["dhcp_option_114_"] = {validateNetworkInterface, validateUnquoted},
+    ["dhcp_option_160_"] = {validateNetworkInterface, validateUnquoted},
 
--- Gateways
-   ["gateway_address_"]        = { validateGatewayName, validateIPV4 },
-   ["gateway_ping_"]           = { validateGatewayName, validateIPV4 },
-   ["gw_rtt_"]                 = { validateGatewayName, validateNumber },
-   ["gw_id_"]                  = { validateNumber, validateGatewayName },
-   ["pol_id_"]                 = { validateNumber, validateRoutingPolicyName },
-   ["routing_"]                = { validateRoutingPolicyGateway, validateEmptyOr(validateNumber) }, -- a routing policy
+    -- Network Configuration
+    ["iface_mode_"] = {validateNetworkInterface, validateInterfaceConfMode},
+    ["iface_ip_"] = {validateNetworkInterface, validateIPV4},
+    ["iface_on_"] = {validateNetworkInterface, validateBool},
+    ["iface_gw_"] = {validateNetworkInterface, validateIPV4},
+    ["iface_netmask_"] = {validateNetworkInterface, validateIPV4},
+    ["iface_primary_dns_"] = {validateNetworkInterface, validateIPV4},
+    ["iface_secondary_dns_"] = {validateNetworkInterface, validateIPV4},
+    ["iface_nat_"] = {validateNetworkInterface, validateBool},
+    ["iface_id_"] = {validateNumber, validateNetworkInterface},
+    ["iface_up_"] = {validateNumber, validateNumber},
+    ["iface_down_"] = {validateNumber, validateNumber},
 
--- Network Configuration
-   ["iface_mode_"]             = { validateNetworkInterface, validateInterfaceConfMode },
-   ["iface_ip_"]               = { validateNetworkInterface, validateIPV4 },
-   ["iface_on_"]               = { validateNetworkInterface, validateBool },
-   ["iface_gw_"]               = { validateNetworkInterface, validateIPV4 },
-   ["iface_netmask_"]          = { validateNetworkInterface, validateIPV4 },
-   ["iface_primary_dns_"]      = { validateNetworkInterface, validateIPV4 },
-   ["iface_secondary_dns_"]    = { validateNetworkInterface, validateIPV4 },
-   ["iface_nat_"]              = { validateNetworkInterface, validateBool },
-   ["iface_id_"]               = { validateNumber, validateNetworkInterface },
-   ["iface_up_"]               = { validateNumber, validateNumber },
-   ["iface_down_"]             = { validateNumber, validateNumber },
+    -- paramsPairsDecode: NOTE NOTE NOTE the "val_" value must explicitly be checked by the end application
+    ["key_"] = {validateNumber, validateUnchecked}, -- key: an index, value: the pair key
+    ["val_"] = {validateNumber, validateUnchecked}, -- key: an index, value: the pair value
 
-   -- paramsPairsDecode: NOTE NOTE NOTE the "val_" value must explicitly be checked by the end application
-   ["key_"]                    = { validateNumber,   validateUnchecked },      -- key: an index, value: the pair key
-   ["val_"]                    = { validateNumber,   validateUnchecked },      -- key: an index, value: the pair value
+    -- server side Datatables
+    ["columns_"] = {validateNumber, validateBool},
+    ["search_"] = {validateNumber, validateSingleWord},
+    ["order_"] = {validateNumber, validateSingleWord},
 
-   -- server side Datatables
-   ["columns_"]                = { validateNumber, validateBool },
-   ["search_"]                 = { validateNumber, validateSingleWord },
-   ["order_"]                  = { validateNumber, validateSingleWord },
+    -- only client parameters
+    ["timeseries_groups"] = {validateUnchecked, validateUnchecked},
+    ["timeseries_groups_mode"] = {validateUnchecked, validateUnchecked},
+    ["subnet"] = {validateUnchecked, validateUnchecked}
 }
 
 -- #################################################################
 
 local function validateParameter(k, v)
-   if(known_parameters[k] == nil) then
-      -- Attempt at recursively validate tables
-      if(type(v) == "table") then
-	 for table_key, table_value in pairs(v) do
-	    local success, message, purified = validateParameter(table_key, table_value)
+    local verbose = false
+    local trace_failures = true
 
-	    -- Stop, if any of the table value fails the validation against
-	    -- the expected table key
-	    if not success then
-	       return success, message, nil
-	    end
-	 end
+    if (verbose) then
+        io.write("[LINT] validateParameter [" .. k .. "] " .. type(v) .. "\n")
+    end
 
-	 -- Success, all the table keys have been validated successfully
-         return true, "OK", v
-      else
-	 error("[LINT] Validation error: Unknown key "..k.." [value: "..v.."]: missing validation perhaps?\n")
-	 return false, nil
-      end
-   else
-      local ret
-      local f = known_parameters[k]
+    if (known_parameters[k] == nil) then
+        -- Attempt at recursively validate tables
+        if (type(v) == "table") then
+            for table_key, table_value in pairs(v) do
+                local success, message, purified = validateParameter(table_key, table_value)
+                -- Stop, if any of the table value fails the validation against
+                -- the expected table key
+                if not success then
+                    if (trace_failures and table_key ~= 'ifid') then
+		       io.write("[LINT] validateParameter failed for table entry [" .. tostring(table_key) .. "][" .. tostring(table_value) .. "]\n")
+		       tprint(debug.traceback())
+                    end
+		    
+                    return success, message, nil
+                end
+            end
 
-      if(type(f) == "function") then
-	 -- We apply the default parameter cleanup
-	 v = ntop.httpPurifyParam(tostring(v))
-	 ret = known_parameters[k](v)
-      else
-	 -- We apply the custom cleanup
-	 v = known_parameters[k][1](v)
-	 ret = known_parameters[k][2](v)
-      end
+            -- Success, all the table keys have been validated successfully
+            return true, "OK", v
+        elseif type(k) == "string" and k:starts('custom_fields') then
+            -- Possible error, try the last check for historical custom_fields
+            local tmp_1 = k:split("_")
+            local i = 3
+            while (tmp_1[i]) do
+                if not tonumber(tmp_1[i]) then
+                    return false, nil
+                end
+                i = i + 1
+            end
+            local success = validateListOfTypeInline(validateFilters(validateSingleWord))(v)
+            return success, nil, v
+        else
+            if (trace_failures) then
+	       error("[LINT] Validation error: Unknown key '" .. k .. "' [" .. tostring(v) .. "]: missing validation perhaps?\n")
+	       tprint("POST: ")
+	       tprint(_POST)
+	       tprint("GET: ")
+	       tprint(_GET)
+	       -- tprint(debug.traceback())
+            end
+            return false, nil
+        end
+    else
+        local ret
+        local f = known_parameters[k]
 
-      if ret then
-         return true, "OK", v
-      else
-	 -- io.write(debug.traceback())
-         return false, "Validation error", nil
-      end
-   end
+        if (type(f) == "function") then
+            -- We apply the default parameter cleanup
+            v = ntop.httpPurifyParam(tostring(v))
+            ret = known_parameters[k](v)
+        else
+            -- We apply the custom cleanup
+            v = known_parameters[k][1](v)
+            ret = known_parameters[k][2](v)
+        end
+
+        if ret then
+            return true, "OK", v
+        else
+            if (trace_failures and k ~= 'ifid') then
+                io.write("[LINT] validateParameter failed for parameter [" .. k .. "][" .. type(f) .. "]\n")
+                tprint(v)
+		-- io.write(debug.traceback().."\n")
+            end
+
+            -- io.write(debug.traceback())
+            return false, "Validation error", nil
+        end
+    end
 end
 
 local function validateSpecialParameter(param, value)
-   -- These parameters are made up of one string prefix plus a string suffix
-   for k, v in pairs(special_parameters) do
-      if starts(param, k) and not known_parameters[param] --[[ make sure this is not a known, non-special param --]] then
-	 local suffix = split(param, k)[2]
-	 value = ntop.httpPurifyParam(value)
+    -- These parameters are made up of one string prefix plus a string suffix
+    for k, v in pairs(special_parameters) do
+        if starts(param, k) and not known_parameters[param] --[[ make sure this is not a known, non-special param --]] then
+            local suffix = split(param, k)[2]
 
-	 if not v[1](suffix) then
-	    return false, "Special Validation, parameter key", nil
-	 elseif not v[2](value) then
-	    return false, "Special Validation, parameter value", nil
-	 else
-	    return true, "OK", value
-	 end
-      end
-   end
+	    value = ntop.httpPurifyParam(value)
 
-   return false
+            if not v[1](suffix) then
+                return false, "Special Validation, parameter key", nil
+            elseif not v[2](value) then
+                return false, "Special Validation, parameter value", nil
+            else
+                return true, "OK", value
+            end
+        end
+    end
+
+    return false
 end
 
 -- ##############################################
 
 function http_lint.validationError(t, param, value, message)
-   -- TODO graceful exit
-   local s_id
-   if t == _GET then
-      s_id = "_GET"
-   else
-      s_id = "_POST"
-   end
+    -- TODO graceful exit
+    local s_id
+    if t == _GET then
+        s_id = "_GET"
+    else
+        s_id = "_POST"
+    end
 
-   -- Remove the param which failed the validation
-   t[param] = nil
-
-   -- Must use urlencode to print these values or an attacker could perform XSS.
-   -- Indeed, the web page returned by mongoose will show the error below and
-   -- one could place something like '><script>alert(1)</script> in the value
-   -- to close the html and execute a script
-
-   -- Print of errors has been disabled to avoid logs to be flooded. Lint validation must be handled
-   -- as part of HTTP responses, not printed in ntopng logs
-
-   --error("[LINT] " .. s_id .. "[\"" .. urlencode(param) .. "\"] = \"" .. urlencode(value or 'nil') .. "\" parameter error: " .. message.."")
+    -- Remove the param which failed the validation
+    t[param] = nil
 end
 
 -- #################################################################
 
 local function lintParams()
-   local script_manager = require("script_manager")
-   local params_to_validate = { _GET, _POST }
-   local id, _, k, v
+    local script_manager = require("script_manager")
+    local params_to_validate = {_GET, _POST}
+    local id, _, k, v
 
-   -- VALIDATION SETTINGS
-   local enableValidation    = true                --[[ To enable validation ]]
-   local relaxGetValidation  = true                --[[ To consider empty fields as valid in _GET parameters ]]
-   local relaxPostValidation = false               --[[ To consider empty fields as valid in _POST parameters ]]
-   local debug = false                             --[[ To enable validation debug messages ]]
+    -- VALIDATION SETTINGS
+    local enableValidation = true --[[ To enable validation ]]
+    local relaxGetValidation = true --[[ To consider empty fields as valid in _GET parameters ]]
+    local relaxPostValidation = false --[[ To consider empty fields as valid in _POST parameters ]]
+    local debug = false --[[ To enable validation debug messages ]]
 
-   -- Extend the parameters with validators from the scripts
-   local additional_params = script_manager.extendLintParams(http_lint, known_parameters)
-
-   for _,id in pairs(params_to_validate) do
-      for k, v in pairs(id) do
-         if(debug) then io.write("[LINT] Validating ["..k.."]["..v.."]\n") end
-
-         if enableValidation then
-            if ((v == "") and
-                (((id == _GET) and relaxGetValidation) or
-                 ((id == _POST) and relaxPostValidation))) then
-               if(debug) then io.write("[LINT] Parameter "..k.." is empty but we are in relax mode, so it can pass\n") end
-            else
-               local success, message, purified = validateSpecialParameter(k, v)
-
-	       if success then
-		  id[k] = purified
-	       else
-                  if message ~= nil then
-		     -- tprint("k: "..k.. " v: "..v.. " success: "..tostring(success).. " message: "..message)
-                     http_lint.validationError(id, k, v, message)
-                  else
-                     success, message, purified = validateParameter(k, v)
-
-		     if success then
-			id[k] = purified
-		     else
-                        if message ~= nil then
-                           http_lint.validationError(id, k, v, message)
-                        else
-                           -- Here we have an unhandled parameter
-                           http_lint.validationError(id, k, v, "Missing validation")
-                        end
-                     end
-                  end
-               end
+    -- Extend the parameters with validators from the scripts
+    local additional_params = script_manager.extendLintParams(http_lint, known_parameters)
+    for _, id in pairs(params_to_validate) do
+        for k, v in pairs(id) do
+            if (false) then
+                io.write("[LINT] Validating [" .. k .. "]\n")
             end
-         end
-      end
-   end
+
+            if enableValidation then
+                if ((v == "") and (((id == _GET) and relaxGetValidation) or ((id == _POST) and relaxPostValidation))) then
+                    if (debug) then
+                        io.write("[LINT] Parameter " .. k .. " is empty but we are in relax mode, so it can pass\n")
+                    end
+                else
+                    local success, message, purified = validateSpecialParameter(k, v)
+                    if success then
+                        id[k] = purified
+                    else
+                        if message ~= nil then
+                            -- tprint("k: "..k.. " v: "..v.. " success: "..tostring(success).. " message: "..message)
+
+                            if (debug) then
+                                io.write("[LINT] Failure validating parameter '" .. k .. "' (1)\n")
+                            end
+
+                            http_lint.validationError(id, k, v, message)
+                        else
+                            success, message, purified = validateParameter(k, v)
+
+                            if success then
+                                id[k] = purified
+                            else
+                                if (debug) then
+                                    io.write("[LINT] Failure validating parameter '" .. k .. "' (2)\n")
+                                end
+
+                                if message ~= nil then
+                                    http_lint.validationError(id, k, v, message)
+                                else
+                                    -- Here we have an unhandled parameter
+                                    http_lint.validationError(id, k, v, "Missing validation")
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- #################################################################
@@ -2421,61 +3750,67 @@ end
 -- See also https://github.com/ntop/ntopng/issues/4113
 --
 local function parsePOSTpayload()
-   if((_POST ~= nil) and (_POST["payload"] ~= nil)) then
-      local info, pos, err = json.decode(_POST["payload"], 1, nil)
+    if ((_POST ~= nil) and (_POST["payload"] ~= nil)) then
+        local info, pos, err = json.decode(_POST["payload"], 1, nil)
 
-      if(info ~= nil) then
-	 for k,v in pairs(info) do
-	    _GET[k] = v -- TODO: remove as soon as REST API is clean (https://github.com/ntop/ntopng/issues/4113)
-	    _POST[k] = v
-	 end
-      end
-   end
+        if (info ~= nil) then
+            for k, v in pairs(info) do
+                _GET[k] = v -- TODO: remove as soon as REST API is clean (https://github.com/ntop/ntopng/issues/4113)
+                _POST[k] = v
+            end
+        end
+    end
 end
 
 -- #################################################################
 
 local function clearNotAllowedParams()
-   if ntop.isnEdge() then
-      -- Captive portal urls that can be clobbered with unrecognized
-      -- and unvalid params as devices could have http requests open that are redirected
-      -- to the captive portal.
-      -- This function removes all the params except a minimum allowed set.
-      local not_allowed_uris = {"/lua/info_portal.lua", "/lua/captive_portal.lua"}
-      -- the referer must go through or the captive portal won't be able to do
-      -- a proper redirect
-      local allowed_params = {referer = 1,}
+    if ntop.isnEdge and ntop.isnEdge() then
+        -- Captive portal urls that can be clobbered with unrecognized
+        -- and unvalid params as devices could have http requests open that are redirected
+        -- to the captive portal.
+        -- This function removes all the params except a minimum allowed set.
+        local not_allowed_uris = {"/lua/info_portal.lua", "/lua/captive_portal.lua"}
+        -- the referer must go through or the captive portal won't be able to do
+        -- a proper redirect
+        local allowed_params = {
+            referer = 1
+        }
 
-      if (table.len(_GET) > 0 or table.len(_POST) > 0) and _SERVER["URI"] then
-	 for _, uri in pairs(not_allowed_uris) do
-	    if string.ends(uri, _SERVER["URI"]) then
-	       local param_tables = {_GET or {}, _POST or {}}
+        if ((_GET and table.len(_GET) > 0) or (_POST and table.len(_POST) > 0)) and _SERVER["URI"] then
+            for _, uri in pairs(not_allowed_uris) do
+                if string.ends(uri, _SERVER["URI"]) then
+                    local param_tables = {_GET or {}, _POST or {}}
 
-	       for _, param_table in pairs(param_tables) do
-		  for param_key, param_value in pairs(param_table) do
-		     if not allowed_params[param_key] then
-			param_table[param_key] = nil
-		     end
-		  end
-	       end
+                    for _, param_table in pairs(param_tables) do
+                        for param_key, param_value in pairs(param_table) do
+                            if not allowed_params[param_key] then
+                                param_table[param_key] = nil
+                            end
+                        end
+                    end
 
-	       break
-	    end
-	 end
-      end
-   end
+                    break
+                end
+            end
+        end
+    end
 end
 
 -- #################################################################
 
-if(pragma_once) then
-   if(ignore_post_payload_parse == nil) then
-    parsePOSTpayload()
-   end
+if (not pragma_once_http_lint) then
+    if (ignore_post_payload_parse == nil) then
+        parsePOSTpayload()
+    end
 
-   clearNotAllowedParams()
-   lintParams()
-   pragma_once = 0
+    clearNotAllowedParams()
+    lintParams()
+    pragma_once_http_lint = true
+end
+
+if (trace_script_duration ~= nil) then
+    io.write(debug.getinfo(1, 'S').source .. " executed in " .. (os.clock() - clock_start) * 1000 .. " ms\n")
 end
 
 return http_lint

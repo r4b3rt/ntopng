@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2014-22 - ntop.org
+ * (C) 2014-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -19,7 +19,6 @@
  *
  */
 
-
 #ifndef _STRING_FIFO_QUEUE_H
 #define _STRING_FIFO_QUEUE_H
 
@@ -30,8 +29,8 @@ class StringFifoQueue : public FifoQueue<char*> {
   StringFifoQueue(u_int32_t queue_size) : FifoQueue<char*>(queue_size) {}
 
   ~StringFifoQueue() {
-    while(!q.empty()) {
-      char *s = q.front();
+    while (!q.empty()) {
+      char* s = q.front();
 
       q.pop();
       free(s);
@@ -40,29 +39,29 @@ class StringFifoQueue : public FifoQueue<char*> {
 
   bool enqueue(char* item) {
     bool rv;
-    
+
     m.lock(__FILE__, __LINE__);
 
-    if(canEnqueue()) {
-      char *d = strdup(item);
+    if (canEnqueue()) {
+      char* d = strdup(item);
 
-      if(d) {
-	q.push(d);
-	rv = true;
+      if (d) {
+        q.push(d);
+        rv = true;
       } else {
-	rv = false;
+        rv = false;
       }
     } else
       rv = false;
 
-    if(rv)
+    if (rv)
       num_enqueued++;
     else
       num_not_enqueued++;
 
     m.unlock(__FILE__, __LINE__);
-    
-    return(rv);
+
+    return (rv);
   }
 };
 

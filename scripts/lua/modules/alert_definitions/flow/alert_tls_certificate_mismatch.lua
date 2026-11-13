@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -9,6 +9,8 @@ local flow_alert_keys = require "flow_alert_keys"
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -20,6 +22,13 @@ alert_tls_certificate_mismatch.meta = {
    alert_key = flow_alert_keys.flow_alert_tls_certificate_mismatch,
    i18n_title = "flow_details.tls_certificate_mismatch",
    icon = "fas fa-fw fa-exclamation",
+
+   -- Mitre Att&ck Matrix values
+   mitre_values = {
+      mitre_tactic = mitre.tactic.defense_evasion,
+      mitre_technique = mitre.technique.indicator_removal,
+      mitre_id = "T1070"
+   },
 }
 
 -- ##############################################
@@ -53,7 +62,11 @@ function alert_tls_certificate_mismatch.format(ifid, alert, alert_type_params)
       crts[#crts + 1] = string.format("[%s: %s]", i18n("flow_details.tls_server_names"), alert_type_params["protos.tls.server_names"]:gsub(",", ", "))
    end
 
-   return string.format("%s %s", i18n("flow_risk.ndpi_tls_certificate_mismatch"), table.concat(crts, ""))
+   if table.len(crts) > 1 then
+      return string.format("%s %s", i18n("flow_risk.ndpi_tls_certificate_mismatch"), table.concat(crts, ""))
+   else
+      return i18n("flow_risk.tls_cert_mismatch_alert_descr")
+   end
 end
 
 -- #######################################################

@@ -54,6 +54,9 @@ class LocalizationFile(object):
             return ".".join(self.cur_section) + "." + localized_id, self.line_no, localized_str
         else:
           self.next_skip = line.endswith("..")
+  
+  def close(self):
+    self.f.close()
 
 # Wrapper to provide len and indexing on the LocalizationFile
 class LocalizationReaderWrapper(object):
@@ -101,7 +104,7 @@ def doCompare(base_file, cmp_file):
       print(u"%d) %s = \"%s\"" % (
         line_info[1],
         line,
-        line_info[2].encode("utf8"),
+        line_info[2],
       ))
 
 def doMissing(base_file, cmp_file):
@@ -132,3 +135,6 @@ if __name__ == "__main__":
     doCompare(base_file, cmp_file)
   elif mode == "missing":
     doMissing(base_file, cmp_file)
+
+  base_file.close()
+  cmp_file.close()

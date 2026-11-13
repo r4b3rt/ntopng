@@ -23,17 +23,19 @@ function host_table_setID (row) {
 
   // hosts_stats_top
   row.find("td").eq(index++).attr('id', host_key+"_num_flows");
+  row.find("td").eq(index++).attr('id', host_key+"_num_vulnerabilities");
   row.find("td").eq(index++).attr('id', host_key+"_num_dropped_flows");
   row.find("td").eq(index++).attr('id', host_key+"_custom");
   row.find("td").eq(index++).attr('id', host_key+"_name");
   row.find("td").eq(index++).attr('id', host_key+"_since");
   
   // hosts_stats_bottom
+  row.find("td").eq(index++).attr('id', host_key+"_score");
   row.find("td").eq(index++).attr('id', host_key+"_breakdown");
   row.find("td").eq(index++).attr('id', host_key+"_throughput");
   row.find("td").eq(index++).attr('id', host_key+"_traffic");
   
-  // console.log(row);
+  //console.log(row);
   return row;
 
 }
@@ -54,10 +56,12 @@ function get_row_key(host_key) {
 function row_update(host_key, data) {
   if (!data) return;
   $('td[id="'+host_key+'_since"]').html(data.column_since);
+  $('td[id="'+host_key+'_score"]').html(data.column_score);
   $('td[id="'+host_key+'_breakdown"]').html(data.column_breakdown);
   $('td[id="'+host_key+'_throughput"]').html(data.column_thpt);
   $('td[id="'+host_key+'_traffic"]').html(data.column_traffic);
   $('td[id="'+host_key+'_num_flows"]').html(data.column_num_flows);
+  $('td[id="'+host_key+'_num_vulnerabilities"]').html(data.column_num_vulnerabilities);
   $('td[id="'+host_key+'_num_dropped_flows"]').html(data.column_num_dropped_flows);
   $('td[id="'+host_key+'_custom"]').html(data.column_custom);
 }

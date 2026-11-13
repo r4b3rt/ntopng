@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 --
@@ -13,6 +13,7 @@
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
+require "lua_utils"
 require "lua_trace"
 local prefs_dump_utils = require "prefs_dump_utils"
 
@@ -32,12 +33,12 @@ prefs_dump_utils.check_restore_prefs_from_disk()
 -- Check and possibly perform a factory reset of preferences
 prefs_dump_utils.check_prefs_factory_reset()
 
-if(ntop.isPro()) then
+if(ntop.isPro and ntop.isPro()) then
    package.path = dirs.installdir .. "/pro/scripts/callbacks/system/?.lua;" .. package.path
    require("boot")
 end
 
-if not ntop.isnEdge() then -- nEdge data deletion is handled in nf_config.lua
+if not (ntop.isnEdge and ntop.isnEdge()) then -- nEdge data deletion is handled in nf_config.lua
    local delete_data_utils = require "delete_data_utils"
 
    delete_data_utils.delete_pcap_dump_interfaces_data()
@@ -50,6 +51,17 @@ if not ntop.isnEdge() then -- nEdge data deletion is handled in nf_config.lua
       delete_data_utils.clear_request_delete_active_interface_data()
 
       traceError(TRACE_INFO, TRACE_CONSOLE, "Data deletion done.")
+   end
+
+   -- Handle full data dir purge requested by Manage Data -> Purge All
+   -- before interfaces are registered and data may be used.
+   if delete_data_utils.purge_all_datadir_data_requested() then
+      traceError(TRACE_NORMAL, TRACE_CONSOLE, "Purging the whole data directory...")
+
+      delete_data_utils.purge_all_datadir_data()
+      delete_data_utils.clear_purge_all_datadir_data_request()
+
+      traceError(TRACE_NORMAL, TRACE_CONSOLE, "Data directory purge done.")
    end
 end
 

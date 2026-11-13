@@ -1,0 +1,60 @@
+{
+    "id": "alert_system",
+    "data_url": "lua/rest/v2/get/system/alert/list.lua",
+    "use_current_page": false,
+    "enable_search": false,
+    "paging": true,
+    "rsp_records_field": "records",
+    "rsp_query_info_field": "stats",
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.alerts",
+    "columns": [
+	{
+	    "id": "actions",
+	    "title_i18n": "actions",
+	    "sortable": false,
+	    "min-width": "96px",
+	    "max-width": "96px",
+	    "sticky": true,
+	    "class": ["text-nowrap", "text-center"],
+	    "render_v_node_type": "split_button",
+	    "button_def_array": [
+		{ "id": "info", "icon": "fas fa fa-search-plus", "title_i18n": "info", "event_id": "click_button_info" },
+		{ "id": "historical_data", "icon": "fas fa-stream", "title_i18n": "db_explorer.historical_data", "event_id": "click_button_historical_flows" },
+		{ "id": "disable", "icon": "fas fa fa-bell-slash", "title_i18n": "disable", "event_id": "click_button_disable" },
+		{ "id": "settings", "icon": "fas fa fa-cog", "title_i18n": "settings", "event_id": "click_button_settings" },
+		{ "id": "remove", "icon": "fas fa fa-trash", "title_i18n": "remove", "event_id": "click_button_remove", "danger": true }
+	    ]
+	},
+	{
+	    "title_i18n": "show_alerts.alert_datetime",
+	    "data_field": "tstamp",
+	    "sortable": true,
+		 "min-width" : "115px",
+	    "render_type": "formatValueLabelEngaged",
+	    "class": ["text-center", "text-nowrap"]
+	},
+	{
+	    "title_i18n": "score",
+	    "data_field": "score",
+	    "sortable": true,
+		 "min-width" : "80px",
+	    "render_type": "formatValueLabel",
+	    "class": ["text-center"]
+	},
+	{
+	    "title_i18n": "alerts_dashboard.alert",
+	    "data_field": "msg",
+	    "sortable": false,
+		 "min-width" : "155px",
+	    "render_type": "formatNameDescription",
+	    "class": ["text-nowrap"]
+	},
+	{
+	    "title_i18n": "description",
+	    "data_field": "description",
+	    "sortable": false,
+	    "class": ["text-nowrap"]
+	}
+    ]
+}

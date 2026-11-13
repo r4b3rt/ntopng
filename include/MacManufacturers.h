@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -25,8 +25,8 @@
 #include "ntop_includes.h"
 
 typedef struct {
-  char *manufacturer_name;
-  char *short_name;
+  char* manufacturer_name;
+  char* short_name;
 } mac_manufacturers_t;
 
 class MacManufacturers {
@@ -37,16 +37,17 @@ class MacManufacturers {
   inline u_int32_t mac2key(u_int8_t mac[]) {
     u_int32_t v = 0;
     memcpy(&v, mac, 3);
-    return(v);
+    return (v);
   }
 
   void init();
+
  public:
-  MacManufacturers(const char * mac_file_home);
+  MacManufacturers(const char* mac_file_home);
   ~MacManufacturers();
 
-  const char *getManufacturer(u_int8_t mac[]);
-  void getMacManufacturer(u_int8_t mac[], lua_State *vm);
+  const char* getManufacturer(u_int8_t mac[]);
+  void getMacManufacturer(u_int8_t mac[], lua_State* vm);
 };
 
 #endif /* _MAC_MANUFACTURERS_H_ */

@@ -1,5 +1,1167 @@
 # Changelog
 
+#### ntopng 7.0 (September 2026)
+
+## Breakthroughs
+- New nAnalyst: AI-assisted traffic analysis with chat, AI policies, AI dashboards and an agentic loop, supporting multiple LLM providers (Anthropic, OpenAI, Google, Qwen, local models) and an MCP server
+- New Wazuh XDR/SIEM integration: alert collection and correlation, asset enrichment, dedicated pages and configurable retention
+- New Sites: network-to-site hierarchy with sites dashboard, geomap with edges, matrix/heatmap views, per-site timeseries and statistics
+- New BGP/BMP support with Looking Glass page, RPKI validation, prefix-change alerts and BGP information in live/historical flows
+- New ClickHouse timeseries engine, including a High-Resolution (HR) counters driver, the Observability dashboard and Grafana integration
+- New authentication options: SSO with OpenID Connect, Multi-Factor Authentication, Passkey and X-API-Key
+- New user-defined host Tags, with filtering across flows, alerts, hosts and assets
+- New flow deduplication, enabled by default when available
+- New Vue.js frontend with D3-based charts, replacing the legacy pages and ApexCharts
+- New nEdge Lite
+- Extended OT visibility with S7comm and Profinet support, in addition to improved Modbus
+- Continuous fuzzing (ClusterFuzzLite/OSS-Fuzz) and extensive packet dissector hardening
+
+## Improvements
+### nAnalyst and AI
+- Add LLM providers preferences, with multiple/default provider selection and the ability to stop the response generation
+- Add nAnalyst pipelines and license-gated tools; nAnalyst is available only when ClickHouse is enabled, starting from enterprise M and above
+- Add live/historical flow and alerts chatbot panel with concise mode, streaming steps and chat download. Analyze traffic and alerts in natural language
+- Add AI policy runner, AI policy page, AI policy alerts and execution counters
+- Integrated MCP server in ntopng with dedicated ntopng functions, split between community and pro
+- Add nAnalyst to the Wazuh alerts page and to flow details
+
+### Wazuh
+- Collect Wazuh alerts into ClickHouse with day-based partitioning and a configurable retention preference
+- Add Wazuh alerts page, alert details, info button and alert exceptions
+- Add Wazuh asset information merge (manual and automatic) with connection check before saving credentials
+- Add Wazuh alerts to the recipient configuration and notification subjects
+- Ship Wazuh schemas and sample rules (standalone and cluster), with MITRE information in alerts
+
+### Sites
+- Implement network-to-site hierarchy mapping, with parent sites and circular reference checks
+- Add sites dashboard with SNMP, live flows, hosts, assets, exporters, top items and descendant networks
+- Add sites geomap with edges, sites matrix/heatmap and clickable navigation to per-site timeseries
+- Add sites timeseries and a dedicated SNMP dashboard per site
+- Add site import/export with hierarchy, site reset, short names and name validation
+- Store client/server Site IDs in historical flows, and add site filters to flows, reports and aggregations
+- Add Exporter Sites with map, coordinates editing, filters and historical data
+
+### BGP
+- Add BGP server preferences, BMP listener integration and a BGP poller
+- Add BGP Looking Glass page with RPKI support, best path and next hop formatting
+- Add BGP prefix update alerts and a prefix-changes endpoint preference
+- Show BGP information in live and historical flow details, and serialize it in the flow JSON
+- Add %BGP_INFO support from a probe
+
+### Timeseries and Observability
+- Implement a ClickHouse timeseries driver with a dedicated export queue, batching and native block inserts
+- Implement a ClickHouse High-Resolution timeseries driver with wildcard, aggregation and flow filters
+- Collect HR counters in flows and add HR charts for interfaces, hosts and historical flow details
+- Rename the HR dashboard to Observability and add group-by support
+- Add sample Grafana dashboards, downloadable from the preferences, and an l7_protocols table for external queries
+- Handle timeseries retention by dropping partitions instead of using TTL
+- Add ifid and ntopng instance name to the ClickHouse timeseries table, with migration of old data
+- Add RRD file retention preference and a minimum RRD retention of 7 days
+- Add timeseries drops, queue length (per interface) and polling statistics
+- Add per-thread CPU load timeseries with 5s granularity
+- Add SNMP polled devices and deduplicated flows timeseries
+
+### ClickHouse
+- Add --clickhouse-client-cert/key and --clickhouse-server-cn options for TLS
+- Batch ALTER TABLE and column comment statements to speed up startup
+- Add read-only ClickHouse user configuration and automatic configuration when ClickHouse is present
+- Add --dump-queue-len and --dump-queue-block-size to tune the dump queue
+- Migrate rarely used columns into the JSON field and drop obsolete ones
+- Extend the Manage Data page with a Purge All Data tab and full data-directory purge
+- Add --strict-startup to fail when critical subsystems cannot be initialized
+- Add --readonly-flows-dump for ClickHouse dump on external probes
+- Add Next-Hop and site to ClickHouse schema
+
+### Authentication and security
+- Implement SSO with OpenID Connect, including role scopes and user capability mapping
+- Implement Multi-Factor Authentication and Passkey authentication
+- Add X-API-Key and bearer token support for REST calls
+- Use a cryptographically strong random source for HTTP session identifiers
+- Add administrator capability checks to the configuration backup, flow filters, notification endpoints and pools
+- Move all authentication settings to a dedicated Authentication preferences section
+- Harden packet dissectors (DNS, mDNS, NetBIOS, SSDP, Modbus, CAPWAP, EtherNet/IP, RTP, ZMQ, HTTP parameters)
+- Integrate ClusterFuzzLite and add OSS-Fuzz targets for ZMQ, SNMP and syslog parsing
+- Implemented application SBOM
+- Enable HTTPS by default in the configuration file and add ntop.forceHTTPSsecure()
+
+### Flows and collection
+- Implement flow deduplication with a dedicated preference, statistics, timeseries and support for swapped duplicated flows
+- Add full IPv6 support to flow exporters and enable IPv6 ZMQ
+- Rework the exporter implementation, exporter IP mapping and next hop handling (including IPv6 next hop)
+- Add the nDPI flow fingerprint, shown in the flow details, stored in historical flows and usable as a historical filter, next to the already supported TCP and JA4 fingerprints
+- Add SNMP interface roles, adding role filters, timeseries and per-role traffic breakdown
+- Add PQC (post-quantum) flow detection with a dedicated behavioural check and Non-PQC tag
+- Add VPN detection alert and Slow DoS alert
+- Add S7comm and Profinet support, with statistics, alerts, learning period and historical flow details
+- Update Modbus statistics from OT_INFO and add Modbus information to the assets
+- Add ERSPAN and Linux cooked capture v2 (SLL2) support
+- Add search across all interfaces, with a dedicated preference and interface selection in the historical flow explorer
+- Add Tags columns and filters to historical flows, flow alerts and host alerts
+- Optimize ZMQ processing with preallocated buffers, unordered maps and fewer allocations
+- Add EXPORTER_SW_REVISION, NEXT_ADJACENT_ASN and application latency support
+- Rework the flow end housekeeping code and improve the flow swap heuristic
+- Add IPinfo lookup and AS information from geoip/as.csv, with Redis caching and RIPE as last resort
+- Improve the flow details visualization with the flow trajectory, the flow topology chart and a side card showing flow and alert details
+- Collect the DHCP client name and the vendor class identifier, reported as Client Information in the flow details
+- Add a copy button to the JA4, TCP and nDPI fingerprint fields of the flow details
+- Add Kea DHCP v3 support (nEdge)
+
+### SNMP
+- Add an alternative SNMP API to handle large workloads, with configurable request timeout
+- Add SNMP interface formatter and a preference for the SNMP interface label format
+- Add SNMP data caching to speed up searches and reduce polling time
+- Add SNMP exporter polling, ordering of polled devices, and SNMP threaded activity statistics
+- Add SNMP Context to SNMPv3 device add/edit and set v2c as the default version
+- Add a search field to the SNMP devices topology page and interface IP addresses in the SNMP tables
+- Add the site column to the SNMP devices page
+- Improved SNMP OOID polling
+
+### Assets
+- Rework the asset dashboard, making it dynamic and adding a site filter
+- Render host Tags in the asset list, replacing service badges
+- Add asset import/export with a larger maximum import size, and an assets log preference
+
+### User interface
+- Port the menu, footer, topbar and preferences to Vue.js, with a REST endpoint serving the menu definition
+- Port the checks, VLANs, networks, MAC addresses, service map, backup, configurations, DHCP leases, internals and error pages to Vue.js
+- Replace ApexCharts with D3: pie, bar, line, stacked, heatmap, bubble, chord, sankey and geomap
+- Move the frontend build to Vite and add gzip compression of the dist files, reducing their size by about 7x
+- Add on-the-fly compression of Lua-generated output when requested by the client
+- Add a guided demo and a static user-friendly startup page
+- Add a new expandable search box supporting multiple interfaces
+- Add dynamic table columns, resizable and sticky action columns, autorefresh persistence and improved sorting
+- Improve dark/white mode consistency and mobile rendering (sidebar, navbar, dashboard cards)
+- Add a no-data component, loading indicators and progress bars across pages
+
+### Miscellaneous
+- Add Swagger documentation for the REST API and document the ntop.* Lua API
+- Implement multipart file upload, extending the on-disk limit to 256MB
+- Add Allowed Host Pools for users and a Use Host Pools for Local Host Detection preference
+- Add a disk space low alert with a configurable threshold
+- Add TLS support for Redis and an atomic Redis getset
+- Add a Flowtriq notification endpoint
+- Rework the configuration import/export, adding error toasts on invalid imports
+- Add --mtu to set the interface MTU on non-Linux interfaces
+- Add the XXXL edition and per-edition process resource limits
+- Add an official ntopng Chrome extension
+- Add a products licenses page with token resend and license registration check
+- Add unit tests for the Python SDK and additional Lua ts_common tests
+- Add a Debian package for Ubuntu 26 and improve the RHEL 8 packaging patch
+- Add STARTSSL option to email endpoints
+- Read logs with journalctl on Linux, falling back to ntopng.log
+
+## Changes
+- Rename the flow filter labels to flowfilters, to avoid confusion with the new host Tags
+- Convert the Vulnerability Scan into Active Scan, removing CVE and Vulners visibility and triggering
+- ntopng now starts in community mode when no license is provided; the --community option has been removed
+- Move Wazuh to the Enterprise M edition
+- Remove the geomap from the live flows page for community, available from Pro and above
+- Remove bundled rrdtool, MessageBroker ntopCloud code, dead DoH/DoT code and the deprecated -I hierarchy support
+- Remove ApexCharts, nvd3, dc and cubism dependencies
+- Rename probe_ip to exporter_ip when used for exporters, and rename the SNMP interface_id field to avoid confusion
+- Remove the old database migration code and obsolete Lua template files
+- Move the geomap, BGP statistics and the Behavioural Checks menu from pro to community
+- Move asset and license REST endpoints
+- Make ClickHouse the database used for Active Scan reports
+- Enable flow deduplication by default where available
+- Disable HTTP keep-alive by default and increase the number of web threads from 5 to 8
+- Disable SNMP configuration management in the community edition
+- Move the Sites page to the navbar, adding statistics and configuration pages
+- Rework the AS dashboard and AS report, adding traffic roles
+- Added encryption to ZMQ communications
+
+## Fixes
+- Fix several heap and stack overflows in the mDNS, DNS, IPv6 and NetBIOS dissectors
+- Fix signed integer overflows and a 4-byte write into a 2-byte variable
+- Fix arbitrary redirects at login and add validation on URLs used for redirects
+- Fix a missing authorization check in the blacklist REST endpoint
+- Fix a crash on broken ClickHouse connections and on --version
+- Fix a crash when retrieving AS, country, observation points and VLAN
+- Fix concurrent access to the mDNS VM between packet capture and periodic discovery
+- Fix memory leaks with SNMPv3 devices using authentication, and a socket fd leak in Utils::get_ifindex
+- Fix SNMP infinite polling loop on unhandled errors, and harden the SNMP code
+- Fix the CSV import of SNMP devices and SNMPv3 import with MD5 authentication
+- Fix SNMP interface counters, timeseries, formatting and topology sorting
+- Fix ClickHouse cluster schema issues (missing columns, comments, alter table on cluster)
+- Fix ClickHouse timeseries naming, labels, 1s resolution charts and points with no data
+- Fix historical flow filters, labels, column titles, export filtering and CSV download
+- Fix historical flow details, aggregated flows and the Download Records dialog for custom queries
+- Fix flow risk badge filtering, flow risk column and missing nDPI flow risk mappings
+- Fix incorrect links when jumping from an alert to a flow, and href to checks from live flows
+- Fix the exporter interfaces table, exporter statistics pages and exporter/interface counts with load balancing
+- Fix reported exporter IP byte order and incorrect exporter port numbers
+- Fix top timeseries not being shown, not refreshing and merging incorrectly
+- Fix dashboard timeseries height, empty points, colors changing between updates and dark mode legend colors
+- Fix host pools timeseries, applications timeseries, members table and traffic breakdown
+- Fix the geomap links, minimum height, tooltip glitches, resizing and CSS
+- Fix the host flows sankey, its resizing in the dashboard and the limit on the number of plotted nodes
+- Fix pie chart rendering, legend wrapping, no-data message and overflow
+- Fix the preferences page in the community edition, including when SNMP is disabled
+- Fix the recipients page, recipient editing and notification endpoint capability checks
+- Fix the networks page, network alias editing, network name validation and CIDR handling
+- Fix local network ID generation, make local network IDs persistent and fix a segfault on removed networks
+- Fix the ASN page, historical page, filters, sorting, sankey, charts and interface roles usage
+- Fix the BGP looking glass REST API, page loading and formatting issues
+- Fix per-interface periodic activity statistics being computed on the wrong interface
+- Fix the Unexpected Gateway and Unexpected DHCP server (with relay) checks
+- Fix false positives in the no-interface-activity alert and increase the minimum uptime before triggering
+- Fix active monitoring parameters, RTT/throughput checks, interface selection and tracing
+- Fix logout behind nginx, HTTP prefix handling in auth and the Vue router with a custom HTTP prefix
+- Fix the case where HTTP and HTTPS are set to the same port
+- Fix Redis connection to a Unix socket and invalid Redis caching
+- Fix TZSP packet parsing, GTP offsets enforcement and pcap file processing on shutdown
+- Fix interface switching when analysing a pcap file, and PCAP download
+- Fix the configuration import/export, assets import/export and pool CSV import
+- Fix CodeQL issues in the JavaScript and Vue.js pages, remote property injection and insecure functions
+- Fix the ElasticSearch dumped flows/sec rate and InfluxDB top timeseries crash when snmp_utils is unavailable
+- Fix Utils::readIPv4 with bond interfaces and Utils::findInterfaceGatewayIPv4
+- Fix usernames containing dots and interface names containing dots
+- Fix the blacklisted country alert with view interfaces, and hidden hosts not working
+- Fix various dark mode and white mode styling, linting and dropdown issues
+- Fix the live flows and aggregated live flows pages (filters, flow duration, interface selection, info button and links)
+- Fix the new menu: labels, highlighting, visibility conditions, interface selector, duplicated entries and caching
+- Fix incorrect Access Control List initialization
+
+## nEdge
+- Add nEdge Lite support (will be announced soon)
+- Implement nEdge configuration import/export based on nf_config, regenerating the system configuration files
+- Initialize network discovery only on interfaces that are discoverable (LAN interfaces defined)
+- Raise the SNMP devices limit and add the missing SNMP dependency
+- Export system.config when exporting the configuration
+- Disable Use MAC in Flow Key support
+- Fix incorrect ifid indexing, the menu and the reboot/poweroff entries
+
+#### ntopng 6.6 (November 2025)
+
+## Breakthroughs
+- New Autonomous Systems Dashboards, Sankeys, and comprehensive AS statistics
+- Enhanced flow exporters and probes statistics with dedicated pages
+- Improved SNMP devices polling
+- Major flow collection code rework and optimizations
+- Native support for ClickHouse Cloud with SSL connections
+- Direct flows dump mode for real-time ClickHouse export
+
+## Improvements
+- Add comprehensive AS ranking detection and alerting with configurable thresholds
+- Implement ASN traffic rules for better AS-level traffic management
+- Enhance ASN live flow aggregation
+- Add conditional ASN aggregation type based on ASN mode
+- Add ASN alerts to alert system
+- Optimized SNMP access to interface names
+- Add Transit Only AS filter and tables
+- Add flow exporter/probe statistics with dedicated interfaces and exporters pages
+- Optimize SNMP polling by removing unnecessary double polling on system and interfaces
+- Add SNMP interface roles (core, distribution, access, etc.) for better network topology visualization
+- Implement SNMP devices CSV import/export with SNMPv3 support
+- Enhance asset inventory with SNMP Bridge MIB integration
+- Optimize SNMP caching and interface name lookup
+- Improve ClickHouse connection handling with SSL/TLS support for ClickHouse Cloud
+- Optimize exporters/probes statistics with better data structures and reduced memory footprint
+- Add support for nProbe Source ID (NPROBE_SOURCE_ID) custom field
+- Implement --direct-flows-dump option to dump flows directly when collected
+- Improve historical flow filtering and export capabilities
+- Add throughput charts based on interface probe stats
+- Improve Redis operations with optimized caching
+- Add safety checks across flow collection and statistics code
+- Optimize Host Pools with support for up to 4096 pools
+- Improve packet dumper for traffic extraction
+- Add more detailed flow exporter IP flow layout
+- Add support for other HTTP methods other than GET/POST; also reworked/simplified code
+- Improved chart visualization
+- Improved slightly visualization on mobile
+
+## Changes
+- Remove pre-NAT information display from flows and statistics
+- Rework exporters and probes statistics implementation
+- Unify all exporters interfaces pages
+- Rework flow collection with better probe/exporter/interface tracking
+- Change timeseries charts to stacked mode for better visualization
+- Remove VLAN 0 from various displays
+- Change MAC address formatting for consistency
+- Update flow aggregation with new aggregation functions
+- Add support for arbitrary nDPI protocol IDs in shapers
+- Remove obsolete code and cleanup
+- Disabled various functionalities in ASN Mode
+
+## Fixes
+- Fix SNMP interface name not correctly displayed
+- Fix historical flow filters and export functionality
+- Fix exporter interfaces statistics not working correctly
+- Fix traffic rules modal size and resource loading
+- Fix past timeseries not working correctly when opening pages
+- Fix host pools timeseries charts
+- Fix host location sorting and filtering in nEdge
+- Fix nedge footer and interface issues
+- Fix flow historical filters and labels
+- Fix download records in historical flows
+- Fix traffic profile edit modal
+- Fix various issues with asset queries and visualization
+- Fix clickhouse flow export date and retention
+- Fix server ports formatting
+- Fix several menu not correctly mapped
+- Fix hidden hosts not working correctly
+- Fix active monitoring RTT and throughput checks
+- Fix clickhouse connection timeout handling
+- Fix policy test from system interface
+- Fix DHCP leases page for nEdge
+- Fix traffic profiles page glitches
+- Fix various nedge host sorting issues
+- Fix historical flow incorrect labels and columns
+- Fix assets not correctly dumped into the DB
+- Fix various timeseries charts not correctly displayed
+- Fix RRD top timeseries not correctly working in edge cases
+- Fix various links not working
+- Fix missing retention for hourly tables
+
+## nEdge
+- Dynamic blacklist support
+- Add dynamic blacklist support with per-user/pool configuration
+- Implement nEdge policy violation check
+- Add toggle to block blacklisted flows
+- Add max flow size configuration
+- Improve multicast/broadcast forwarding configuration
+- Fix inter-LAN filtering rules page
+- Add Kea DHCP server support (in addition to ISC DHCP server)
+- Improve DHCP leases visualization with Vue.js
+- Add packet dump support for nEdge
+- Fix location-based filtering and sorting
+- Improve quotas reset functionality
+- Add support for DHCP active leases pagination
+- Fix captive portal issues
+- Enhance traffic accounting for nEdge interfaces
+- Rework nedge shapers configuration (simplified)
+
+#### ntopng 6.4 (April 2025)
+
+## Breakthroughs
+- New Asset Inventory / Digital Twin and Assets Dashboard
+- New Infrastructure Dashboard to oversee multiple regions
+- New Autonomous Systems (AS) report
+- New Quality of Experience (QoE) indicators
+- Add alert graph to visualize alerts graphically
+- Improve SNMPv3 polling and support for SHA256, SHA384, SHA512, and AES128 authentication protocols
+- Detect network and service scan by inspecting historical data to find slow scans
+- Aggregate engaged/historical alerts implementing in-memory tables
+- Add access control list (ACL) and alerting (no blocking)
+
+## Improvements
+- Add DHCP fingerprint support
+- Add JA4 client fingerprint
+- Add many new custom queries to historical flows
+- Add ability to determine when a host has a meaningful IP (IPv4 hosts only)
+- Add support for STARTTLS when sending emails (also added a preference)
+- Add custom field mapping (nProbe) in historical flows
+- Add --geoip-dir `<dir>` for loading GeoIP files from a custom location
+- Add preference to selectively enable ClickHouse flow dump
+- Add SNMP_MSG_REPORT support
+- Add service down check to scan alert
+- Add ApexCharts responsiveness
+- Add local vs remote traffic report
+- Add Redis operations timeseries
+- Add support for labels in timeseries
+- Add per-minute NetFlow timeseries
+- Add active exporters/interfaces count in log when limit exceeded
+- Add support for nDPI address cache
+- Change MAC serialization key based on mirrored traffic
+- Enhance OS detection
+- Extend conversation custom query with per-direction packets/bytes
+- Extend ZMQ decompression buffer
+- Implement NAT detected alert
+- Implement nDPI OS hint support
+- Implement broadcast domain serialization/deserialization
+- Implement alert for anomalous Redis read/write counts
+- Implement QUIC RTT calculation
+- Implement host OS change detection
+- Implement mechanism to retain old-dated collected flows longer
+- Improve Dashboard layouts
+- Improve Webhook messages and latency
+- Improve flow swap heuristic
+- Improve localhost MAC detection
+- Improve flow alerts and add ability to refresh already-triggered alerts
+- Improve host MAC address learning
+- Improve service detection reliability
+- Improve retransmission/out-of-order computation
+- Improve formatting of Redis stats
+- Improve hostname resolution
+- Improve host label formatting (MAC hidden when IP is present)
+- Improve formatting for large numbers
+- Improve TCP window handling
+- Improve host MAC address learning
+- Improve host policy check
+- Introduce ntopng Guru on Gurubase.io
+- Unify Bootstrap table style with custom tables for dark mode
+- Rework three-way handshake state detection 
+- Rework remote throughput collection
+- Rework DNS flow direction handling
+- Rework RTT calculation
+- Optimize drop counters
+- Add decoding hardening checks
+- Add MDNS buffer length check
+- Update MAC address models list
+- Update to VueJS 3.5 with reworked observation point ID
+- Various active monitoring improvements
+- Rework TCP flags handling
+- Integrate domain collection code
+- Display APN MAC and SSID in historical flows
+- Dump WLAN_SSID and WTP_MAC_ADDRESS in historical flows
+- Support Linux interface aliases (altnames)
+
+## Changes
+- Add sticky action column to tables
+- Add option to dump pcap flows into ClickHouse
+- Add SNMP delete-all button and fixed unresponsive delete button
+- Add RTT/Jitter table
+- Add Lucide as internal library
+- Add recipient stats for all endpoints
+- Add Speedtest timeseries
+- Add MAC address cache duration preference
+- Add remediations for nDPI alerts
+- Add license limits page
+- Add SNMP data import/export support
+- Add MITRE table and alerts view on ClickHouse cluster
+- Add manufacturer to historical flows
+- Add native sFlow (packet sample only) collector
+- Add preference to exclude new interfaces from SNMP usage automatically
+- Add L7 (nDPI) JSON collection in Suricata collector
+- Extend number of interfaces supported by the view interface
+- Show toasts when the flows/hosts limit is exceeded
+- Rework DHCP flow key
+- Change table styling for dark and white modes
+- Disable hourly on unsupported queries
+- Add per-direction packets/bytes in historical flows table
+- Add LDAP preference to enable extend user capabilities
+- Add server/client TCP flags to syslog
+- Use SNMP aliases instead of names when available
+- Increase ntopng password max length to 128 characters
+- Implement ICMP type/code support
+- Collect ICMP_TYPE
+- Clean SQLite schema (removed problematic backticks, indentation fixes)
+- Rework alert serialization and changed alert info format
+- Modify nDPI defaults for RTP stream handling
+- Merge TCP probing and probing attempt
+- Support IPv6 address formatting with brackets
+- Use capabilities for enabling SNMP trap collection
+- Support enabling/disabling ClickHouse flow dump (alerts always dumped with -F clickhouse)
+- Update API version and cleaned up code
+- Enable filtering by custom fields sent from nProbe
+- Remove JA3 leftovers and unused MIBs
+- Remove obsolete TLS suspicious ESNI usage and improved device type guessing
+- Remove support for deprecated apcon/VSS timestamps
+- Remove packets from in/out traffic (unsupported for hourly)
+- Remove obsolete flow serializers
+
+## Fixes
+- Fix -x/-X option limits (now displayed in About page)
+- Fix various issues on historical flow charts
+- Fix SNMP page alert
+- Fix link button color
+- Fix format_utils.round function
+- Fix top senders/receivers sorting on timeseries page
+- Fix incorrect alerts counter on top of page
+- Fix various dark mode style issues
+- Fix server types in view interface
+- Fix live stats reset on view interface
+- Fix ClickHouse health page not found
+- Fix JS table crash on missing sort column
+- Fix asset link and last seen formatting
+- Fix Suricata-DNS alert correlation
+- Fix packet stats formatter on interface page
+- Fix random crash on interface timeseries page
+- Fix various SQL queries
+- Fix default date-time values
+- Fix suspicious DGA domain alert
+- Fix host pool import and duplicate alert suppression
+- Fix name display bugs
+- Fix incorrect retransmission stats
+- Fix host details flow table
+- Fix IEC104 REST and added error messages
+- Fix Speedtest issues
+- Fix Sankey chart overflow
+- Fix application editing without proto files
+- Fix time label in timeseries
+- Fix exporter timeseries for sub-interfaces
+- Fix http_prefix missing in some pages
+- Fix Modbus alert behavior
+- Fix BS5 tooltip stacking
+- Fix overlapping address handling in network policy
+- Fix early flow expiration with netfilter
+- Fix TCP retransmission handling with ZMQ
+- Fix incorrect alert scores
+- Fix alert score in CustomFlowLuaScript
+- Fix flow deallocation with failed/disabled alert
+- Fix L7 timeseries direction
+- Fix usage calculation error
+- Fix InfluxDB top timeseries
+- Fix InfluxDB timeseries step issues
+- Fix Kafka issues
+- Fix missing user agent info in historical flow
+- Fix TLS info column in flow logs
+- Fix counter overflow
+- Fix OPNsense package install
+- Fix approximation issues in values
+- Fix double probe count in disaggregation
+- Fix SMTP/SMTPS STARTSSL handling
+- Fix OS rendering
+- Fix LDAP extended user capabilities
+- Fix InfluxDB local hosts report
+
+## nEdge
+- Enable Infrastructure Monitoring support
+- Support Multicast/Broadcast forwarding policies between restricted/trusted interfaces
+- Ignore shaper matching a 'Not Assigned' host when peer host matches a user/pool
+- Add gateway alert and configuration
+- Fix invalid nEdge update handling
+- Fix netfilter counters direction
+- Fix unexpected Modbus alert behavior
+- Remove pools limit from about page and default host pool counter
+
+#### ntopng 6.2 (August 2024)
+
+## Breakthroughs
+ - Major code optimizations and reduction of locks
+ - Huge memory footprint reduction (by more than half)
+ - Huge improvements to SNMP polling
+ - MITRE alerts classification
+ - New Security report
+ - Replay historical flows on a virtual interface
+ - Support for ClickHouse Cloud and TLS towards ClickHouse/SQLite
+ - Cisco QoS MIB poller
+ - New translations: Korean, Spanish and French
+ - Support for influxdb v.2 (with v.1 compatible buckets)
+ - CheckMK alerts export through Event Console (syslog)
+ - New WeChat Alert endpoint
+ - Add more filtering capabilities to the Reports
+ - New UI table component
+
+## Improvements
+ - Add flow_risk and host_risk remediations.
+ - Add VLAN rules
+ - Add drops/flows and probes info to view interface
+ - Add exporters limits to ntopng licenses
+ - Add extensions for asset inventory
+ - Add feature sorting flows by protocol 
+ - Add flows and drops ts to netflow/sflow exporters
+ - Add info to nprobes and exporters pages
+ - Add interface to SNMP topology map
+ - Add localhost to ipaddress expection lists 
+ - Add mac address to the hosts page
+ - Add missing DHCP mappings 
+ - Add mitre_info to alerts in ClickHouse
+ - Add NAT info to ClickHouse and ECS
+ - Add SIP status call
+ - Add the ability to set custom alert score
+ - Add uuid_num and unique_source_id to exporters and probes
+ - Add various filters to Historical/Alerts pages
+ - Add L2TP decapsulation
+ - Add sankey to probes/exporters page
+ - Add support for flow source
+ - Add --disable-purge for debug purposes Add average flow throughtput in flows
+ - Add support for Ethernet-over-IP tunnel support
+ - Add SNMP interface and device usage page and timeseries 
+ - Add detection of interfaces going down/up when open in pcap mode
+ - Add host name discovered with DHCP 
+ - Add blacklist charts
+ - Add SNMP Trap support
+ - Add QoS page to snmp
+ - Add sankey to probes/exporters page
+ - Add support for MAC addresses in traffic profiles
+ - Add smcroute integration.
+ - Add traffic profiles rules.
+ - Add TCP flow connection state  
+ - Add SNMP interface speed configuration 
+ - Add report editor
+ - Add support for ModBUS Scattered Holding Register Read
+ - Add filtering ability to report page 
+ - Add JE malloc support
+ - Improve cloud support
+ - Implement NetFlow polling device using coroutines
+ - Implement flow traffic account in pcap interfaces when reading traffic from a pcap interface.
+ - Implement mitre_table_info inside database 
+ - Implement TLS swap heuristic similar to SSH
+ - Improve host pool reload latency
+ - Improve performance in SNMP device listing
+ - Improve SNMP various performances and reworked interfaces page
+ - Modify Lua allocator to avoid allocating small blocks and using ^2 blocks size to reduce heap fragmentation
+ - Reduced memory and trhead usage Add missing HTTP server thread naming Add --limit-resources to tell ntopng to reduce memory usage (useful for systems with limited resources)
+ - Rework periodic discovery code
+ - Rework flow exporters lua stats
+ - Rework interface polling with snmpbulk
+ - Rework flow exporters host rules
+ - Rework timeseries backend and added support to bar charts
+ - Rework throughput calculation for flow-based interfaces: it is no longer calculated periodically but only when a new flow update is received
+ - Update the dashboard with the editing component feature. 
+ - Add support for interfaces of different datalink with pcap (e.g. -i ethX,tunY...)
+ 
+## Changes 
+ - Add ntopng to group systemd-journal
+ - Add download of journalctl logs for the last day
+ - Add hostnames to custom queries 
+ - Add mapping between db fields and netflow
+ - Add usage of proto.ndpi_confidence in flow_details.
+ - Add SNMP import functionality for CSV files 
+ - Add limit on DB interface flows accoring to the flow cache 
+ - Add Major and Minor connection states
+ - Add percentage and * as exporter device option in Flow Exporter rules + minor fixes.
+ - Add option to backup redis (ntopng-utils-manage-config -a backup -r)
+ - Add percentage and * as exporter device option in Flow Exporter rules + minor fixes.
+ - Add check for avoiding crash with hosts with no MAC
+ - Add trigger period action on shell script
+ - Add exporters limits to ntopng licenses
+ - Add memory boundaries checks
+ - Add switch between normal and per minute traffic ts
+ - Add icon in flows that indicate when the flow has swapped directions
+ - Add flow exporter top chart
+ - Add autosearch when opening edit application page
+ - Add topk chart to conversations
+ - Add support for ModBUS Scattered Holding Register Read
+ - Add host location to flow page 
+ - Add limitations for max number of polled SNMP devices
+ - Add check for preventing false positive for long lived connections on top of protocols that can take a while
+ - Add SNMP usage page
+ - Add thpt charts to historical flows 
+ - Add garbage collector calls
+ - Add startup flush for ntopng.trace_error.alert_queue
+ - Add Bootstrap 5 tooltip support
+ - Add check to avoid memory issues (heap overflow) during DHCP packet dissection
+ - Add check for avoid setting the interface in non-blocking mode when used with pcap files
+ - Change the severity of the old blacklisted flow to critical
+ - Change the labels from 'Downlink Usage' and 'Uplink Usage' to 'In Usage' and 'Out Usage'
+ - Change score level for various Alerts. 
+ - Cleaned up flow throughout calculation
+ - Disabled flow swap for UDP flows that might lead to false positives
+ - Disable download image button on Safari.
+ - Enable the editing of blacklist URL.
+ - Enable interface name search. 
+ - Enable search in the SNMP interfaces page. 
+ - Make sort/delete persistent. Compute component_id on server side.
+ - nmap command path is now computed at runtime
+ - Packet padding is no longer accounted in flow traffic
+ - Prevents non-admin users to pause interfaces
+ - Report templates can now be defined in multiple paths
+ - Reduced table retention
+ - Remove additional http header
+ - Remove sflowdev timeseries and unified to flowdev
+ - Remove outdated unahandled flows that was casing fiscrepancies in flow accounting
+ - Remove useless work when shutting down 
+ - Run nmap setcap only when we're outside a container
+ - Update doc with all the latest features.
+
+## nEdge
+ - Add option to enable external captive portal auth
+ - Add Keep Src Address flag.
+ - Add MAC and IP Address to radius interim-update
+ - Add new fields to radius accounting
+ - Add code to delete expired flows in ntopng still present in conntrack
+ - Add check for offloaded flows with uncompleted protocol detection that have observed too many packets (updated via conntrack)
+ - Implement remote radius authentication for local users (toggle)
+ - Handle broadcast forwarding
+ - Optimized std::map to reduce memory usage
+ - Remove keep_src_address
+ - Remove the hardcoded testing value for traffic_quota_ratio.
+ - Remove alerts no longer necessary as they have been replaced by local traffic rules
+ - Fix broadcast forwarding
+ - Fix `Daily Traffic Quota` and `Daily Time Quota` column style.
+ - Fix incorrect delta calculation
+ - Fix repeater config modal reset
+ - Fix the apply button in repeaters modal.
+ - Fix progress bar.
+ - Fix editing on repeater-config modal by removing unnecessary variable.
+ - Fix the enable_nat and enable_iface toggles
+ - Fix the alignment of column_key icons on the host_details/flows page.
+ - Fix `Daily Traffic Quota` and `Daily Time Quota` column style.
+ - Fix the alignment of column_info icons.
+
+## Fixes
+ - Fix top visited websites leak (growing undefinitely) and cpu load (sorting on every decoded site)
+ - Fix aggregated live flows exporter filter.
+ - Fix L7 Protocol usage & empty table statement using the view interface in Server Ports Analysis page 
+ - Fix pcap extraction for unprivileged users
+ - Fix chown group
+ - Fix TCP Flow Reset check. 
+ - Fix TCPFlowReset check. 
+ - Fix free on uninitialized pointers
+ - Fix the creation of the all_alerts_view in the ClickHouse cluster SQL script.
+ - Fix the partition parameter in the ClickHouse cluster SQL database schema.
+ - Fix a bug related to removing CVEs when a scan is in progress and make minor optimizations.
+ - Fix the formatting of 0 percentage. 
+ - Fix access to released memory in UT hash iteration
+ - Fix navigation from server ports analysis chart view to table view.
+ - Fix where on aggregated queries (interface id was ignored)
+ - Fix invalid packet count with fragemented traffic
+ - Fix info field cut after 256 characters
+ - Fix crash and memory leak introduced
+ - Fix missing fields in TLS alerts
+ - Fix invalid application protocol accounting in network interfaces due to partial nDPi detection
+ - Fix pcap download
+ - Fix bug in UDP scan
+ - Fix counter polling
+ - Fix SSH flow swap heuristic
+ - Fix segmentation fault on Stratosphere lab blacklist loading
+ - Fix pcap polling on macOS and FreeBSD Fixes handling of interface pause (idle) on pcap interfaces
+ - Fix SQL injection description
+ - Fix copy not working on alert description (#8316)
+ - Fix string info cut due to buffer size
+ - Fix invalid host rename when using HTTP proxies
+ - Fix reset counters does not reset sent/rcvd bytes/packets 
+ - Fix attempt to index nil value
+ - Fix some performance issues in the new flow page
+ - Fix timeseries queries not working with serialize by mac
+ - Fix incorrect check on TOS
+ - Fix thpt historical flow chart
+ - Fix historical flow charts
+ - Fix duplicated entries in radius
+ - Fix service map learning not reset at startup
+ - Fix circular dependencies
+ - Fix tooltip not working
+ - Fix active monitoring alert discarded with no pool selected 
+ - Fix incorrect hosts number
+ - Fix issue with host pools assignment
+ - Fix remote access alert not triggered 
+ - Fix SNMP topology map and added to all snmp devices
+ - Fix SNMP v3 import not working
+ - Fix topology map not correctly working
+ - Fix various translation to It, JP an other languages.
+ - Fix various issue with application reloading
+ - Fix various issues in SNMP Chart
+ - Fix bytes per minute SNMP Serie not added
+ - Fix shell script execution on alerts engaged 
+ - Fix crash when sorting hosts in low memory conditions
+ - Fix domain name extraction from the info column. 
+ - Fix colors in dygraph plotters
+ - Fix throughput values in local traffic rules. 
+ - Fix wrong source type in exporters report
+ - Fix emergency recipient toast not configured
+ - Fix location not correctly set in case of aggregation
+ - Fix unknown filter applied even when not filtered 
+ - Fix schema id switch in influx
+ - Fix Heap-buffer-overflow in IEC104
+ - Fix influxdb top stats
+ - Fix timeseries charts timezone and removed no more used files
+ - Fix FreeBSD packaging issues with VulScan
+ - Fix incorrect total calculation
+ - Fix various issues on the exporter pages
+ - Fix historical aggregated flow issue with timestamp lower than the last day
+ - Fix various lua memory issues
+ - CentOS 7 fixes
+ - Workaround for a memory leak on windows for a bug on the pthread library
+ - Various OT fixes
+
+#### ntopng 6.0 (October 2023)
+
+## Breakthroughs
+ * New configurable Dashboard with new built-in templates
+ * New configurable Traffic Report
+ * New Vulnerability Scans & CVEs support
+ * Add support to Periodic Reports notified via Recipients (e.g. email)
+ * Add Inactive Hosts
+ * Add PagerDuty integration
+ * Add TheHive integration
+ * Add support to Modbus and Modbus alerts
+ * Add Server Ports Analysis page
+ * Enable multithreading in active measurements (more accurate)
+ * Migrate frontend chart timeseries library to Dygraph
+ * Add support for MAC Address based RADIUS accounting
+ * Improve OT, ICS, Scada support
+ * Trigger External Host alerts directly from Lua (also for inactive hosts)
+ * Add multicast forwarders
+ * Implement host blackhole
+ * Add support for LLDP id to MIB-II InterfaceId mapping
+ * Add support for bidirectional rules
+ * Add support for Enterprise XL bundle
+
+## Improvements
+ * Implement asynchronous VS scanning
+ * Implement Ms Teams call detection
+ * Optimize blacklist handling
+ * Improve Network Map charts physics
+ * Extend support to deliver notification to specific recipients
+ * Improve traffic recording settings
+ * Add support for Host Pools and Networks in Local Traffic Rules
+ * Add search map
+ * Add custom queries for Top Local/Remote hosts
+ * Add Top receiver/sender networks custom queries
+ * Add openvas support
+ * Add new Vulners vulnerability scanner
+ * Add ability to set probes aliases
+ * Add MDNS, NETBios, HTTP historical filters
+ * Improve FreeBSD clickhouse installation
+ * Implement `-L <path>` for logging HTTP requests
+ * Add -z for enabling timestamp reforge when reading pcap files
+ * Improve dark mode css
+ * Optimize ElasticSearch export (removed locks, increase export queue to 64K to handle spikes)
+ * Add Radius chap validation
+ * Add Radius auth protocol preference
+ * Automated commit of clang-format CI changes
+ * Add tool for creating nProbe topics in a kafka broker
+ * Implement host score in Host scripts
+ * Improvements for No-RX traffic analysis
+ * Improve nProbe time drift check
+ * Implement clickhouse retention
+ * Add new page with snmp device rules
+ * Add limit to discard clickhouse dump files
+ * Improve IP/MAC association in SNMP
+
+## Changes
+ * Support multilple -m options
+ * Rework nDPI stats
+ * Add support for multiple email recipients
+ * Add logic to enable generic checks if without a configuration
+ * Add malware host contacted check
+ * Use REST API to enable/disable checks
+ * Disabled the reset of the email notification modal upon failed edit submission
+ * Whitelisted locale page
+ * Add ability to reset blacklist stats
+ * Implement blacklist stats
+ * Add mining currency in flow info
+ * Add flag to use proxy in email settings
+ * Reduced in simulate vlans option, the number of vlans
+ * Restricted top flow chart for community version
+ * Add input with suggestions component
+ * Set capture direction for n2disk in zmq interfaces
+ * Add explicit flag to enable flow export when recording on zmq interfaces
+ * Add support for %NPROBE_INSTANCE_NAME
+ * Add Ellio blocklist configuration (disabled by default)
+ * Update to the latest nDPI risks
+ * Email endpoint improvements
+ * Improve notification message
+ * Add download/upload buttons
+ * Add possibility to send notification to recipients
+ * Add multicast broadcast filter
+ * Updated checks lists per license
+ * Add feedback of correctly host inserted or already present
+ * Take the score into account when computing the top alerted hosts
+ * Add backend autorefresh support
+ * Add flow exporter mapping to timeseries
+ * Update default aggregation criteria in Aggregated live flows.
+ * Add missing protocol mapping
+ * Exported IP country information when using -F syslog
+ * Change js formatting function for 'number' type, using thousands separator
+ * Disabled LDAP support for FreeBSD
+ * Add VLAN bidirectional traffic alert 
+ * Handle JSON format for NXLOG in Kerberos plugin
+
+## nEdge
+ * Add dashboard templates for nedge pro and enterprise
+ * Enable CH support on nEdge Enterprise
+ * Enable throughput charts on nedge
+ * Make Multicast repeater configurable
+ * Add MDNS and multicast repeater
+ * Major cleanup of (deprecated) nedge host pools code
+ * Add support for custom informative captive portal
+ * Set multiple LAN addresses in case of multiple LAN interfaces
+ * Add inter-LANs policies
+ * Always redirect somewhere on captive success, instead of displaying an empty page
+ * nf_config API improvements
+
+## Fixes
+ * Fix edit rest in multicast forwarding
+ * Fix missing validation functions
+ * Fix traffic timeseries labels
+ * Fix RedHat OS-name detection
+ * Fix prototype pollution vulnerability
+ * Fix thread pool spawning on freebsd
+ * Fix Zoom handling
+ * Fix behavior alert not triggered
+ * Fix naming with timeseries
+ * Fix nDPI protocol id issues
+ * Fix RRD computation of sampled series with MAX as consolidated function
+ * Fix flow alert where clause in write mode
+ * Fix alert silencing not working
+ * Fix application protocol ID using minor and major protocol
+ * Fix UI spinner on loading
+ * Fix recursive problem in active monitoring
+ * Fix ts with vlans
+ * Fix shutting down doesn't insert alerts in CH
+ * Fix checks configuration initialization (default values) for new risks
+ * Fix traffic behavior total not working in charts
+ * Fix timeseries chart date format
+ * Fix SSH flow swap heuristic
+ * Fix avg empty value and added extra check for nan values in js
+ * Fix pcap dynamically loaded not triggering alert
+ * Fix ZMQ linking on Win
+ * Fix date format
+ * Fix blacklist counter stats
+ * Fix flow alert queries on SQLite
+ * Fix interface and local networks alerts not released
+ * Fix flow devices not working with view interface
+ * Fix flow exporters not seen with aggregated interfaces
+ * Fix js regexes
+ * Fix for validating correctly host and VLAN
+ * Fix segv with custom protocols
+ * Fix l7 metadata ingestion (e.g. dns query) when collecting from ZMQ
+ * Fix hostname resolving
+ * Fix ApexCharts formatter
+ * Fix heap-buffer-overflow in MDNS packet dissection
+ * Fix exclusion bitmap not correctly set
+ * Fix some errors and leaks found while fuzzing locally
+ * Fix Heap buffer overflow in IEC104Stats
+ * Fix for memory management in packet-mode
+
+#### ntopng 5.6 (February 2023)
+
+## Breakthroughs
+ * Add XL license
+ * Add support Rocky9
+ * Add support to Kafka
+ * Increased max num of exporters
+ * Introduce nTap support
+ * Introduce support to ClickHouse Cluster
+ * Rework Historical Chart Page
+ * Rework pages using VueJS and moving towards responsive client
+
+## Improvements
+ * Handle allowed networks for unprivileged users
+ * Improve multitenancy support
+ * Improve thread names
+ * Improve mac formatting
+ * Improve top host sites adding reset method
+ * Improve pcap upload
+ * Improve ports formatting
+ * Improve handling for Cisco NBAR collection
+ * Improve source style
+ * Improve Linux OS detection
+ * Improve Engaged Time Report in Chart
+ * Improve passive DNS hosty resolution
+ * Improve alerts reports
+ * Improve OPNsense installation instruction
+ * Improve host report
+ * Improve support to NDPI_TCP_ISSUES flow risk
+ * Improve layout
+ * Improve ICMP flow handling
+ * Lowered memory consumption due to alert score
+ * Rework pro code directories
+ * Rework lua code
+ * Rework flow aggregation
+ * Rework capabilities support
+ * Socket code cleanup
+ * Use API to build interface report
+ * Update rrd calculations
+ * Update JP localization (courtesy of Yoshihiro Ishikawa)
+ 
+## Changes
+ * Add logo to package
+ * Add missing deps
+ * Add link to host
+ * Add options to send report by email
+ * Add Report class and example
+ * Add internal server error on health/interfaces doc api
+ * Add support for external (REST) host alerts
+ * Add various help and parameters
+ * Add script to create a pdf report from historical API data
+ * Add NXLOG/Active Directory documentation
+ * Add reload button in various pages
+ * Add third party resources
+ * Add flow exporter ips to observation points
+ * Add support for the python API documentation
+ * Add forced offline variable to mantain the --offline option
+ * Add support for Lua host engaged alerts using timeout
+ * Add observation points ts
+ * Add HTTP server in flow details
+ * Add token-based authentication https://www.ntop.org/guides/ntopng/advanced_features/authentication.html?highlight=token#token-based-authentication
+ * Add Flow Risk (Bitmap) Filter in alerts
+ * Add make targets for pip package Updated package classes
+ * Add L7 information in flow object adding
+ * Add CodeQL workflow for GitHub code scanning
+ * Add modal-download-file component and add export timeseries png picture button
+ * Add critical and emergency status to alerts
+ * Add oneway TCP flows counters
+ * Add support for nDPI network handling in flows
+ * Add -n 4 for name resolution
+ * Add IMAP/POP stats
+ * Add Stratosphere Labs Blacklist support
+ * Add support d3v7
+ * Add Requires for RH9 (redhat-lsb-core is deprecated)
+ * Add interfaces stats api and refactor the others health api
+ * Add support to application protocol and master protocol
+ * Add CIDR support in Historical Flows
+ * Add new Aggregated Flows page
+ * Add new Alerts Analysis page
+ * Add support for estimating the number of TCP contacted servers with no reply
+ * Add new Ports Analysis page
+ * Add detection of periodic flows and exported it as flow risk in both flows and alerts
+ * Add REST API to get DB columns and info
+ * Add ability to query alerts from Python
+ * Add Zoom streams handling
+ * Add various checks
+ * Add IP-in-IP decapsulation
+ * Add Host Rules page (possiblity to trigger alerts based on timeseries)
+ * Add the ability to analyze a pcap without creating a new interface
+ * Add Windows timezone handling
+ * Change table definition
+ * Cleanup file names
+ * Disabled host serialization
+ * Enlarged the number of local networks to 1024
+ * Increased upload size to 25 MB
+ * Implement custom script check
+ * Implement support of host filtering with TX traffic sent
+ * Implement unresponsive peers host report
+ * Implement count of incoming tx peers with TCP flows unanswered
+ * Move ts business logic in ts_rest_utils.lua
+ * Patch for handling nicely clock drift at startup
+ * Remove obsolete autogen commands On Linux stay with g++ unless asnitizer is used
+ * Remove REST API v0 (discontinued since ntopng 4.2)
+ * Remove no more used severity
+ * Refactor range-picker query_presets
+ * Rework host packets page and removed dscp page
+ * Rework host ports implementation
+ * Rework Historical class
+ * Rework OPNsense plugin package build
+ * Self test fixes and improvements
+ * Update documentation
+ * Update REST API
+ * Update bootstrap table css
+ * Update various pages to vuejs
+ * Update counter scaling (no gauge)
+ * Update response in service disabled case
+
+## nEdge
+ * Add support to multi LAN and fixes DHCP service error
+ * Add VLAN and multi WAN support to nedge
+ * Add routing_policy to nedge configuration callback
+ * Fix netplan configuration error
+ * Update vlan trunk doc
+
+## Fixes
+ * Df columns error management, table export formatted with % and column reordering now working
+ * Fix missing openssl dependency from MacOS
+ * Fix clang
+ * Fix host sankey minor issues
+ * Fix hyperlinks to historical charts not working
+ * Fix hyperlinks not working correctly
+ * Fix Regex escape
+ * Fix application name resolution on aggregated views
+ * Fix RRD driver for step calaculation
+ * Fix visual bugs with master and app proto
+ * Fix various interface page minor bugs
+ * Fix shortened labels
+ * Fix default sort not working
+ * Fix influxdb retention not updated
+ * Fix name and size of charts
+ * Fix vlan label not mapped
+ * Fix for FreeBSD configure
+ * Fix ip resolution not updating the name
+ * Fix discrepancy in Traffic Calculation (Interface Chart)
+ * Fix measurement units not uniform
+ * Fix crash swap
+ * Fix bug that reported wrong DNS information
+ * Fix build process with opnsense/plugins
+ * Fix validators regexps
+ * Fix ICMP emtropy report Improve HTTP flows report
+ * Fix Telegram Reported alerts contain HTML
+ * Fix multi-series Charts are Unreadable in Dark Mode
+ * Fix invalid reverse host resolution that caused hosts to be labelled with wrong symbolic name
+ * Fix delete obsoleted code from page-stats
+ * Fix for circular dependency js
+ * Fix overlay not working
+ * Fix due to changes to nDPI ALPN handling
+ * Fix CSS Inconsistency Across Browsers
+ * Fix Deep copy also for array of objects
+ * Fix missing modules
+ * Fix NAT handling with nprobe
+ * Fix initialization crash
+ * Removed multiple load from tables
+ * ZMQ encryption key is now reported in hex to avoid escape problems
+ 
+#### ntopng 5.4 (July 2022)
+
+## Breakthroughs
+* New search bar, with more results, information, links
+* New listening ports page when collecting process information from nProbe (agent mode)
+* New support for ELK version 8 and standardized ELK export format
+* New packages for Ubuntu 22.04
+* New Centrality Map in service map
+* New Similarity Map
+* Major performance improvements for periodic scripts
+* New alert exclusion management (for checks and nDPI flow risks)
+* Introduce Vue.js in the frontend
+* Expose Chart Vue components for external websites
+
+## Improvements
+* Add new alerts (DHCP Storm, DNS Fragmented, Scan Detection, ...)
+* Add Top Dropdown menu (Top Clients, Top Servers, ...) to the alert explorer
+* Add ability to set historical flow permission to users
+* Rework and Improve Maps (Service/Periodicity/Host)
+* Improve buttons look and feel using latest Bootstrap version
+* Improve Historical Flow and Alerts information (add many new fields for better analysis) 
+* Improve IEC support (e.g. iec_invalid_transition)
+* Add various mapping (DNS answers, DNS query types, ICMP answers, ...)
+* Improve documentation, added all the available checks description
+* Improve Exporter IP Flow Layout
+* Improve ClickHouse queries performance with a better use of indexes
+* Improve ZMQ flow idle timeout handling
+* Updated ECS to 8.1 version
+* Add various SNMP checks
+* Add npm and Webpack support
+* Add new alert exclusions fields (Domain and IssuerDN)
+* Add DGA domain handling received via ZMQ
+* Add Network matrix for view interfaces
+* Add VLAN field support to alert exclusions
+* Add Top Sites for flows collected from nProbe
+* Add ELK dump frequency to Settings
+* Implement Network/FQDN exclusion for alerts
+* Add 'dpi' and 'guessed' badge to flow list and details
+* Add support for L7 confidence
+* Add ClickHouse search in JSON fields
+* Add filters to Service/Periodicity maps
+* Add --offline option to force offline mode in case of limited connectivity
+* Add support for Active Monitoring selection in recipients
+* Add copy button for all external link
+* Allow download of PCAP in Historical Flows Explorer
+* Add Flow Exporter to view interfaces
+* Add ECS support to ELK flow dump
+* Add MAC Address to View Interfaces
+* Add Similarity check
+
+## Changes
+* Remove Telemetry
+* Move UDP unidirection to nDPI alerts
+* Disable flow dump to syslog on MacOS due to broken openlog API on Sierra and later
+* Rework MAC/IP Reassociation alert used to detect spoofind and MITM (Man In The Middle) Attacks
+* Separate data retention into Flow/Alerts data retention and Timeseries/Top data retention
+* Reduce number of (unnecessary) threads 
+
+## nEdge
+* Add alert when a Gateway is unreachable
+* Improve the Captive Portal
+
+## Fixes
+* Fix cookie attributes to the user and password cookies on the 302 redirect response
+* Fix various GUI incorrect/undefined names
+* Fix datatables incorrect data visualization
+* Fix RRD timeseries implementation
+* Fix log spam in case of endpoint not working
+* Fix modals not hiding
+* Fix alert/historical page filters not working correctly
+* Fix bugs with flows informations while using View Interface
+* Fix time format, shown as local instead of server time in some pages
+* Fix format validations not correctly working
+* Fix nProbe template flow mapping
+* Fix access to uninitialized obj leading to segfault
+* Fix idle time too low
+* Fix invalid risk set from nDPI to ntopng's Flow class
+* Fix dns large packets alert incorrectly triggered
+* Fix network discovery
+* Fix CSV download
+* Fix bug that prevented flows to be dumped on ClickHouse
+* Fix external URLs not correctly working
+* Fix database initialization
+* Fix IEC continuous dissection
+* Fix NetBIOS name should not be used for hostnames
+* Fix various CSS bugs
+* Fix filter operators
+* Fix name lookup
+* Fix for detecting ZMQ drops
+* Fix Historical Filters lost when switching windows
+* Fix traffic directions with mirrored traffic
+* Fix various API not correctly working
+* Fix range picker not correctly working
+* Fix crash when using interfaces with no database
+* Fix various nil description
+* Fix SIGABRT on shutdown with Views
+* Fix for SNMP bridge alerting
+* Fix external links not working
+* Fix flow drilldown not correctly working
+
 #### ntopng 5.2 (February 2022)
 
 ## Breakthroughs
@@ -141,23 +1303,23 @@
 * FreeBSD / OPNsense / pfSense [packages](https://packages.ntop.org/)
 * Ability to see the TX/RX traffic breakdown both for physical interfaces and when receiving traffic from nProbe
 * Add support for ECS when exporting to Syslog
-* Improved TCP analysis, including analysis of TCP flows with zero window and low goodput
+* Improve TCP analysis, including analysis of TCP flows with zero window and low goodput
 * Ability to send alerts to Slack
 * Implementation of a token-based REST API access
 
 ## Improvements
 
-* Reworked the execution of hosts and flows checks (formerly user scripts), yielding a reduced CPU load of about 50%
-* Improved 100Kfps+ [NetFlow/sFlow collection performance](https://www.ntop.org/nprobe/netflow-collection-performance-using-ntopng-and-nprobe/)
+* Rework the execution of hosts and flows checks (formerly user scripts), yielding a reduced CPU load of about 50%
+* Improve 100Kfps+ [NetFlow/sFlow collection performance](https://www.ntop.org/nprobe/netflow-collection-performance-using-ntopng-and-nprobe/)
 * Drilldown of [nIndex](https://www.ntop.org/guides/ntopng/advanced_features/flows_dump.html#nindex) historical flows much more flexible
 * Migration to Bootstrap 5
 * Check malicious JA3 signatures against all TLS-based protocols
-* Reworked Doh/DoT handling
+* Rework Doh/DoT handling
 
 ## Fixes
 
-* Fixes SSRF and stored-XSS injected with malicious SSDP responses
-* Fixes several leaks in NetworkInterface
+* Fix SSRF and stored-XSS injected with malicious SSDP responses
+* Fix several leaks in NetworkInterface
 
 ## Notes
 
@@ -175,7 +1337,7 @@
 ## Breakthroughs
 
 * [Flexible Alert Handling](https://www.ntop.org/ntopng/using-ntopng-recipients-and-endpoints-for-flexible-alert-handling/)
-* Added recipients and endpoints to send alerts to different recipients on different channels, including email, Discord, Slack and [Elasticsearch](https://www.ntop.org/ntop/using-elasticsearch-to-store-and-correlate-ntopng-alarms/)
+* Add recipients and endpoints to send alerts to different recipients on different channels, including email, Discord, Slack and [Elasticsearch](https://www.ntop.org/ntop/using-elasticsearch-to-store-and-correlate-ntopng-alarms/)
 * Initial SCADA protocol support
 * Many internal components of ntopng have been rewritten in order to improve the overall ntopng performance, reduce system load, and capable of processing more data while reducing memory usage with respect to 4.0.
 * Cybersecurity extensions have been greatly enhanced by leveraging on the latest nDPI enhancements that enabled the creation of several user scripts able to supervise many security aspects of modern systems.
@@ -210,9 +1372,9 @@
 * Increased nIndex dump throughput by a factor 10
 * Increased user scripts execution throughput
 * Massive cleanup/simplifications of plugins to ease [community contributions](https://www.ntop.org/ntopng/a-step-by-step-guide-on-how-to-write-a-ntopng-plugin-from-scratch/)
-* Improved cardinality estimation (e.g., number of contacted hosts, number of contacted ports) using [Hyper-Log-Log](https://en.wikipedia.org/wiki/HyperLogLog)
-* Added DSCP information
-* Reworked handling of dissected virtual hosts to improve speed and reduce memory
+* Improve cardinality estimation (e.g., number of contacted hosts, number of contacted ports) using [Hyper-Log-Log](https://en.wikipedia.org/wiki/HyperLogLog)
+* Add DSCP information
+* Rework handling of dissected virtual hosts to improve speed and reduce memory
 
 ## nEdge
 
@@ -220,11 +1382,11 @@
 
 ## Fixes
 
-* Fixed race conditions in view interfaces
-* Fixed crash when restoring serialized hosts in memory
-* Fixed conditions causing high CPU load
-* Fixes CSRF vulnerabilities when POSTing JSON
-* Fixes heap-use-after-free on HTTP dissected last_url
+* Fix race conditions in view interfaces
+* Fix crash when restoring serialized hosts in memory
+* Fix conditions causing high CPU load
+* Fix CSRF vulnerabilities when POSTing JSON
+* Fix heap-use-after-free on HTTP dissected last_url
 
 ----------------------------------------------------------------
 
@@ -245,12 +1407,12 @@
 * Identifications of the hosts in broadcast domain
 * Category Lists editor to manage ip/domain lists
 * Handling of PEN fields from nProbe
-* Added anomalous flows to the looking glass
+* Add anomalous flows to the looking glass
 * Visibility of ICMP port-unreachable flows IPv4
 * TCP states filtering (est., connecting, closed and rst)
 * Ability to serialize local hosts in the broadcast domain via MAC address
 * Japanese, portugese/brazilian localization
-* Added process memory, cpu load, InfluxDB, Redis status pages and charts
+* Add process memory, cpu load, InfluxDB, Redis status pages and charts
 * Implement ntopng Plugins, self contained modules to extend the ntopng functionalities
 * Implement ZMQ/Suricata companion interface
 * SSL traffic analysis and alerts via JA3 fingerprint, unsafe ciphers detection
@@ -278,7 +1440,7 @@
 * Faster ZMQ communication to nProbe thanks to the implementation of a binary TLV format
 * Stats update for ZMQ interfaces is now based on the idle/active flows timeout
 * Timeseries export improvements via queues, detect if InfluxDB is down and stop the export
-* Implemented reusable Lua engine to reduce the overhead of periodic scripts
+* Implement reusable Lua engine to reduce the overhead of periodic scripts
 * Improve Lua error handling
 * Exclude certain categories from Elephant/Long lived flows alerts
 
@@ -293,14 +1455,14 @@
 
 ## Fixes
 
-* Fixed export to mysql on shutdown in case of Pcap file in community mode
-* Fixed failing SYN-scan detection
-* Fixed ZMQ decompression errors with large templates
-* Fixed possible XSS in login.lua referer param and `runtime.lua`
+* Fix export to mysql on shutdown in case of Pcap file in community mode
+* Fix failing SYN-scan detection
+* Fix ZMQ decompression errors with large templates
+* Fix possible XSS in login.lua referer param and `runtime.lua`
 * Update geolocation due to changes in the library usage policy
-* Fixes to support browsers dark mode
+* Fix to support browsers dark mode
 * Option `--zmq-encryption-key <pub key>` can be used with `-I <endpoint>` to encrypt data hi hierarchical mode
-* Fixed nIndex missing data while performing some queries and throughput calculation
+* Fix nIndex missing data while performing some queries and throughput calculation
 
 ----------------------------------------------------------------
 
@@ -346,14 +1508,14 @@ parties
   * InfluxDB export failed alerts
   * Remote-to-remote host alerts
   * Optional JSON alerts export to Syslog
-* Improved InfluxDB support
+* Improve InfluxDB support
   * Handles slow and aborted queries
   * Uses authentication
 * Adds RADIUS and HTTP authenticators
  * Options to allow users login via RADIUS and HTTP
  * https://www.ntop.org/ntopng/remote-ntopng-authentication-with-radius-and-ldap/
 * Lua 5.3 support
- * Improved performance
+ * Improve performance
  * Better memory management
  * Native support for 64-bit integers
  * Native support for bitwise operations
@@ -378,14 +1540,14 @@ parties
 
 ## Fixes
 
-* Fixes missing flows dump on shutdown
+* Fix missing flows dump on shutdown
 * HTTP dissection fixes
 * SNMP
   * Fix SNMP step when high resolution timeseries are enabled
-  * Fixes SNMP devices permissions to prevent non-admins to delete or add devices
+  * Fix SNMP devices permissions to prevent non-admins to delete or add devices
 * Properly handles endianness over ZMQ
-  * Fixes early expiration of some TCP flows
-  * Fixes non-deterministic expiration of flows
+  * Fix early expiration of some TCP flows
+  * Fix non-deterministic expiration of flows
 
 ----------------------------------------------------------------
 
@@ -415,17 +1577,17 @@ parties
   * Access to the web user interface is controlled with ACLs
   * Secure ntopng cookies with SameSite and HttpOnly
   * HTTP cookie authentication
-  * Improved random session id generation
+  * Improve random session id generation
 * Various SNMP improvemenets
   * Caching
   * Interfaces status change alerts
   * Device interfaces page
   * Devices and interfaces added to flows
-  * Fixed several library memory leaks
-  * Improved device and interface charts
+  * Fix several library memory leaks
+  * Improve device and interface charts
   * Interfaces throughput calculation and visualization
   * Ability to delete all SNMP devices at once
-* Improved active devices discovery
+* Improve active devices discovery
   * OS detection via HTTP User-Agent
 * Alerts
   * Crypto miners alerts toggle
@@ -433,20 +1595,20 @@ parties
   * Module for sending telegram.org alerts
   * Slack
     * Configurable Slack channel names
-    * Added Slack test button
+    * Add Slack test button
 * Charts
   * Active flows vs local hosts chart
   * Active flows vs interface traffic chart
 * Ubuntu 18.04 support
 * Support for ElasticSearch 6 export
-* Added support for custom categories lists
-* Added ability to use the non-JIT Lua interpreter
-* Improved ntopng startup and shutdown time
+* Add support for custom categories lists
+* Add ability to use the non-JIT Lua interpreter
+* Improve ntopng startup and shutdown time
 * Support for capturing from interface pairs with PF_RING ZC
 * Support for variable PPP header lenght
 * Migrated geolocation to GeoLite2 and libmaxminddb
 * Configuration backup and restore
-* Improved IE browser support
+* Improve IE browser support
 * Using client SSL certificate for protocol detection
 * Optimized host/flows purging
 
@@ -455,55 +1617,55 @@ parties
 
 * Netfilter queue fill level monitoring
 * Bridging support with VLANs
-* Added user members management page
-* Added systemd service alias to ntopng
+* Add user members management page
+* Add systemd service alias to ntopng
 * Captive portal fixes
 * Informative captive portal (no login)
-* Improved captive portal support with WISPr XML
+* Improve captive portal support with WISPr XML
 * Disabled global DNS forging by default
-* Added netfilter stats RRDs
-* Fixed bad MAC traffic increment
-* Fixed slow shutdown/reboot
-* Fixed invalid banned site redirection
-* Fixed bad gateway status
-* Fixed gateway network unreacheable when gateway is down
-* Fixed SSL traffic not blocked when captive portal is active
-* Fixed invalid read during local DNS lookup
+* Add netfilter stats RRDs
+* Fix bad MAC traffic increment
+* Fix slow shutdown/reboot
+* Fix invalid banned site redirection
+* Fix bad gateway status
+* Fix gateway network unreacheable when gateway is down
+* Fix SSL traffic not blocked when captive portal is active
+* Fix invalid read during local DNS lookup
 * Workaround for dhclient bug stuck while a lease already exists
 
 
 ## Fixes
 
 * SNMP
-  * Fixed SNMP devices deletion
-  * Fixed format for odd SNMP interfaces speed
-  * Fixed SNMP community selection
-* Fixed MDNS decoding
-* Fixed login redirection
-* Fixed MAC manufacturers escaping
-* Fixed host validation errors
-* Fixed traffic throughput burst when loading a serialized host
+  * Fix SNMP devices deletion
+  * Fix format for odd SNMP interfaces speed
+  * Fix SNMP community selection
+* Fix MDNS decoding
+* Fix login redirection
+* Fix MAC manufacturers escaping
+* Fix host validation errors
+* Fix traffic throughput burst when loading a serialized host
 * Allowing multiple consecutive dots in password fields
-* Reworked shutdown to allow graceful periodic activities termimation
-* Fixed validation error in profiles with spaces in names
-* Fixed old top talkers stats deletion
-* Fixed 32-bit integers pushed to Lua
-* Fixed service dependency from pfring
-* Fixes for enabling broken SSL certificate mismatch alerts
-* Fixed allowed interfaces users access
-* Fixes for crashes on Windows
-* Fixed lua platform dependent execution
-* Fixed subnet search in hist data explorer
-* Fixed flow devices and sflow mappings with SNMP
-* Fixed invalid login page encoding
+* Rework shutdown to allow graceful periodic activities termimation
+* Fix validation error in profiles with spaces in names
+* Fix old top talkers stats deletion
+* Fix 32-bit integers pushed to Lua
+* Fix service dependency from pfring
+* Fix for enabling broken SSL certificate mismatch alerts
+* Fix allowed interfaces users access
+* Fix for crashes on Windows
+* Fix lua platform dependent execution
+* Fix subnet search in hist data explorer
+* Fix flow devices and sflow mappings with SNMP
+* Fix invalid login page encoding
 * LDAP fixes (overflow, invalid LDAP fields length)
-* Fixed encoding for local/LDAP UTF-8 passwords
-* Added POST timeout to prevent housekeeping from blocking indefinitely
+* Fix encoding for local/LDAP UTF-8 passwords
+* Add POST timeout to prevent housekeeping from blocking indefinitely
 * Windows resize fixes
-* Fixed invalid uPnP URL
-* Fixed wrong hosts retrv by pool id, OS, network, and country
-* Fixed JS errors with IE browser
-* Fixed custom categories matching
+* Fix invalid uPnP URL
+* Fix wrong hosts retrv by pool id, OS, network, and country
+* Fix JS errors with IE browser
+* Fix custom categories matching
 
 ----------------------------------------------------------------
 
@@ -512,7 +1674,7 @@ parties
 
 ## New features
 
-* Improved alerts generation
+* Improve alerts generation
   * Send alerts via email
   * SNMP alerts on port status change
   * Alerts at ntopng startup/shutdown
@@ -543,8 +1705,8 @@ parties
 
 ## Fixes
 
-* Fixes memory leaks with SNMP
-* Fixes possible out-of-bounds reads with SSDP dissection
+* Fix memory leaks with SNMP
+* Fix possible out-of-bounds reads with SSDP dissection
 
 ----------------------------------------------------------------
 
@@ -564,7 +1726,7 @@ parties
 * Bridge mode
   * Enforcement of global per-pool time and byte quotas
   * Support of per-host traffic shapers
-  * Added support for banned sites detection with informative splash screen
+  * Add support for banned sites detection with informative splash screen
   * Implement per-host/mac/pool flow drop count
 * nDPI traffic categories and RRDs
 * Implements MySQL database interoperability between ntopng and nProbe
@@ -591,16 +1753,15 @@ parties
 
 #### ntopng 3.0 (May 2017)
 
-
 ## New features (Community)
 
 * Layer-2 Devices
   * MAC devices page
-  * Implemented MAC last seen tracking in redis
+  * Implement MAC last seen tracking in redis
   * Manufacturer filter and sort
 * Host pools (logical groups of hosts)
 * Logstash flow export extension
-* Implemented data anonymization: hosts and top sites
+* Implement data anonymization: hosts and top sites
 * Implements CPU load average and memory usage
 * Virtual Interfaces
   * ZMQ: disaggregate based on probeIP or ingress interfaceId
@@ -613,7 +1774,7 @@ parties
   * LUA alerts generation
   * Adds hosts stateful syn attacks alerts
   * Visualization/Retrieval of Host Alerts
-  * Added the ability to generate alert when ntopng detects traffic produced by malware hosts
+  * Add the ability to generate alert when ntopng detects traffic produced by malware hosts
   * Slack integration: send alerts to slack
   * Alerts for anomalous flows
   * Host blacklisted alerts
@@ -621,8 +1782,7 @@ parties
   * SSL certificates mismatch alerts generation
 * Implement SSL/TLS handshake detection
 * Integrated MSDN support
-* Implemented DHCP dissection for name resolution
-
+* Implement DHCP dissection for name resolution
 
 ## New features
 
@@ -641,7 +1801,7 @@ parties
   * Historical SNMP timeseries
   * Host-to-SNMP devices mapping
 * Daily/Weekly/Monthly Traffic Report: per host, interface, network
-* Added ability to define host blacklists
+* Add ability to define host blacklists
 * DNS flow characterization with FlashStart (www.flashstart.it)
 * Flow LUA scripts: on flow creation, protocol detected, expire
 * Periodic MySQL flows aggregation
@@ -649,12 +1809,11 @@ parties
 * sFlow device/interface counters
 * Implementation of flow devices stats
 
-
 ## Improvements
 
 * Allows web server binding to system ports for non-privileged users
-* Improved VLAN support
-* Improved IPv6 support
+* Improve VLAN support
+* Improve IPv6 support
 * Implements a script to add users from the command line
 * View interfaces rework
 * Reported number of Layer-2 devices in ntopng footer
@@ -667,28 +1826,26 @@ parties
 * Traffic bridging: improved stability
 * Traffic profiles: improved stability and data persistence
 * Charts
-  * Improved historical graphs
+  * Improve historical graphs
   * Traffic report rework and optimizations
   * Improves the responsiveness and interactivity of historical exploration (ajax)
   * Stacked top hosts
   * Add ZMQ flows/sec graph
   * Profiles graphs
-  * Implemented ICMP detailed stats for local hosts
+  * Implement ICMP detailed stats for local hosts
   * ASN graphs: traffic and protocols history
   * ARP requests VS replies sent and received by hosts
   * Implement host TCP flags distribution
   * DNS packets ratio
   * FlashStart category graphs
-  * Added ARP protocol in interface statistics
+  * Add ARP protocol in interface statistics
   * SNMP port graphs
-
 
 ## Voip (nProbe required)
 
 * Changes and rework for SIP and RTP protocol
 * Adds VoIP SIP to RTP flow search
 * Improves VoIP visualization (RTP)
-
 
 ## Security Fixes
 
@@ -706,7 +1863,7 @@ parties
 
 - Fundamental memory-management, stability and speed improvements
 - Security fixes to prevent privileges escalation and XSS
-- Improved alerts with support for
+- Improve alerts with support for
 	- Re-arming
 	- Nagios
 	- Network-based triggers
@@ -725,7 +1882,7 @@ parties
 	- Goodput monitoring
 	- Trends detection
 	- Highlight of low-goodput flows and hosts
-	- Added hosts top-visited sites
+	- Add hosts top-visited sites
 - Built-in support for:
 	- GRE detunnelling
 	- per-VLAN historical statistics
@@ -741,19 +1898,19 @@ parties
 #### ntopng 2.2.0
 
 - Implementation of **traffic profiles**, logical flow-based aggregations -- e.g., Facebook traffic originating at host X. Real-time statistics as well as historical data are collected for each traffic profile
-- Added a **fine-grained network traffic breakdown** that captures and stores ingress, egress, and inner traffic for each local network
+- Add a **fine-grained network traffic breakdown** that captures and stores ingress, egress, and inner traffic for each local network
 - Ex-novo redesign of historical interfaces. Historical interface data have been seamlessly integrated with real-time data
 - Historical flow dump and runtime drill-down of historical data with support for MySQL and ElasticSearch
 - Built-in support for protocols:
   - CAPWAP (Control And Provisioning of Wireless Access Points, <https://tools.ietf.org/html/rfc5415>)
   - BATMAN (<http://www.open-mesh.org/projects/open-mesh/wiki/BATMANConcept>)
   - TZSP (TaZmen Sniffer Protocol)
-- Added SIP and RTP protocols information in flow details
+- Add SIP and RTP protocols information in flow details
 - Additional MAC-based host classification
-- Added support for Linux TUN/TAP devices in TUN mode
+- Add support for Linux TUN/TAP devices in TUN mode
 - Extended and improved supported OSes: EdgeOS, Centos 6/7, Ubuntu 12.04/14.04, Debian, Windows x64, Raspbian (Raspberry)
 - Extended and improved supported architectures: x86, x86-64, MIPS, ARM.
 - Documentation and User Guide significantly improved
-- Added a great deal of READMEs, including ElasticSearch, bridging, traffic shaping and policing, NetBeans development
-- Improved stability both under normal and high network loads
-- Fixed tens of minor bugs
+- Add a great deal of READMEs, including ElasticSearch, bridging, traffic shaping and policing, NetBeans development
+- Improve stability both under normal and high network loads
+- Fix tens of minor bugs

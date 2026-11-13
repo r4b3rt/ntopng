@@ -1,5 +1,5 @@
 ntopng Documentation
-====================
+=================================
 
 ntopng can be used in combination with other ntop tools. Documentation to use ntopng with other tools is the object of this section.
 
@@ -8,25 +8,24 @@ ntopng can be used in combination with other ntop tools. Documentation to use nt
    :caption: User's Guide
 
    what_is_ntopng
-   use_cases/index
-   basic_concepts/index
+   versions_and_licensing
+   installation
    how_to_start/index
-   adding_a_license/index
    cli_options/index
-   web_gui/index
-   interfaces/index
-   alerts/index
-   developing_alerts/index
-   active_monitoring/index
-   self_monitoring/index
+   user_interface/index
+   authentication
    using_with_other_tools/index
-   historical_flows
-   clickhouse/index
-   advanced_features/index
+   nanalyst/index
+   flows/index
+   scada/index
+   qoe/index
+   asmode/index
    operating_ntopng_on_large_networks
+   flow_dump/index
+   advanced_features/index
    third_party_integrations/index
-   faq
    performances/index
+   faq
 
 .. toctree::
    :caption: Developer's Guide
@@ -43,8 +42,11 @@ ntopng can be used in combination with other ntop tools. Documentation to use nt
    nDPI <https://www.ntop.org/guides/nDPI/>
    PF_RING <https://www.ntop.org/guides/pf_ring/>
    nEdge <https://www.ntop.org/guides/nedge/>
+   nEdge Lite <https://www.ntop.org/guides/nedgelite/>
    nScrub <https://www.ntop.org/guides/nscrub/>
    nBox <https://www.ntop.org/guides/nbox/>
+   nTap <https://www.ntop.org/guides/ntap/>
+   License Manager <https://www.ntop.org/guides/license/>
 
 .. Indices and tables
 .. ==================

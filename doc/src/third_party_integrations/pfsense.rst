@@ -5,8 +5,7 @@ pfSense
 
 ntopng Pro/Enterprise can be installed on pfsense using 
 the command line. This requires the configuration of the FreeBSD
-repository (FreeBSD 11 for pfSense CE 2.4, FreeBSD 12 for 
-pfSense CE 2.5 and pfSense Plus) as described at
+repository (FreeBSD 14 for pfSense CE 2.7) as described at
 https://packages.ntop.org/FreeBSD/.
 
 .. warning::
@@ -27,19 +26,12 @@ Log into the pfsense Shell as administrator (select option 8).
 And install the repository using the command provided at https://packages.ntop.org/FreeBSD/
 (you can cut&paste the command below according to your pfSense edition).
 
-pfSense CE 2.4
+pfSense CE 2.7
 ~~~~~~~~~~~~~~
 
 .. code:: bash
 
-   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:11:amd64/latest/ntop-1.0.txz
-
-pfSense CE 2.5 / pfSense Plus
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:12:amd64/latest/ntop-1.0.txz
+   pkg add https://packages.ntop.org/FreeBSD/FreeBSD:14:amd64/latest/ntop-1.0.pkg
 
 The output should look like the below.
 
@@ -48,6 +40,40 @@ The output should look like the below.
   :alt: ntop Repo Installation
 
   ntop Repository Installation
+
+pfSense Plus 23.05.01 and later
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Latest pfSense Plus is using a custom root certificate chain as default which is
+preventing the ntop repository package to be installed. In order to overcome this
+a manual change to the configuration is required.
+
+Create a text file /usr/local/etc/pkg/repos/ntop.conf (note this contains the 
+SSL_CA_CERT_FILE env variable used to specify the root file of the SSL certificates)
+with the below content, which contains information for the ntop repository:
+
+.. code:: text
+
+   ntop: {
+    env: {
+      SSL_CA_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
+    },
+    fingerprints: "/usr/local/etc/pkg/fingerprints/ntop",
+    url: https://packages.ntop.org/FreeBSD/${ABI}/latest,
+    signature_type: "fingerprints",
+    priority: 100,
+    enabled: yes
+   }
+
+Then also create a text file /usr/local/etc/pkg/fingerprints/ntop/trusted/packages.ntop.org.20210108 
+with the below content:
+
+.. code:: text
+
+   function: "sha256"
+   fingerprint: "d912f631f592c3aebc4f59b25ee85b5118d24a50066c6013d736fa64eb0c4cd2"
+
+At this point you should be able to update and install packages from the repository.
 
 Package Installation
 ====================
@@ -62,7 +88,7 @@ Run the below command to install the ntopng package:
 
 .. code:: bash
 
-   pkg install ntopng
+   pkg install ntopng redis
 
 License Configuration
 =====================
@@ -155,6 +181,22 @@ Troubleshooting
    If you experience issues running the redis service on pfSense 2.4.x,
    please try upgrading your pfSense installation to 2.5 with *pfSense-upgrade*
 
+Dependencies Issues
+~~~~~~~~~~~~~~~~~~~
+
+Before installing ntopng, make sure the ntopng community package shipped with
+pfsense is not installed. Otherwise, when trying to install the ntop-built 
+ntopng package, it may happen that the pkg manager tries to remove vital system
+packages including pfsense itself. If this happens, in command line, remove ntopng:
+
+.. code:: bash
+
+   pkg remove -f ntopng
+
+Then install the ntop repository as described before.
+
+Redis Failures
+~~~~~~~~~~~~~~
 
 On certain versions of pfSense, redis fails to start automatically and it requires some intervention on configuration files. To check if redis has been started successfully run the following command:
 

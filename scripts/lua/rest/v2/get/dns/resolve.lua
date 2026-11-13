@@ -1,12 +1,11 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 
 require "lua_utils"
-local json = require ("dkjson")
 local rest_utils = require("rest_utils")
 
 --
@@ -32,6 +31,13 @@ if string.find(hostname, '://') then
    if #uri_info == 2 then
       hostname = uri_info[2]
    end
+end
+
+if string.find(hostname, '/') then
+   -- Looks like an URI, strip the scheme
+   local uri_info = string.split(hostname, "/")
+   hostname = uri_info[1]
+   
 end
 
 if string.find(hostname, ':') then

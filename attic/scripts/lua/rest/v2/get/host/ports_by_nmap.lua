@@ -1,0 +1,38 @@
+-- (C) 2013-26 - ntop.org
+--
+dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/host/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
+
+require "lua_utils"
+local rest_utils = require "rest_utils"
+
+if not isAdministrator() then
+    rest_utils.answer(rest_utils.consts.err.not_granted)
+    return
+end
+local ascan_utils = require "ascan_utils"
+
+if not ascan_utils.is_nmap_installed() then
+    rest_utils.answer(rest_utils.consts.err.not_enabled, {error = i18n("hosts_stats.page_scan_hosts.nmap_not_installed")})
+    return
+end
+
+local host = _GET["host"]
+
+if isEmptyString(host) then
+    rest_utils.answer(rest_utils.consts.err.bad_content)
+    return
+end
+
+-- Using pcall for error handling
+local success, result = pcall(function()
+    return ascan_utils.get_ports(host)
+end)
+
+if success then
+    rest_utils.answer(rest_utils.consts.success.ok, result)
+else
+    rest_utils.answer(rest_utils.consts.err.internal_error, {error = tostring(result)})
+end

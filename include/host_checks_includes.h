@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,12 +26,10 @@
 #include "host_checks_includes.h"
 
 #include "host_checks/CountriesContacts.h"
+#include "host_checks/CustomHostLuaScript.h"
 
 #include "host_checks/FlowHits.h"
 #include "host_checks/FlowFlood.h"
-#include "host_checks/SYNScan.h"
-#include "host_checks/FINScan.h"
-#include "host_checks/SYNFlood.h"
 #include "host_checks/ICMPFlood.h"
 
 #include "host_checks/ServerContacts.h"
@@ -39,21 +37,21 @@
 #include "host_checks/SMTPServerContacts.h"
 #include "host_checks/NTPServerContacts.h"
 
-#include "host_checks/P2PTraffic.h"
-#include "host_checks/NTPTraffic.h"
-#include "host_checks/DNSTraffic.h"
-
 #include "host_checks/DangerousHost.h"
 #include "host_checks/RemoteConnection.h"
+#include "host_checks/UnexpectedGateway.h"
 #include "host_checks/DomainNamesContacts.h"
-#include "host_checks/ScanDetection.h"
-#include "host_checks/ScoreThreshold.h"
-
-#include "host_checks/PktThreshold.h"
 
 #ifdef NTOPNG_PRO
+#include "host_checks/DNSFlood.h"
+#include "host_checks/SNMPFlood.h"
 #include "host_checks/ScoreAnomaly.h"
 #include "host_checks/FlowAnomaly.h"
-#include "host_checks/HostMACReassociation.h"
+#include "host_checks/HostScanner.h"
+#include "host_checks/ServerPortsContacts.h"
+#include "host_checks/NATDetected.h"
+#include "host_checks/ScanRealtime.h"
+#include "host_checks/VPNDetection.h"
 #endif
+
 #endif /* _HOST_CHECKS_INCLUDES_H_ */

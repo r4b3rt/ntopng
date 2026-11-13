@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -21,25 +21,24 @@
 
 #include "flow_checks_includes.h"
 
-ndpi_serializer* BlacklistedCountryAlert::getAlertJSON(ndpi_serializer* serializer) {
-  Flow *f = getFlow();
+ndpi_serializer* BlacklistedCountryAlert::getAlertJSON(
+    ndpi_serializer* serializer) {
+  Flow* f = getFlow();
   Host *cli_host, *srv_host;
   char cli_buf[3], srv_buf[3];
 
-  if(serializer == NULL)
-    return NULL;
+  if (serializer) {
+    cli_buf[0] = '\0', srv_buf[0] = '\0';
+    cli_host = f->get_cli_host(), srv_host = f->get_srv_host();
 
-  cli_buf[0] = '\0', srv_buf[0] = '\0';
-  cli_host = f->get_cli_host(), srv_host = f->get_srv_host();
+    if (cli_host) cli_host->get_country(cli_buf, sizeof(cli_buf));
+    if (srv_host) srv_host->get_country(srv_buf, sizeof(srv_buf));
 
-  if(cli_host) cli_host->get_country(cli_buf, sizeof(cli_buf));
-  if(srv_host) srv_host->get_country(srv_buf, sizeof(srv_buf));
-
-  ndpi_serialize_string_string(serializer, "cli_country", cli_buf);
-  ndpi_serialize_string_string(serializer, "srv_country", srv_buf);
-  ndpi_serialize_string_boolean(serializer, "cli_blacklisted", !is_server);
-  ndpi_serialize_string_boolean(serializer, "srv_blacklisted", is_server);
+    ndpi_serialize_string_string(serializer, "cli_country", cli_buf);
+    ndpi_serialize_string_string(serializer, "srv_country", srv_buf);
+    ndpi_serialize_string_boolean(serializer, "cli_blacklisted", !is_server);
+    ndpi_serialize_string_boolean(serializer, "srv_blacklisted", is_server);
+  }
 
   return serializer;
 }
-

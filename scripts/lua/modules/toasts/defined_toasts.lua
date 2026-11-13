@@ -45,16 +45,6 @@ local pages = page_utils.menu_entries
 
 local defined_toats = {
     {
-        id = 0,
-        dismissable = false,
-        has_priority = false,
-        predicate = predicates.contribute,
-        pages = EMPTY_PAGES,
-        subpages = EMPTY_PAGES,
-        excluded_pages = {pages.preferences.key},
-        excluded_subpages = EMPTY_PAGES
-    },
-    {
         id = 1,
         dismissable = false,
         has_priority = true,
@@ -187,16 +177,6 @@ local defined_toats = {
         excluded_subpages = EMPTY_PAGES
     },
     {
-        id = 14,
-        dismissable = false,
-        has_priority = true,
-        predicate = predicates.forced_community,
-        pages = {},
-        subpages = EMPTY_PAGES,
-        excluded_pages = EMPTY_PAGES,
-        excluded_subpages = EMPTY_PAGES
-    },
-    {
         -- Hint to invite the user to create endpoints to send alert
         id = 15,
         dismissable = true,
@@ -216,6 +196,16 @@ local defined_toats = {
         pages = EMPTY_PAGES,
         subpages = EMPTY_PAGES,
         excluded_pages = {pages.endpoint_recipients.key},
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 17,
+        dismissable = false,
+        has_priority = true,
+        predicate = predicates.hosts_limit_exceeded,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
         excluded_subpages = EMPTY_PAGES
     },
     {
@@ -239,26 +229,6 @@ local defined_toats = {
         excluded_subpages = EMPTY_PAGES,
     },
     {
-        id = 20,
-        dismissable = false,
-        has_priority = true,
-        predicate = predicates.obsolete_nindex,
-        pages = EMPTY_PAGES,
-        subpages = EMPTY_PAGES,
-        excluded_pages = EMPTY_PAGES,
-        excluded_subpages = EMPTY_PAGES,
-    },
-    {
-        id = 21,
-        dismissable = false,
-        has_priority = true,
-        predicate = predicates.obsolete_mysql,
-        pages = EMPTY_PAGES,
-        subpages = EMPTY_PAGES,
-        excluded_pages = EMPTY_PAGES,
-        excluded_subpages = EMPTY_PAGES,
-    },
-    {
         id = 22,
         dismissable = true,
         has_priority = true,
@@ -266,6 +236,97 @@ local defined_toats = {
         pages = EMPTY_PAGES,
         subpages = EMPTY_PAGES,
         excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 23,
+        dismissable = true,
+        has_priority = true,
+        predicate = predicates.emergency_recipient,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = {pages.endpoint_recipients.key},
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 24,
+        dismissable = true,
+        has_priority = false,
+        predicate = predicates.active_scan,
+        pages = {pages.active_scan.key},
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 25,
+        dismissable = false,
+        has_priority = false,
+        predicate = predicates.service_map,
+        pages = {pages.analysis_map.key},
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 26,
+        dismissable = true,
+        has_priority = false,
+        predicate = predicates.enable_exporters_timeseries,
+        pages = {pages.nprobe.key, pages.exporters.key},
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 27,
+        dismissable = true,
+        has_priority = false,
+        predicate = predicates.configured_exporters_timeseries_resolution,
+        pages = {pages.nprobe.key, pages.exporters.key},
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 28,
+        dismissable = false,
+        has_priority = true,
+        predicate = predicates.flows_limit_exceeded,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 29,
+        dismissable = true,
+        has_priority = false,
+        predicate = predicates.no_local_hosts,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        id = 30,
+        dismissable = true,
+        has_priority = true,
+        predicate = predicates.zmq_default_encryption,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = EMPTY_PAGES,
+        excluded_subpages = EMPTY_PAGES
+    },
+    {
+        -- "Flow Details Side Card" feature
+        id = 32,
+        dismissable = true,
+        has_priority = false,
+        predicate = predicates.flow_details_card,
+        pages = EMPTY_PAGES,
+        subpages = EMPTY_PAGES,
+        excluded_pages = {pages.preferences.key},
         excluded_subpages = EMPTY_PAGES
     },
 }

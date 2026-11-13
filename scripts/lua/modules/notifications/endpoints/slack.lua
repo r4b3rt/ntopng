@@ -6,6 +6,7 @@ require "lua_utils"
 local json = require "dkjson"
 local alert_consts = require("alert_consts")
 local alert_utils = require "alert_utils"
+local format_utils = require "format_utils"
 
 local slack = {
    name = "Slack",
@@ -83,28 +84,38 @@ end
 -- On success, it clears the queue.
 -- On error, it leaves the queue unchagned to retry on next round.
 function slack.dequeueRecipientAlerts(recipient, budget)
-   local notifications = {}
-   for i = 1, budget do
-      local notification = ntop.recipient_dequeue(recipient.recipient_id)
-      if notification then 
-	 notifications[#notifications + 1] = notification.alert
-      else
-	 break
-      end
-   end
-
-  if not notifications or #notifications == 0 then
-    return {success = true, more_available = false}
-  end
-
   local settings = recipient2sendMessageSettings(recipient)
+
+  local more_available = true
+  local success = true
+  local error_message = nil
+  local delivered = 0
+  local discarded = 0
+  local failures = 0
 
   -- Separate by severity and channel
   local alerts_by_types = {}
 
+  local notifications = {}
+  local i = 0
+  while i < budget do
+    local notification = ntop.recipient_dequeue(recipient.recipient_id)
+    if notification then 
+      notifications[#notifications + 1] = notification.alert
+      i = i + 1
+    else
+      break
+    end
+  end
+
+  if #notifications == 0 then
+    more_available = false
+    goto done
+  end
+
   for _, json_message in ipairs(notifications) do
     local notif = json.decode(json_message)
-    notif.severity = ntop.mapScoreToSeverity(notif.score)
+    notif.severity = map_score_to_severity(notif.score)
     if notif.entity_id then
       if not alerts_by_types[notif.entity_id] then
         alerts_by_types[notif.entity_id] = {}
@@ -112,7 +123,7 @@ function slack.dequeueRecipientAlerts(recipient, budget)
       if not alerts_by_types[notif.entity_id][notif.severity] then
         alerts_by_types[notif.entity_id][notif.severity] = {}
       end
-      table.insert(alerts_by_types[notif.entity_id][notif.severity], notif)
+      alerts_by_types[notif.entity_id][notif.severity][#alerts_by_types[notif.entity_id][notif.severity] + 1] = notif
     end
   end
 
@@ -124,8 +135,8 @@ function slack.dequeueRecipientAlerts(recipient, budget)
 
       -- Most recent notifications first
       for _, notif in pairsByValues(notifications, alert_utils.notification_timestamp_rev) do
-        local msg = alert_utils.formatAlertNotification(notif, {nohtml=true, show_severity=false, show_entity=true})
-        table.insert(messages, msg)
+        local msg = format_utils.formatMessage(notif, {nohtml=true, show_severity=false, show_entity=true})
+        messages[#messages + 1] = msg
 
         if #messages >= MAX_ALERTS_PER_MESSAGE then
           break
@@ -135,19 +146,31 @@ function slack.dequeueRecipientAlerts(recipient, budget)
       local missing = #notifications - #messages
 
       if missing > 0 then
-        table.insert(messages, "NOTE: " .. missing .. " older messages have been suppressed")
+        messages[#messages + 1] = "NOTE: " .. missing .. " older messages have been suppressed"
       end
 
       messages = table.concat(messages, "\n")
 
       if not slack.sendMessage(entity_type, severity, messages, settings) then
-        -- Note: upon failure we'll possibly resend already sent messages
-        return {success=false, error_message="Unable to send slack messages"}
+        success = false
+        error_message = "Unable to send alerts to slack"
+        failures = failures + #notifications
+        goto done
+      else
+        delivered = delivered + #notifications
       end
     end
   end
 
-  return {success = true, more_available = true}
+ ::done::
+  return {
+    success = success,
+    error_message = error_message,
+    delivered = delivered,
+    discarded = discarded,
+    failures  = failures,
+    more_available = more_available,
+ }
 end
 
 -- ##############################################

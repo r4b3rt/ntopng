@@ -1,0 +1,109 @@
+{
+	"id": "observation_points",
+	"data_url": "lua/pro/rest/v2/get/interface/observation_points/stats.lua",
+	"use_current_page": false,
+	"enable_search": true,
+	"paging": false,
+	"display_empty_rows": false,
+	"empty_message_i18n": "table_empty.observation_points",
+	"default_sort": {
+		"column_id": "observation_point",
+		"sort": 1
+	},
+	"columns": [
+		{
+			"id": "actions",
+			"title_i18n": "actions",
+			"sortable": false,
+			"min-width": "96px",
+			"max-width": "96px",
+			"sticky": true,
+			"class": [
+				"text-nowrap",
+				"text-center"
+			],
+			"render_v_node_type": "split_button",
+			"button_def_array": [
+				{
+					"id": "timeseries",
+					"icon": "fas fa-chart-area",
+					"title_i18n": "prefs.timeseries",
+					"event_id": "click_button_timeseries"
+				},
+				{
+					"id": "historical_flows",
+					"icon": "fas fa-history",
+					"title_i18n": "db_explorer.historical_data",
+					"event_id": "click_button_historical_flows"
+				},
+				{
+					"id": "config",
+					"icon": "fas fa-cog",
+					"title_i18n": "settings",
+					"event_id": "click_button_config"
+				}
+			]
+		},
+		{
+			"id": "observation_point",
+			"title_i18n": "db_explorer.observation_point",
+			"data_field": "observation_point",
+			"sortable": true,
+			"class": [
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "exporters",
+			"title_i18n": "flows_page.exporters",
+			"data_field": "exporters",
+			"sortable": true,
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "total_flows",
+			"title_i18n": "flow_devices.tot_flows",
+			"data_field": "total_flows",
+			"sortable": true,
+			"min-width": 150,
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "hosts",
+			"title_i18n": "flows_page.hosts",
+			"data_field": "hosts",
+			"sortable": true,
+			"max-width": "20px",
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "throughput",
+			"title_i18n": "throughput",
+			"data_field": "throughput",
+			"sortable": true,
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		},
+		{
+			"id": "traffic",
+			"title_i18n": "traffic",
+			"data_field": "traffic",
+			"sortable": true,
+			"class": [
+				"text-center",
+				"text-nowrap"
+			]
+		}
+	]
+}

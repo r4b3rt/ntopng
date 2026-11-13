@@ -1,5 +1,5 @@
 --
--- (C) 2021-22 - ntop.org
+-- (C) 2021-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -25,7 +25,16 @@ local user_alert_store = classes.class(alert_store)
 function user_alert_store:init(args)
    self.super:init()
 
-   self._table_name = "user_alerts"
+   if ntop.isClickHouseEnabled() then
+      self._table_name = "user_alerts_view"
+      self._write_table_name = "user_alerts"
+      self._engaged_write_table_name = "engaged_user_alerts"
+   else
+      self._table_name = "user_alerts_view"
+      self._write_table_name = "user_alerts"
+      self._engaged_write_table_name = "mem_db.engaged_user_alerts"
+   end
+
    self._alert_entity = alert_entities.user
 end
 
@@ -33,39 +42,32 @@ end
 
 --@brief ifid
 function user_alert_store:get_ifid()
-   -- The System Interface has the id -1 and in u_int16_t is 65535 
-   return 65535
+   return getSystemInterfaceId()
 end
 
 -- ##############################################
 
-function user_alert_store:insert(alert)
-   local extra_columns = ""
-   local extra_values = ""
-   if(ntop.isClickHouseEnabled()) then
-      extra_columns = "rowid, "
-      extra_values = "generateUUIDv4(), "
-   end
+function user_alert_store:_build_insert_query(alert, write_table, alert_status, extra_columns, extra_values)
 
    local insert_stmt = string.format("INSERT INTO %s "..
-      "(%salert_id, interface_id, tstamp, tstamp_end, severity, score, user, granularity, json) "..
-      "VALUES (%s%u, %d, %u, %u, %u, %u, '%s', %u, '%s'); ",
-      self._table_name, 
+      "(%salert_id, alert_status, require_attention, interface_id, tstamp, tstamp_end, severity, score, user, granularity, json) "..
+      "VALUES (%s%u, %u, %u, %d, %u, %u, %u, %u, '%s', %u, '%s'); ",
+      write_table, 
       extra_columns,
       extra_values,
       alert.alert_id,
+      alert_status,
+      ternary(alert.require_attention, 1, 0),
       self:_convert_ifid(interface.getId()),
       alert.tstamp,
       alert.tstamp_end,
-      ntop.mapScoreToSeverity(alert.score),
+      map_score_to_severity(alert.score),
       alert.score,
       self:_escape(alert.entity_val),
       alert.granularity,
       self:_escape(alert.json))
 
-   -- traceError(TRACE_NORMAL, TRACE_CONSOLE, insert_stmt)
-
-   return ntop.alert_store_query(insert_stmt, -1 --[[ System ifid --]])
+   return insert_stmt
 end
 
 -- ##############################################
@@ -111,7 +113,7 @@ function user_alert_store:format_record(value, no_html)
      fullname = alert_fullname,
      value = tonumber(value["alert_id"]),
      description = msg,
-     configset_ref = alert_utils.getConfigsetAlertLink(alert_info)
+     configset_ref = alert_utils.getConfigsetAlertLink(alert_info, value["alert_id"], alert_entities.user.entity_id)
    }
 
    return record

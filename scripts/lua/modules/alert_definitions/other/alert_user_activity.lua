@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -21,6 +21,7 @@ local alert_user_activity = classes.class(alert)
 
 alert_user_activity.meta = {
    alert_key = other_alert_keys.alert_user_activity,
+   issue = false, -- Informational: does not open issues (see issues/issue_manager.lua)
    i18n_title = "alerts_dashboard.user_activity",
    icon = "fas fa-fw fa-user",
    entities = {
@@ -44,7 +45,9 @@ function alert_user_activity:init(scope, name, params, remote_addr, status)
    self.alert_type_params = {
 	scope = scope,
 	name = name,
-	params = params,
+	params = {
+           method = params.method
+        },
 	remote_addr = remote_addr,
 	status = status,
    }
@@ -55,17 +58,21 @@ end
 function alert_user_activity.format(ifid, alert, alert_type_params)
    local decoded = alert_type_params
    local user = alert.user or alert.entity_val
- 
+
    if decoded.scope ~= nil then
  
       if decoded.scope == 'login' and decoded.status ~= nil then
 	  if decoded.status == 'authorized' then
-		 return i18n('user_activity.login_successful', {user=user})
+		if decoded.params and decoded.params['method'] then
+			return i18n('user_activity.login_successful_method', {user=user, method=decoded.params['method']})
+		else
+			return i18n('user_activity.login_successful', {user=user})
+		end
 	  else
 		 return i18n('user_activity.login_not_authorized', {user=user})
 	  end
  
-	   elseif decoded.scope == 'function' and decoded.name ~= nil then
+      elseif decoded.scope == 'function' and decoded.name ~= nil then
 	  local ifname = getInterfaceName(decoded.ifid)
  
 	  -- User add/del/password
@@ -296,12 +303,11 @@ function alert_user_activity.format(ifid, alert, alert_type_params)
  
 	  else
 		 return i18n('user_activity.unknown_activity_function', {user=user, name=decoded.name})
- 
 	  end
-	   end
-	end
+      end
+   end
  
-	return i18n('user_activity.unknown_activity', {user=user, scope=decoded.scope})
+   return i18n('user_activity.unknown_activity', {user=user, scope=decoded.scope})
 end
 
 -- #######################################################

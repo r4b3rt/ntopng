@@ -1,11 +1,13 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
 package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/?.lua;" .. package.path
 
+require "ntop_utils"
+require "check_redis_prefs"
 local ts_dump = require "ts_5min_dump_utils"
 
 -- ########################################################
@@ -15,11 +17,15 @@ local ts_dump = require "ts_5min_dump_utils"
 --        otherwise run this dump into the minute dump 
 
 if not hasHighResolutionTs() then
-  local config = ts_dump.getConfig()
   local when = os.time()
-  local ifstats = interface.getStats()
-  local _ifname = ifstats.name
+  local _ifname = interface.getName()
   local verbose = ntop.verboseTrace()
 
-  ts_dump.run_5min_dump(_ifname, ifstats, config, when, verbose)
+  ts_dump.run_5min_dump(_ifname, {
+    isViewed = interface.isViewed(),
+    isView = interface.isView(),
+    id = interface.getId(),
+    isSampledTraffic = interface.isSampledTraffic(),
+    has_seen_ebpf_events = interface.hasEBPF()
+  }, when, verbose)
 end

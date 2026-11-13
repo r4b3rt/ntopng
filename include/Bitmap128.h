@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,26 +24,7 @@
 
 #include "ntop_includes.h"
 
-class Bitmap128 {
-private:
-  u_int64_t bitmap[2];
-
-public:
-  Bitmap128() { reset(); }
-  Bitmap128(char *list) { reset(); setBits(list); };
-
-  static inline u_int numBits() { return sizeof(bitmap) * 8; };
-  void reset();
-  void setBit(u_int8_t id);
-  void setBits(char *list); /* Parse a comma-separate list of bit positions */
-  void clearBit(u_int8_t id);
-  bool isSetBit(u_int8_t id) const;
-  void bitmapOr(const Bitmap128 b);
-  void set(const Bitmap128 *b);
-  bool equal(const Bitmap128 *b) const;
-  
-  void lua(lua_State* vm, const char *label) const;
-  const char * toHexString(char *buf, ssize_t buf_len) const;
-};
+/* Bitmap128 is now implemented as a generic Bitmap with 2x uint64 */
+typedef Bitmap<2> Bitmap128;
 
 #endif /* _BITMAP128_H_ */

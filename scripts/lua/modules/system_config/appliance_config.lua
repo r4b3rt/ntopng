@@ -79,8 +79,10 @@ end
 -- ##############################################
 
 function appliance_config:getPassiveInterfaceName()
-  if self.config.globals.available_modes["passive"] then
-    return self.config.globals.available_modes["passive"]["interfaces"]["lan"]
+  if self.config.globals.available_modes["passive"] and 
+     self.config.globals.available_modes["passive"]["interfaces"] and
+     self.config.globals.available_modes["passive"]["interfaces"]["lan"] then
+    return self.config.globals.available_modes["passive"]["interfaces"]["lan"][1]
   end
 
   return nil
@@ -94,11 +96,7 @@ function appliance_config:getPhysicalLanInterfaces()
   local mode = self:getOperatingMode()
   if not mode then return {} end
 
-  if mode == "passive" then
-    return { self.config.globals.available_modes[mode].interfaces.lan, }
-  elseif mode == "bridging" then
-    return self.config.globals.available_modes[mode].interfaces.lan
-  end
+  return self.config.globals.available_modes[mode].interfaces.lan
 end
 
 -- Get the physical WAN interfaces, based on the current operating mode
@@ -253,7 +251,7 @@ function appliance_config:_guess_config()
    end
    if management ~= nil then
       passive["interfaces"] = {}
-      passive["interfaces"]["lan"] = management
+      passive["interfaces"]["lan"] = { management }
       passive["interfaces"]["wan"] = {}
       passive["interfaces"]["unused"] = {}
       passive["comment"] = "Passive monitoring appliance"
@@ -261,7 +259,7 @@ function appliance_config:_guess_config()
       for a, b in pairsByKeys(wired_devs) do
          if a ~= passive["interfaces"]["lan"] then
             -- table.insert(passive["interfaces"]["unused"], a)
-            table.insert(passive["interfaces"]["wan"], a)
+            passive["interfaces"]["wan"][#passive["interfaces"]["wan"] + 1] = a
          end
       end
 
@@ -295,9 +293,9 @@ function appliance_config:_guess_config()
 
             for n,c in pairsByKeys(b.ports) do
                if n == 1 then
-                  table.insert(bridging["interfaces"]["lan"], c)
+                  bridging["interfaces"]["lan"][#bridging["interfaces"]["lan"] + 1] = c
                else
-                  table.insert(bridging["interfaces"]["wan"], c)
+                  bridging["interfaces"]["wan"][#bridging["interfaces"]["wan"] + 1] = c
                end
                used_ifaces[c] = true
             end
@@ -315,7 +313,7 @@ function appliance_config:_guess_config()
          -- add other interfaces to the unused ones
          for iface,_ in pairsByKeys(wired_devs) do
             if used_ifaces[iface] == nil then
-               table.insert(bridging["interfaces"]["unused"], iface)
+               bridging["interfaces"]["unused"][#bridging["interfaces"]["unused"] + 1] = iface
             end
          end
       end
@@ -336,7 +334,7 @@ function appliance_config:_guess_config()
          elseif(n == 1) then
             bridging["interfaces"]["wan"] = { a }
          else
-            table.insert(bridging["interfaces"]["unused"], a)
+            bridging["interfaces"]["unused"][#bridging["interfaces"]["unused"] + 1] = a
          end
 
          n = n + 1
@@ -398,7 +396,7 @@ function appliance_config:_guess_config()
             netmask = "255.255.255.0"
          else
             -- The device has an IP address
-            local addresses = system_config.getAllInterfaceAddresses(a)
+            local addresses = system_config.getInterfaceAddresses(a)
             for _, addr in pairs(addresses) do
                if addr.ip == ip_devs[a] then
                   netmask = addr.netmask

@@ -1,7 +1,6 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
-
 -- ########################################################
 
 local ts_utils = require("ts_utils_core")
@@ -9,30 +8,77 @@ local ts_dump = {}
 
 -- ########################################################
 
-function ts_dump.update_rrd_queue_length(ifid, when)
-   if ts_utils.getDriverName() == "rrd" then
-      ts_utils.append("iface:ts_queue_length",
-		      {
-			 ifid = ifid,
-			 num_ts = interface.rrd_queue_length(ifid) or 0
-		      },
-		      when)
-   end
+function ts_dump.update_ts_queue_stats(ifid, when)
+	local qlen, qdrops
+
+	if (ts_utils.getDriverName() == "rrd") or (ts_utils.getDriverName() == "clickhouse") then
+		qlen = interface.ts_queue_len()
+		qdrops = interface.ts_queue_drops()
+	else
+		return -- any other timeseries driver
+	end
+
+	ts_utils.append("iface:ts_queue_length", { ifid = ifid, num_ts = qlen }, when)
+	ts_utils.append("iface:ts_queue_drops", { ifid = ifid, num_ts = qdrops }, when)
 end
 
 -- ########################################################
 
-function ts_dump.dump_cpu_states(ifid, when, cpu_states)
-   if cpu_states then
-      ts_utils.append("system:cpu_states",
-		      {
-			 ifid = ifid,
-			 iowait_pct = cpu_states["iowait"],
-			 active_pct = cpu_states["user"] + cpu_states["system"] + cpu_states["nice"] + cpu_states["irq"] + cpu_states["softirq"] + cpu_states["guest"] + cpu_states["guest_nice"],
-			 idle_pct = cpu_states["idle"] + cpu_states["steal"],
-		      },
-		      when)
-   end
+function ts_dump.dump_cpu_memory_stats(ifid, when)
+	local cpu_utils = require("cpu_utils")
+	local system_stats = cpu_utils.systemHostStats()
+	local cpu_states = system_stats.cpu_states
+	local cpu_load = system_stats.cpu_load
+	local memory_used = system_stats.mem_used
+
+	if cpu_states then
+		ts_utils.append("system:cpu_states", {
+			ifid = ifid,
+			iowait_pct = cpu_states["iowait"],
+			active_pct = cpu_states["user"]
+				+ cpu_states["system"]
+				+ cpu_states["nice"]
+				+ cpu_states["irq"]
+				+ cpu_states["softirq"]
+				+ cpu_states["guest"]
+				+ cpu_states["guest_nice"],
+			idle_pct = cpu_states["idle"] + cpu_states["steal"],
+		}, when)
+	end
+
+	if cpu_load then
+		ts_utils.append("system:cpu_load", {
+			ifid = ifid,
+			load_percentage = cpu_load,
+		}, when)
+	end
+
+	if memory_used then
+		ts_utils.append("system:memory_used", {
+			ifid = ifid,
+			bytes = memory_used * 1024,
+		}, when)
+	end
+end
+
+-- ########################################################
+
+function ts_dump.dump_thread_cpu_stats(ifid, when)
+	local threads_info = ntop.threadsInfo()
+	if not threads_info then
+		return
+	end
+
+	for thread_name, stats in pairs(threads_info) do
+		local cpu_pct = stats["cpu_utilization_pct"]
+		if cpu_pct ~= nil then
+			ts_utils.append("system:thread_cpu_load", {
+				ifid = ifid,
+				thread_name = thread_name,
+				cpu_utilization_pct = cpu_pct,
+			}, when)
+		end
+	end
 end
 
 -- ########################################################

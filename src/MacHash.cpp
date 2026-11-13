@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,42 +23,42 @@
 
 /* ************************************ */
 
-MacHash::MacHash(NetworkInterface *_iface, u_int _num_hashes, u_int _max_hash_size) :
-  GenericHash(_iface, _num_hashes, _max_hash_size, "MacHash") {
-  ;
+MacHash::MacHash(NetworkInterface* _iface, u_int _num_hashes,
+                 u_int _max_hash_size)
+    : GenericHash(_iface, _num_hashes, _max_hash_size, "MacHash") {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
 }
 
 /* ************************************ */
 
 Mac* MacHash::get(const u_int8_t mac[6], bool is_inline_call) {
-  if(mac == NULL)
-    return(NULL);
+  if (mac == NULL)
+    return (NULL);
   else {
     u_int32_t hash = Utils::macHash((u_int8_t*)mac);
 
     hash %= num_hashes;
 
-    if(table[hash] == NULL) {
-      return(NULL);
+    if (table[hash] == NULL) {
+      return (NULL);
     } else {
-      Mac *head;
+      Mac* head;
 
-      if(!is_inline_call)
-	locks[hash]->rdlock(__FILE__, __LINE__);
+      if (!is_inline_call) locks[hash]->rdlock(__FILE__, __LINE__);
 
       head = (Mac*)table[hash];
 
-      while(head != NULL) {
-	if((!head->idle()) && head->equal(mac))
-	  break;
-	else
-	  head = (Mac*)head->next();
+      while (head != NULL) {
+        if ((!head->idle()) && head->equal(mac))
+          break;
+        else
+          head = (Mac*)head->next();
       }
 
-      if(!is_inline_call)
-	locks[hash]->unlock(__FILE__, __LINE__);
+      if (!is_inline_call) locks[hash]->unlock(__FILE__, __LINE__);
 
-      return(head);
+      return (head);
     }
   }
 }

@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,13 +22,48 @@
 #ifndef _NTOP_CLASS_H_
 #define _NTOP_CLASS_H_
 
+#include <cstring>
 #include "ntop_includes.h"
+#include "ntop_typedefs.h"
 
 /** @defgroup Ntop Ntop
  * Main ntopng group.
  */
 
 class NtopPro;
+
+struct InterfaceKeyCompare {
+  bool operator()(const std::tuple<struct ndpi_in6_addr, u_int32_t>& lhs,
+		  const std::tuple<struct ndpi_in6_addr, u_int32_t>& rhs) const {
+    // Compare the first element (ndpi_in6_addr) using memcmp
+    int cmp = std::memcmp(&std::get<0>(lhs), &std::get<0>(rhs), sizeof(struct ndpi_in6_addr));
+    if (cmp != 0) return cmp < 0;
+    
+    // If IPs are equal, compare the second element (u_int32_t)
+    return std::get<1>(lhs) < std::get<1>(rhs);
+  }
+};
+
+struct ndpi_in6_addr_hash {
+  size_t operator()(const struct ndpi_in6_addr &a) const noexcept {
+    /* FNV-1a over the 16 raw bytes */
+    uint64_t h = 14695981039346656037ULL;
+    const uint8_t *p = a.u6_addr.u6_addr8;
+    for (int i = 0; i < 16; i++) {
+      h ^= p[i];
+      h *= 1099511628211ULL;
+    }
+    return static_cast<size_t>(h);
+  }
+};
+
+struct ndpi_in6_addr_eq {
+  bool operator()(const struct ndpi_in6_addr &a,
+		  const struct ndpi_in6_addr &b) const noexcept {
+    return memcmp(&a, &b, sizeof(struct ndpi_in6_addr)) == 0;
+  }
+};
+
 
 /** @class Ntop
  *  @brief Main class of ntopng.
@@ -41,50 +76,74 @@ class Ntop {
 #ifndef WIN32
   int startupLockFile;
 #endif
-  pthread_t purgeLoop;    /* Loop which iterates on active interfaces to delete idle hash table entries */
-  bool purgeLoop_started; /* Flag that indicates whether the purgeLoop has been started */
-  bool flowChecksReloadInProgress, hostChecksReloadInProgress;
+  int seed; /* random seed */
+  /* atomic: written from the HTTP-handler Lua VM thread on reload requests,
+     read from the poller thread (PcapInterface pre-script wait) and cleared
+     from the main thread (checkReloadFlowChecks/checkReloadHostChecks) */
+  std::atomic<bool> flowChecksReloadInProgress, hostChecksReloadInProgress;
   bool hostPoolsReloadInProgress;
-  bool offline;
-  Bloom *resolvedHostsBloom; /* Used by all redis class instances */
+  bool tagsMappingReloadInProgress;
+  bool interfacesShuttedDown;
+  bool offline, forced_offline;
+  bool broadcast_ip_disabled;
+  Bloom* resolvedHostsBloom; /* Used by all redis class instances */
+  JobQueue jobsQueue;
   AddressTree local_interface_addresses;
   char epoch_buf[11], *zoneinfo, *myTZname;
   char working_dir[MAX_PATH]; /**< Working directory. */
   char install_dir[MAX_PATH]; /**< Install directory. */
   char startup_dir[MAX_PATH]; /**< Startup directory. */
-  char scripts_dir[MAX_PATH+16];
-  char *custom_ndpi_protos; /**< Pointer of a custom protocol for nDPI. */
-  NetworkInterface **iface; /**< Array of network interfaces. */
-  NetworkInterface *system_interface; /** The system interface */
+  char scripts_dir[MAX_PATH + 16];
+  char* custom_ndpi_protos; /**< Pointer of a custom protocol for nDPI. */
+  NetworkInterface** iface; /**< Array of network interfaces. */
+  NetworkInterface* system_interface; /** The system interface */
+  NetworkInterface* old_iface_to_purge;
   u_int8_t num_defined_interfaces; /**< Number of defined interfaces. */
-  u_int8_t num_dump_interfaces;
-  HTTPserver *httpd; /**< Pointer of httpd server. */
-  NtopGlobals *globals; /**< Pointer of Ntop globals info and variables. */
-  u_int num_cpus; /**< Number of physical CPU cores. */
-  Redis *redis; /**< Pointer to the Redis server. */
-  Mutex m, users_m, speedtest_m;
-  std::map<std::string, bool> cachedCustomLists; /* Cache of lists filenames */
+  bool flow_id_initialized;
+  std::atomic<u_int64_t> flow_id;
+  std::atomic<u_int16_t> num_active_lua_vms;
+  HTTPserver* httpd;    /**< Pointer of httpd server. */
+  NtopGlobals* globals; /**< Pointer of Ntop globals info and variables. */
+  u_int num_cpus;       /**< Number of physical CPU cores. */
+  Redis* redis;         /**< Pointer to the Redis server. */
+  Mutex m, users_m, speedtest_m, pools_lock;
+  std::map<std::string, u_int8_t> cachedCustomLists; /* Cache of lists filenames */
+  std::map<std::string, std::string> luaCache; /* Cache used by Lua */
+  RwLock luaCacheLock;
+  u_int32_t current_time; /* Updated by current_time */
 #ifndef HAVE_NEDGE
-  ElasticSearch *elastic_search; /**< Pointer of Elastic Search. */
-  ZMQPublisher *zmqPublisher;
-#ifndef WIN32
-  SyslogDump *syslog; /**< Pointer of Logstash. */
+#ifdef HAVE_ZMQ
+  ZMQPublisher* zmqPublisher;
 #endif
-  ExportInterface *export_interface;
 #endif
-  TimelineExtract *extract;
-  PeriodicActivities *pa; /**< Instance of periodical activities. */
-  AddressResolution *address;
-  Prefs *prefs;
-  Geolocation *geo;
-  MacManufacturers *mac_manufacturers;
-  void *trackers_automa;
+
+#ifdef HAVE_RADIUS
+  Radius* radiusAcc;
+#endif
+/* This variable is used between the GUI and back end
+ * to communicate if there are new updates and the GUI
+ * cache needs to be invalidated.
+ */
+  PendingUpdates updates;
+
+#ifdef NTOPNG_PRO
+  OIDCAuthenticator* oidcAuth;
+#endif
+
+  TimelineExtract* extract;
+  PeriodicActivities* pa; /**< Instance of periodical activities. */
+  AddressResolution* address;
+  Prefs* prefs;
+  BlacklistStats blStats;
+  Geolocation* geo;
+  MacManufacturers* mac_manufacturers;
+  void* trackers_automa;
   long time_offset;
   time_t start_time; /**< Time when start() was called */
   time_t last_stats_reset;
   u_int32_t last_modified_static_file_epoch;
   int udp_socket;
-  NtopPro *pro;
+  NtopPro* pro;
   DeviceProtocolBitmask deviceProtocolPresets[device_max_type];
   cpu_load_stats cpu_stats;
   float cpu_load;
@@ -92,62 +151,119 @@ class Ntop {
 #ifndef HAVE_NEDGE
   bool refresh_ips_rules;
 #endif
-  FifoSerializerQueue *internal_alerts_queue;
+  FifoSerializerQueue* internal_alerts_queue;
   Recipients recipients; /* Handle notification recipients */
+  std::atomic<u_int32_t> num_flow_exporters;
+  std::atomic<u_int32_t> num_flow_interfaces;
+  Mutex flow_exporters_lock;
+  std::map<u_int32_t, u_int32_t> flow_exporters_count;
+  std::map<std::pair<u_int32_t, u_int32_t>, u_int32_t> flow_interfaces_count;
+#ifdef NTOPNG_PRO
+  std::unordered_map<struct ndpi_in6_addr /* interface IP */, struct ndpi_in6_addr /* exporter IP */,
+		     ndpi_in6_addr_hash, ndpi_in6_addr_eq> snmp_ip_addr_map;
+#ifdef HAVE_KAFKA
+  KafkaClient kafkaClient;
+#endif
+#endif
   
+#ifdef HAVE_NEDGE
+  std::vector<PacketForwarder*> multicastForwarders;
+#endif
+#ifdef HAVE_SNMP_TRAP
+  SNMPTrap* trap_collector;
+#endif
+
   /* Local network address list */
-  char *local_network_names[CONST_MAX_NUM_NETWORKS];
-  char *local_network_aliases[CONST_MAX_NUM_NETWORKS];
-  AddressTree local_network_tree;
+  char* local_network_names[CONST_MAX_NUM_NETWORKS];
+  char* local_network_aliases[CONST_MAX_NUM_NETWORKS];
+  int32_t local_network_max_id; /* highest assigned local network ID, -1 if none */
+  AddressTree local_network_tree, cloud_local_network_tree;
+
+  /* Threads info */
+  struct ThreadInfo {
+    std::string name;
+#ifndef _WIN32
+    clockid_t cpu_clock_id; /* used to read CPU time */
+#endif
+    bool cpu_clock_valid;
+    struct timespec last_cpu_ts;     /* last CPU clock sample */
+    struct timespec last_elapsed_ts; /* cpu time of last clock sample */
+  };
+  std::map<pthread_t, ThreadInfo> threads_info;
+  Mutex threads_info_m;
+
+  /* Local Autonomous Systems */
+  std::map<u_int32_t, bool> local_asn;
 
   /* Alerts */
   FlowAlertsLoader flow_alerts_loader;
 
   /* Checks */
-  FlowChecksLoader *flow_checks_loader;
-  HostChecksLoader *host_checks_loader;
+  FlowChecksLoader* flow_checks_loader;
+  HostChecksLoader* host_checks_loader;
 
   /* Hosts Control (e.g., disabled alerts) */
 #ifdef NTOPNG_PRO
-  bool alertExclusionsReloadInProgress;
+  std::atomic<bool> alertExclusionsReloadInProgress;
   AlertExclusions *alert_exclusions, *alert_exclusions_shadow;
+  std::map<std::tuple<struct ndpi_in6_addr /* exporter IP */,
+                      u_int32_t /* interface_id */>, SNMPInterfaceRole, InterfaceKeyCompare> *ifRoles, *ifRoles_shadow;
 #endif
-#if defined(HAVE_CLICKHOUSE) && defined(HAVE_MYSQL)
-  ClickHouseImport *clickhouseImport;
-#endif
-  
-  bool assignUserId(u_int8_t *new_user_id);
+
+  bool assignUserId(u_int8_t* new_user_id);
 
 #ifndef WIN32
-  ContinuousPing *cping;
-  Ping *default_ping;
+  ContinuousPing* cping;
+  Ping* default_ping;
+  bool ping_initialized;
+  bool active_monitoring_not_avail;
   std::map<std::string /* ifname */, Ping*> ping;
 #endif
-  
-#ifdef __linux__
-  int inotify_fd;
+
+#ifdef NTOPNG_PRO
+  TagsMapping* tagsMapping;
+  IssueManager* issue_manager; /* Issues (Enterprise XXL+), see pro/include/IssueManager.h */
 #endif
 
   /* For local network */
-  inline int16_t localNetworkLookup(int family, void *addr, u_int8_t *network_mask_bits = NULL);
-  bool addLocalNetwork(char *_net);
+  inline int32_t localNetworkLookup(int family, void* addr,
+                                    u_int8_t* network_mask_bits = NULL);
+  inline int32_t cloudNetworkLookup(int family, void* addr,
+                                    u_int8_t* network_mask_bits = NULL);
+  bool addLocalNetwork(char* _net);
+  void initLocalNetworkMaxIdFromRedis();
 
   void loadLocalInterfaceAddress();
   void initAllowedProtocolPresets();
-  
-  bool getUserPasswordHashLocal(const char * user, char *password_hash) const;
-  bool checkUserPasswordLocal(const char * user, const char * password, char *group) const;
-  bool checkUserPassword(const char * user, const char * password, char *group, bool *localuser) const;
-  bool startPurgeLoop();
+
+  void reloadASNPrefsOnInterfaces();
+
+  bool getUserPasswordHashLocal(const char* user, char* password_hash,
+                                u_int password_hash_len) const;
+  bool checkLocalAuth(const char* user, const char* password,
+                      char* group) const;
+  bool checkHTTPAuth(const char* user, const char* password, char* group) const;
+  bool checkLDAPAuth(const char* user, const char* password, char* group) const;
+  bool checkRadiusAuth(const char* user, const char* password,
+                       char* group) const;
+  bool checkUserPassword(const char* user, const char* password, char* group,
+                         bool* localuser, bool* redirect_to_change_pwd) const;
 
   void checkReloadFlowChecks();
   void checkReloadHostChecks();
   void checkReloadAlertExclusions();
   void checkReloadHostPools();
+  void checkReloadTagsMapping();
   void setZoneInfo();
-  char* getPersistentCustomListName(char *name);
-    
-public:
+  char* getPersistentCustomListName(char* name, u_int8_t* list_id /* out */);
+#ifdef NTOPNG_PRO
+  void connectMessageBroker();
+  void reloadMessageBroker();
+#endif
+  bool downloadCustomnDPIProtos(char* url, char* dest_file);
+  BGPPrefixListener *bgp;
+  
+ public:
   /**
    * @brief A Constructor
    * @details Creating a new Ntop.
@@ -155,7 +271,7 @@ public:
    * @param appName  Describe the application name.
    * @return A new instance of Ntop.
    */
-  Ntop(const char *appName);
+  Ntop(const char* appName);
   /**
    * @brief A Destructor.
    *
@@ -168,7 +284,7 @@ public:
    * @param _prefs Prefs instance containing the ntopng preferences.
    * @param quick_registration Set it to true to do a limited initialization
    */
-  void registerPrefs(Prefs *_prefs, bool quick_registration);
+  void registerPrefs(Prefs* _prefs, bool quick_registration);
 
   /**
    * @brief Register an ntopng log file
@@ -176,33 +292,38 @@ public:
    *
    * @param logFile A valid path to a log file
    */
-  inline void registerLogFile(const char* logFile) { getTrace()->set_log_file(logFile); };
-  inline void rotateLogs(bool mode)                { getTrace()->rotate_logs(mode);     };
+  inline void registerLogFile(const char* logFile) {
+    getTrace()->set_log_file(logFile);
+  };
+  inline void rotateLogs(bool mode) { getTrace()->rotate_logs(mode); };
 
   /**
    * @brief Set the path of custom nDPI protocols file.
-   * @details Set the path of protos.txt containing the defined custom protocols. For more information please read the nDPI quick start (cd ntopng source code directory/nDPI/doc/).
+   * @details Set the path of protos.txt containing the defined custom
+   * protocols. For more information please read the nDPI quick start (cd ntopng
+   * source code directory/nDPI/doc/).
    *
    * @param path Path of protos.file.
    */
-  void setCustomnDPIProtos(char *path);
+  void setCustomnDPIProtos(char* path);
   /**
    * @brief Get the custom nDPI protocols.
    * @details Inline function.
    *
    * @return The path of custom nDPI protocols file.
    */
-  inline char* getCustomnDPIProtos()                 { return(custom_ndpi_protos);                 };
+  char* getCustomnDPIProtos();
   /**
    * @brief Get the offset time.
    * @details ....
    *
    * @return The timezone offset.
    */
-  inline long get_time_offset()                      { return(time_offset);                        };
+  inline long get_time_offset() { return (time_offset); };
   /**
    * @brief Initialize the Timezone.
-   * @details Use the localtime function to initialize the variable @ref time_offset.
+   * @details Use the localtime function to initialize the variable @ref
+   * time_offset.
    *
    */
   void initTimezone();
@@ -213,7 +334,7 @@ public:
    * @param path String path to validate.
    * @return A valid path.
    */
-  char* getValidPath(char *path);
+  char* getValidPath(char* path);
   /**
    * @brief Load the @ref Geolocation module.
    * @details Initialize the variable @ref geo with the input directory.
@@ -225,12 +346,12 @@ public:
    *
    * @param dir Path to database home directory.
    */
-  void loadMacManufacturers(char *dir);
+  void loadMacManufacturers(char* dir);
 
-  inline void getMacManufacturer(const char *mac, lua_State *vm) {
+  inline void getMacManufacturer(const char* mac, lua_State* vm) {
     u_int8_t mac_bytes[6];
     Utils::parseMac(mac_bytes, mac);
-    if(mac_manufacturers)
+    if (mac_manufacturers)
       mac_manufacturers->getMacManufacturer(mac_bytes, vm);
     else
       lua_pushnil(vm);
@@ -240,9 +361,11 @@ public:
    * @brief Set the local networks.
    * @details Set the local networks to @ref AddressResolution instance.
    *
-   * @param nets String that defined the local network with this Format: 131.114.21.0/24,10.0.0.0/255.0.0.0 .
+   * @param nets String that defined the local network with this Format:
+   * 131.114.21.0/24,10.0.0.0/255.0.0.0 .
    */
-  void setLocalNetworks(char *nets);
+  void setLocalNetworks(char* nets);
+
   /**
    * @brief Check if the ingress parameter is in the local networks.
    * @details Inline method.
@@ -253,25 +376,35 @@ public:
    * @param network_mask_bits It returns the number of bits of the network mask
    * @return True if the address is in the local networks, false otherwise.
    */
-  bool isLocalAddress(int family, void *addr, int16_t *network_id, u_int8_t *network_mask_bits = NULL);
+  bool isLocalAddress(int family, void* addr, int32_t* network_id,
+                      u_int8_t* network_mask_bits = NULL);
+
+  /**
+   * @brief Return true is broadcast addresses are disabled (point-to-point).
+   */
+  bool isBroadcastIPDisabled() { return broadcast_ip_disabled; };
+  void disableBroadcastIP() { broadcast_ip_disabled = true; };
 
   /**
    * @brief Start ntopng packet processing.
    */
   void start();
+
   /**
    * @brief Resolve the host name.
-   * @details Use the redis database to resolve the IP address and get the host name.
+   * @details Use the redis database to resolve the IP address and get the host
+   * name.
    *
    * @param numeric_ip Address IP.
    * @param symbolic Symbolic name.
    * @param symbolic_len Length of symbolic name.
    */
-  inline void resolveHostName(const char *numeric_ip, char *symbolic, u_int symbolic_len) {
+  inline void resolveHostName(const char* numeric_ip, char* symbolic,
+                              u_int symbolic_len) {
     address->resolveHostName(numeric_ip, symbolic, symbolic_len);
   }
 
-  inline bool resolveHost(const char *host, char *rsp, u_int rsp_len, bool v4) {
+  inline bool resolveHost(const char* host, char* rsp, u_int rsp_len, bool v4) {
     return address->resolveHost(host, rsp, rsp_len, v4);
   }
 
@@ -280,13 +413,15 @@ public:
    *
    * @return Current geolocation instance.
    */
-  inline Geolocation* getGeolocation()               { return(geo);                };
+  inline Geolocation* getGeolocation() { return (geo); };
   /**
    * @brief Get the mac manufacturers instance.
    *
    * @return Current mac manufacturers instance.
    */
-  inline MacManufacturers* getMacManufacturers()     { return(mac_manufacturers); };
+  inline MacManufacturers* getMacManufacturers() {
+    return (mac_manufacturers);
+  };
   /**
    * @brief Get the ifName.
    * @details Find the ifName by id parameter.
@@ -294,42 +429,47 @@ public:
    * @param id Index of ifName.
    * @return ....
    */
-  inline char* get_if_name(int id)                         { return(prefs->get_if_name(id));     };
-  inline const char* get_if_descr(int id)                  { return(prefs->get_if_descr(id));    };
-  inline char* get_data_dir()                              { return(prefs->get_data_dir());      };
-  inline const char* get_callbacks_dir()                   { return(prefs->get_callbacks_dir()); };
+  inline char* get_if_name(int id) { return (prefs->get_if_name(id)); };
+  inline const char* get_if_descr(int id) { return (prefs->get_if_descr(id)); };
+  inline char* get_data_dir() { return (prefs->get_data_dir()); };
+  inline const char* get_callbacks_dir() {
+    return (prefs->get_callbacks_dir());
+  };
 #ifdef NTOPNG_PRO
-  inline const char* get_pro_callbacks_dir()               { return(prefs->get_pro_callbacks_dir()); };
+  inline const char* get_pro_callbacks_dir() {
+    return (prefs->get_pro_callbacks_dir());
+  };
 #endif
   /**
    * @brief Get the current httpdocs directory.
    *
    * @return The absolute path of the httpdocs directory.
    */
-  inline const char* get_docs_dir()                     { return(prefs->get_docs_dir());      };
+  inline const char* get_docs_dir() { return (prefs->get_docs_dir()); };
 
   /**
    * @brief Register the network interface.
-   * @details Check for duplicated interface and add the network interface in to @ref iface.
+   * @details Check for duplicated interface and add the network interface in to
+   * @ref iface.
    *
    * @param i Network interface.
    * @return true on success, false otherwise
    */
-  bool registerInterface(NetworkInterface *i);
+  bool registerInterface(NetworkInterface* i);
 
   /**
    * @brief Finalize the network interface initialization.
    *
    * @param i Network interface.
    */
-  void initInterface(NetworkInterface *i);
+  void initInterface(NetworkInterface* i, bool disable_dump = false);
 
   /**
    * @brief Get the number of defined network interfaces.
    *
    * @return Number of defined network interfaces.
    */
-  inline u_int8_t get_num_interfaces()               { return(num_defined_interfaces); }
+  inline u_int8_t get_num_interfaces() { return (num_defined_interfaces); }
 
   /**
    * @brief Get the Id of network interface.
@@ -338,7 +478,7 @@ public:
    * @param name Name of network interface.
    * @return The network interface Id if exists, -1 otherwise.
    */
-  int getInterfaceIdByName(lua_State *vm, const char * name);
+  int getInterfaceIdByName(lua_State* vm, const char* name);
 
   /**
    * @brief Get the network interface with the specified Id
@@ -354,14 +494,16 @@ public:
    * @param id Position of network interface.
    * @return Pointer to the network interface, NULL otherwise.
    */
-  inline NetworkInterface* getInterfaceAtId(u_int8_t id) { return((id < num_defined_interfaces) ? iface[id] : NULL); }
+  inline NetworkInterface* getInterfaceAtId(u_int8_t id) {
+    return ((id < num_defined_interfaces) ? iface[id] : NULL);
+  }
 
   /**
    * @brief Register the HTTP server.
    *
    * @param h HTTP server instance.
    */
-  inline void registerHTTPserver(HTTPserver *h)      { httpd = h;              };
+  inline void registerHTTPserver(HTTPserver* h) { httpd = h; };
 
   /**
    * @brief Get the network interface identified by name or Id.
@@ -372,223 +514,487 @@ public:
    * @param name Names or Id of network interface.
    * @return The network interface instance if exists, NULL otherwise.
    */
-  NetworkInterface* getNetworkInterface(const char *name, lua_State *vm = NULL);
-  inline NetworkInterface* getNetworkInterface(lua_State *vm, int ifid) {
-    char ifname[MAX_INTERFACE_NAME_LEN];
-    snprintf(ifname, sizeof(ifname), "%d", ifid);
-    return getNetworkInterface(ifname, vm /* enforce the check on the allowed interface */);
-  };
+  NetworkInterface* getNetworkInterface(const char* name, lua_State* vm = NULL);
+  inline char * getNetworkAlias(u_int id) { return((id < CONST_MAX_NUM_NETWORKS) ? local_network_aliases[id] : NULL); };
   
+  inline NetworkInterface* getNetworkInterface(lua_State* vm, int ifid) {
+    char ifname[MAX_INTERFACE_NAME_LEN];
+
+    snprintf(ifname, sizeof(ifname), "%d", ifid);
+    return getNetworkInterface(
+        ifname, vm /* enforce the check on the allowed interface */);
+  };
+
+  bool viewHasZMQInterface(NetworkInterface* viewInterface);
+
   /**
    * @brief Get the current HTTPserver instance.
    *
    * @return The current instance of HTTP server.
    */
-  inline HTTPserver*       get_HTTPserver()          { return(httpd);            };
+  inline HTTPserver* get_HTTPserver() { return (httpd); };
 
-  inline const char* get_bin_dir()                   { return(CONST_BIN_DIR);    };
+  inline const char* get_bin_dir() { return (CONST_BIN_DIR); };
 
   /**
    * @brief Get the current working directory.
    *
    * @return The absolute path of working directory.
    */
-  inline char* get_working_dir()                     { return(working_dir);      };
+  inline char* get_working_dir() { return (working_dir); };
 
   /**
    * @brief Get the installation path of ntopng.
    *
    * @return The path of installed directory.
    */
-  inline char* get_install_dir()                     { return(install_dir);         };
-  inline void  set_install_dir(char *id)             { snprintf(install_dir, MAX_PATH, "%s", id); };
+  inline char* get_install_dir() { return (install_dir); };
+  inline void set_install_dir(char* id) {
+    snprintf(install_dir, MAX_PATH, "%s", id);
+  };
 
-  inline char* get_scripts_dir()                     { return(scripts_dir); };
-  inline Bloom*            getResolutionBloom()      { return(resolvedHostsBloom);  };
-  inline NtopGlobals*      getGlobals()              { return(globals);             };
-  inline Trace*            getTrace()                { return ((globals!=NULL) ? globals->getTrace() : NULL); };
-  inline Redis*            getRedis()                { return(redis);               };
-  inline TimelineExtract*  getTimelineExtract()      { return(extract);             };
-#ifndef HAVE_NEDGE
-  inline ExportInterface*  get_export_interface()    { return(export_interface);    };
-#endif
+  inline char* get_scripts_dir() { return (scripts_dir); };
+  inline Bloom* getResolutionBloom() { return (resolvedHostsBloom); };
+  inline NtopGlobals* getGlobals() { return (globals); };
+  inline Trace* getTrace() {
+    return ((globals != NULL) ? globals->getTrace() : NULL);
+  };
+  inline Redis* getRedis() { return (redis); };
+  inline TimelineExtract* getTimelineExtract() { return (extract); };
 
-  inline Prefs*            getPrefs()                { return(prefs);               };
+  inline Prefs* getPrefs() { return (prefs); };
+  bool pcapDumpInterfacesOnly();
   void initPing();
+  bool isActiveMonitoringNotAvail();
 #ifndef WIN32
-  void  lockNtopInstance();
+  inline bool isPingInitialized() { return (ping_initialized); };
+  void lockNtopInstance();
 #endif
 #ifdef NTOPNG_PRO
 #ifdef WIN32
-  char* getIfName(int if_id, char *name, u_int name_len);
+  char* getIfName(int if_id, char* name, u_int name_len);
 #endif
 #endif
   void setScriptsDir();
-  void lua_periodic_activities_stats(NetworkInterface *iface, lua_State* vm);
+  void lua_periodic_activities_stats(NetworkInterface* iface, lua_State* vm);
+  void lua_threadsInfo(lua_State* vm);
   void getUsers(lua_State* vm);
-  bool getLocalNetworkAlias(lua_State *vm, u_int16_t network_id);
+  bool getLocalNetworkAlias(lua_State* vm, u_int32_t network_id);
   bool isUserAdministrator(lua_State* vm);
   void getAllowedInterface(lua_State* vm);
   void getAllowedNetworks(lua_State* vm);
-  bool getInterfaceAllowed(lua_State* vm, char *ifname)         const;
-  bool isInterfaceAllowed(lua_State* vm, const char *ifname)    const;
-  bool isInterfaceAllowed(lua_State* vm, int ifid)              const;
-  bool isPcapDownloadAllowed(lua_State* vm, const char *ifname);
-  char *preparePcapDownloadFilter(lua_State* vm, char *filter);
+  bool getInterfaceAllowed(lua_State* vm, char* ifname) const;
+  bool isInterfaceAllowed(lua_State* vm, const char* ifname) const;
+  bool isInterfaceAllowed(lua_State* vm, int ifid) const;
+  bool isPcapDownloadAllowed(lua_State* vm, const char* ifname);
+  char* preparePcapDownloadFilter(lua_State* vm, char* filter, int datalink);
   bool isLocalAuthEnabled() const;
   bool isLocalUser(lua_State* vm);
-  bool checkCaptiveUserPassword(const char * user, const char * password, char *group) const;
-  bool checkGuiUserPassword(struct mg_connection *conn, const char * user, const char * password, char *group, bool *localuser) const;
-  bool isBlacklistedLogin(struct mg_connection *conn) const;
-  bool checkUserInterfaces(const char * user)             const;
-  bool resetUserPassword(char *username, char *old_password, char *new_password);
-  bool mustChangePassword(const char *user);
-  bool changeUserFullName(const char * username, const char * full_name) const;
-  bool changeUserRole(char *username, char *user_role) const;
-  bool changeAllowedNets(char *username, char *allowed_nets)     const;
-  bool changeAllowedIfname(char *username, char *allowed_ifname) const;
-  bool changeUserHostPool(const char * username, const char * host_pool_id) const;
-  bool changeUserLanguage(const char * username, const char * language) const;
-  bool changeUserPermission(const char * username, bool allow_pcap_download) const;
-  bool changeUserHistoricalFlowPermission(const char * username, bool allow_historical_flow) const;
-  bool getUserPermission(const char * username, bool *allow_pcap_download) const;
-  bool existsUser(const char * username) const;
-  bool addUser(char *username, char *full_name, char *password, char *host_role,
-	       char *allowed_networks, char *allowed_ifname, char *host_pool_id,
-	       char *language, bool allow_pcap_download, bool allow_historical_flow);
-  bool addUserAPIToken(const char * username, const char *api_token);
-  bool isCaptivePortalUser(const char * username);
-  bool deleteUser(char *username);
-  bool getUserHostPool(char *username, u_int16_t *host_pool_id);
-  bool getUserAllowedIfname(const char * username, char *buf, size_t buflen) const;
-  bool getUserAPIToken(const char * username, char *buf, size_t buflen) const;
-  void setWorkingDir(char *dir);
-  void fixPath(char *str, bool replaceDots = true);
-  void removeTrailingSlash(char *str);
+  bool checkCaptiveUserPassword(const char* user, const char* password,
+                                char* group) const;
+  bool checkGuiUserPassword(struct mg_connection* conn, const char* user,
+                            const char* password, char* group, bool* localuser,
+                            bool* redirect_to_change_pwd) const;
+  bool isBlacklistedLogin(struct mg_connection* conn) const;
+  bool checkUserInterfaces(const char* user) const;
+  bool resetUserPassword(char* username, char* old_password,
+                         char* new_password,
+                         const char* keep_session_id = NULL);
+  void invalidateUserSessions(const char* username,
+                              const char* keep_session_id = NULL);
+  bool mustChangePassword(const char* user);
+  bool changeUserFullName(const char* username, const char* full_name) const;
+  bool changeUserRole(char* username, char* user_role) const;
+  bool changeAllowedNets(char* username, char* allowed_nets) const;
+  bool changeAllowedIfname(char* username, char* allowed_ifname) const;
+  bool changeUserHostPool(const char* username, const char* host_pool_id) const;
+  bool changeAllowedHostPools(const char* username,
+                              const char* allowed_host_pools) const;
+  void getAllowedHostPools(lua_State* vm);
+  bool changeUserLanguage(const char* username, const char* language) const;
+  bool changeUserPcapDownloadPermission(const char* username,
+                                        bool allow_pcap_download,
+                                        u_int32_t ttl = 0 /* Forever */) const;
+  bool changeUserHistoricalFlowPermission(
+      const char* username, bool allow_historical_flows,
+      u_int32_t ttl = 0 /* Forever */) const;
+  bool changeUserAlertsPermission(const char* username, bool allow_alerts,
+                                  u_int32_t ttl = 0 /* Forever */) const;
+  void resetUserPermissions(const char* user) const;
+  bool hasCapability(lua_State* vm, UserCapabilities capability);
+  bool getUserCapabilities(const char* username, bool* allow_pcap_download,
+                           bool* allow_historical_flows,
+                           bool* allow_alerts) const;
+  bool existsUser(const char* username) const;
+
+  /* TOTP/MFA */
+  bool generateTOTPSecret(char* secret, size_t secret_len) const;
+  bool setUserTOTPSecret(const char* username, const char* secret) const;
+  bool getUserTOTPSecret(const char* username, char* secret,
+                         size_t secret_len) const;
+  bool isTOTPEnabled(const char* username) const;
+  bool setUserTOTPEnabled(const char* username, bool enabled) const;
+  bool validateTOTPCode(const char* username, const char* code) const;
+  bool isTOTPLocked(const char* username) const;
+  void getTOTPProvisioningUri(const char* username, char* uri,
+                              size_t uri_len) const;
+  bool createMFAPendingToken(const char* username, const char* referer,
+                             char* token, size_t token_len) const;
+  bool getMFAPendingToken(const char* token, char* username,
+                          size_t username_len, char* referer,
+                          size_t referer_len) const;
+  void deleteMFAPendingToken(const char* token) const;
+
+  /* WebAuthn/Passkey */
+  bool generateWebAuthnChallenge(char* challenge_b64, size_t len) const;
+  bool createWebAuthnPendingToken(const char* username, const char* referer,
+                                  char* token, size_t token_len,
+                                  char* challenge_b64, size_t challenge_len) const;
+  bool getWebAuthnPendingToken(const char* token, char* username,
+                               size_t username_len, char* referer,
+                               size_t referer_len, char* challenge_b64,
+                               size_t challenge_len) const;
+  void deleteWebAuthnPendingToken(const char* token) const;
+  bool isWebAuthnEnabled(const char* username) const;
+  int  getWebAuthnCredentialCount(const char* username) const;
+  bool getWebAuthnCredential(const char* username, int idx,
+                             char* cred_id_b64, size_t cred_id_len,
+                             uint8_t* pk_x, uint8_t* pk_y,
+                             uint32_t* sign_count,
+                             char* name, size_t name_len) const;
+  bool storeWebAuthnCredential(const char* username,
+                               const char* cred_id_b64,
+                               const uint8_t* pk_x, const uint8_t* pk_y,
+                               uint32_t sign_count,
+                               const char* name) const;
+  bool deleteWebAuthnCredential(const char* username,
+                                const char* cred_id_b64) const;
+  bool getWebAuthnCredentialsJSON(const char* username,
+                                  char* json_out, size_t len) const;
+  bool verifyWebAuthnAssertion(const char* username,
+                               const char* cred_id_b64url,
+                               const char* client_data_json_b64url,
+                               const char* auth_data_b64url,
+                               const char* signature_b64url,
+                               const char* expected_challenge_b64url,
+                               const char* expected_origin,
+                               const char* rp_id) const;
+  bool verifyAndStoreWebAuthnRegistration(const char* username,
+                                          const char* cred_name,
+                                          const char* cred_id_b64url,
+                                          const char* client_data_json_b64url,
+                                          const char* attestation_obj_b64url,
+                                          const char* expected_challenge_b64url,
+                                          const char* expected_origin,
+                                          const char* rp_id) const;
+
+  bool addUser(char* username, char* full_name, char* password, char* host_role,
+               char* allowed_networks, char* allowed_ifname, char* host_pool_id,
+               char* language, bool allow_pcap_download,
+               bool allow_historical_flows, bool allow_alerts,
+               char* allowed_host_pools = NULL);
+  bool addUserAPIToken(const char* username, const char* api_token);
+  bool isCaptivePortalUser(const char* username);
+  bool deleteUser(char* username);
+  void deleteUserKeys(const char* username) const;
+  bool getUserHostPool(char* username, u_int16_t* host_pool_id);
+  bool getUserAllowedIfname(const char* username, char* buf,
+                            size_t buflen) const;
+  bool getUserAPIToken(const char* username, char* buf, size_t buflen) const;
+  void setWorkingDir(char* dir);
+  void fixPath(char* str, bool replaceDots = true);
+  void removeTrailingSlash(char* str);
   void daemonize();
   void shutdownPeriodicActivities();
   void shutdownInterfaces();
   void shutdownAll();
+  void registerThread(const char* name, pthread_t id);
   void runHousekeepingTasks();
+  void runPeriodicHousekeepingTasks();
   void runShutdownTasks();
   void checkShutdownWhenDone();
-  bool isLocalInterfaceAddress(int family, void *addr)       { return(local_interface_addresses.findAddress(family, addr) == -1 ? false : true);    }; 
-  void getLocalNetworkIp(int16_t local_network_id, IpAddress **network_ip, u_int8_t *network_prefix);
-  void addLocalNetworkList(const char *network);
-  void createExportInterface();
+  bool isLocalInterfaceAddress(int family, void* addr) {
+    return (local_interface_addresses.findAddress(family, addr) == -1 ? false
+                                                                      : true);
+  };
+  void getLocalNetworkIp(int32_t local_network_id, IpAddress** network_ip,
+                         u_int8_t* network_prefix);
+  void addLocalNetworkList(const char* network);
   void resetNetworkInterfaces();
   void initElasticSearch();
 
-  inline u_int32_t getStartTime()       { return((u_int32_t)start_time); }
-  inline char*     getStartTimeString() { return(epoch_buf);             }
-  inline u_int32_t getLastModifiedStaticFileEpoch()         { return(last_modified_static_file_epoch); }
-  inline void      setLastModifiedStaticFileEpoch(u_int32_t t) { if(t > last_modified_static_file_epoch) last_modified_static_file_epoch = t; }
-  inline u_int32_t getUptime()                 { return((u_int32_t)((start_time > 0) ? (time(NULL)-start_time) : 0)); }
-  inline int getUdpSock()                      { return(udp_socket); }
+  inline u_int32_t getStartTime() { return ((u_int32_t)start_time); }
+  inline char* getStartTimeString() { return (epoch_buf); }
+  inline u_int32_t getLastModifiedStaticFileEpoch() {
+    return (last_modified_static_file_epoch);
+  }
+  inline void setLastModifiedStaticFileEpoch(u_int32_t t) {
+    if (t > last_modified_static_file_epoch)
+      last_modified_static_file_epoch = t;
+  }
+  inline u_int32_t getUptime() {
+    return ((u_int32_t)((start_time > 0) ? (time(NULL) - start_time) : 0));
+  }
+  inline int getUdpSock() { return (udp_socket); }
 #ifdef NTOPNG_PRO
-  inline AlertExclusions *getAlertExclusions() { return alert_exclusions; }
+  inline AlertExclusions* getAlertExclusions() { return alert_exclusions; }
+  u_int32_t getMaxNumFlowExporters();
+  u_int32_t getMaxNumFlowExportersInterfaces();
 #endif
+  u_int32_t getNumFlowExporters() { return num_flow_exporters; }
+  u_int32_t getNumFlowExportersInterfaces() { return num_flow_interfaces; }
+  bool incNumFlowExporters(u_int32_t unique_source_id);
+  bool incNumFlowExportersInterfaces(u_int32_t unique_source_id, u_int32_t ifIndex);
+  void decNumFlowExporters(u_int32_t unique_source_id);
+  void decNumFlowExportersInterfaces(u_int32_t unique_source_id, u_int32_t ifIndex);
 
-  inline u_int getNumCPUs()             { return(num_cpus); }
-  inline void setNumCPUs(u_int num)     { num_cpus = num; }
-  inline bool canSendICMP()               { return(can_send_icmp); }
+  inline u_int getNumCPUs() { return (num_cpus); }
+  inline void setNumCPUs(u_int num) { num_cpus = num; }
+  inline bool canSendICMP() { return (can_send_icmp); }
   inline bool canSelectNetworkIfaceICMP() {
 #ifdef __linux__
-    return(can_send_icmp);
+    return (can_send_icmp);
 #else
-    return(false);
+    return (false);
 #endif
-  }  
+  }
 
-  inline NtopPro* getPro()              { return((NtopPro*)pro); };
+  inline NtopPro* getPro() { return ((NtopPro*)pro); };
+#ifdef NTOPNG_PRO
+  inline IssueManager* getIssueManager() { return issue_manager; };
+#endif
 
   void loadTrackers();
-  bool isATrackerHost(char *host);
-  bool isExistingInterface(const char * name) const;
-  inline NetworkInterface* getFirstInterface()  const { return(iface ? iface[0] : NULL); }
-  inline NetworkInterface* getInterface(int i)  const { return(((i < num_defined_interfaces) && iface[i]) ? iface[i] : NULL); }
-  inline NetworkInterface* getSystemInterface() const { return(system_interface); }
-#ifdef NTOPNG_PRO
-  bool addToNotifiedInformativeCaptivePortal(u_int32_t client_ip);
-  bool addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id, char *label, char *ifname);
+  bool isATrackerHost(char* host);
+  bool isExistingInterface(const char* name) const;
+  inline NetworkInterface* getFirstInterface() const {
+    return (iface ? iface[0] : NULL);
+  }
+  inline NetworkInterface* getInterface(int i) const {
+    return (((i < num_defined_interfaces) && iface[i]) ? iface[i] : NULL);
+  }
+  inline NetworkInterface* getSystemInterface() const {
+    return (system_interface);
+  }
+#ifdef HAVE_NEDGE
+  void addToNotifiedInformativeCaptivePortal(u_int32_t client_ip);
+  bool addIPToLRUMatches(u_int32_t client_ip, u_int16_t user_pool_id,
+                         char* label, char* ifname);
 #endif /* NTOPNG_PRO */
-  
-  DeviceProtocolBitmask* getDeviceAllowedProtocols(DeviceType t) { return(&deviceProtocolPresets[t]); }
-  void refreshAllowedProtocolPresets(DeviceType t, bool client, lua_State *L, int index);
-  DeviceProtoStatus getDeviceAllowedProtocolStatus(DeviceType dev_type, ndpi_protocol proto, u_int16_t pool_id, bool as_client);
+
+  DeviceProtocolBitmask* getDeviceAllowedProtocols(DeviceType t) {
+    return (&deviceProtocolPresets[t]);
+  }
+  void refreshAllowedProtocolPresets(DeviceType t, bool client, lua_State* L,
+                                     int index);
+  DeviceProtoStatus getDeviceAllowedProtocolStatus(DeviceType dev_type,
+                                                   ndpi_protocol proto,
+                                                   u_int16_t pool_id,
+                                                   bool as_client);
   void refreshCPULoad();
-  bool getCPULoad(float *out);
-  inline FifoSerializerQueue* getInternalAlertsQueue()    { return(internal_alerts_queue);  }
+  bool getCPULoad(float* out);
+  inline FifoSerializerQueue* getInternalAlertsQueue() {
+    return (internal_alerts_queue);
+  }
   void lua_alert_queues_stats(lua_State* vm);
-  bool   recipients_are_empty();
-  bool   recipients_enqueue(AlertFifoItem *notification, AlertEntity alert_entity);
-  bool   recipient_enqueue(u_int16_t recipient_id, const AlertFifoItem* const notification);
-  bool   recipient_dequeue(u_int16_t recipient_id, AlertFifoItem *notification);
-  void   recipient_stats(u_int16_t recipient_id, lua_State* vm);
+  bool recipients_are_empty();
+  bool alerts_pipeline_drained();
+  bool views_drained();
+  bool waitRecipientsQueuesDrained(u_int max_wait_sec);
+  bool recipients_enqueue(AlertFifoItem* notification);
+  AlertLevel get_default_recipient_minimum_severity();
+  bool recipient_enqueue(u_int16_t recipient_id,
+                         const AlertFifoItem* const notification);
+  AlertFifoItem* recipient_dequeue(u_int16_t recipient_id);
+  void recipient_stats(u_int16_t recipient_id, lua_State* vm);
   time_t recipient_last_use(u_int16_t recipient_id);
-  void   recipient_delete(u_int16_t recipient_id);
-  void   recipient_register(u_int16_t recipient_id, AlertLevel minimum_severity,
-                            Bitmap128 enabled_categories, Bitmap128 enabled_host_pools);
+  void inc_recipient_stats(u_int16_t recipient_id, u_int64_t delivered,
+                           u_int64_t filtered_out, u_int64_t delivery_failures);
+  void recipient_delete(u_int16_t recipient_id);
+  void recipient_register(u_int16_t recipient_id, AlertLevel minimum_severity,
+                          Bitmap128 enabled_categories,
+                          Bitmap4096 enabled_host_pools,
+                          Bitmap128 enabled_entities,
+                          Bitmap128 enabled_flow_alert_types,
+                          Bitmap128 enabled_host_alert_types,
+                          Bitmap128 enabled_other_alert_types,
+                          bool match_alert_id, bool skip_alerts,
+                          Bitmap64 enabled_tags = Bitmap64());
 
   void sendNetworkInterfacesTermination();
-  inline time_t getLastStatsReset() { return(last_stats_reset); }
+  inline time_t getLastStatsReset() { return (last_stats_reset); }
   void resetStats();
 
-  bool isMaliciousJA3Hash(std::string md5_hash);
-  struct ndpi_detection_module_struct* initnDPIStruct();    
+  struct ndpi_detection_module_struct* initnDPIStruct();
 
   void checkReloadHostsBroadcastDomain();
 
-  inline void reloadFlowChecks()   { flowChecksReloadInProgress = true;    };
-  inline void reloadHostChecks()   { hostChecksReloadInProgress = true;    };
+  inline void reloadFlowChecks() { flowChecksReloadInProgress = true; };
+  inline void reloadHostChecks() { hostChecksReloadInProgress = true; };
+  inline bool isFlowChecksReloadPending() { return (flowChecksReloadInProgress); };
+  inline bool isHostChecksReloadPending() { return (hostChecksReloadInProgress); };
   inline void reloadAlertExclusions() {
 #ifdef NTOPNG_PRO
     alertExclusionsReloadInProgress = true;
 #endif
   };
-  inline void reloadHostPools()       { hostPoolsReloadInProgress = true;        };
-
-  void addToPool(char *host_or_mac, u_int16_t user_pool_id);
-
-  char *getAlertJSON(FlowAlertType fat, Flow *f) const;
-  ndpi_serializer *getAlertSerializer(FlowAlertType fat, Flow *f) const;
-  
-#ifndef WIN32
-  inline ContinuousPing* getContinuousPing()   { return(cping); }
-  Ping*  getPing(char *ifname);
+  inline bool isAlertExclusionsReloadPending() {
+#ifdef NTOPNG_PRO
+    return (alertExclusionsReloadInProgress);
+#else
+    return (false);
 #endif
-  
-  inline bool hasDroppedPrivileges()         { return(privileges_dropped); }
-  inline void setDroppedPrivileges()         { privileges_dropped = true; }
+  };
+  inline void reloadHostPools() { hostPoolsReloadInProgress = true; };
 
-  void getUserGroupLocal(const char * user, char *group) const;
-  bool existsUserLocal(const char * user) { char val[64]; return getUserPasswordHashLocal(user, val); }
-  void purgeLoopBody();
+  /* Functions about Tag to Protocol association */
+  inline void reloadTagsMapping() {
+#ifdef NTOPNG_PRO
+    tagsMappingReloadInProgress = true;
+#endif
+  };
+#ifdef NTOPNG_PRO
+  void getTagsForProtocol(u_int16_t protocol, std::vector<int> &tags_out);
+  void getTagsForRisks(ndpi_risk flow_risks, std::vector<int> &tags_out);
+  /* Bitmap of the tags configured with a TTL */
+  u_int64_t getTTLTagsBitmap();
+#endif
+
+  void addToPool(char* host_or_mac, u_int16_t user_pool_id);
+
+  char* getAlertJSON(FlowAlertType fat, Flow* f) const;
+  ndpi_serializer* getAlertSerializer(FlowAlertType fat, Flow* f) const;
+
+#ifndef WIN32
+  inline ContinuousPing* getContinuousPing() { return (cping); }
+  Ping* getPing(char* ifname);
+#endif
+
+#ifdef HAVE_RADIUS
+  inline Radius* getRadius() { return radiusAcc; };
+  inline void updateRadiusLoginInfo() { radiusAcc->updateLoginInfo(); };
+  inline bool radiusAuthenticate(const char* username, const char* password,
+                                 bool* has_unprivileged_capabilities,
+                                 bool* is_admin) {
+    return radiusAcc->authenticate(username, password,
+                                   has_unprivileged_capabilities, is_admin);
+  };
+  inline bool radiusAccountingStart(RadiusTraffic* info) {
+    return radiusAcc->startSession(info);
+  };
+  inline bool radiusAccountingUpdate(RadiusTraffic* info) {
+    return radiusAcc->updateSession(info);
+  };
+  inline bool radiusAccountingStop(RadiusTraffic* info) {
+    return radiusAcc->stopSession(info);
+  };
+#endif
+
+#ifdef NTOPNG_PRO
+  inline OIDCAuthenticator* getOIDCAuthenticator() { return oidcAuth; };
+#endif
+
+  inline bool hasDroppedPrivileges() { return (privileges_dropped); }
+  inline void setDroppedPrivileges() { privileges_dropped = true; }
+
+  void getUserGroupLocal(const char* user, char* group) const;
+  bool existsUserLocal(const char* user) {
+    char val[64];
+    return getUserPasswordHashLocal(user, val, sizeof(val));
+  }
+
+  u_int32_t getMaxNumLocalNetworks();
 
   /* Local network address list methods */
-  inline u_int16_t getNumLocalNetworks()       { return local_network_tree.getNumAddresses();    };
-  inline const char* getLocalNetworkName(int16_t local_network_id) {
-    return(((u_int16_t)local_network_id < local_network_tree.getNumAddresses()) ? local_network_names[(u_int16_t)local_network_id] : NULL);
+  inline u_int32_t getNumLocalNetworks() {
+    return local_network_tree.getNumAddresses();
   };
-  
-  u_int16_t getLocalNetworkId(const char *network_name);
-  
-  //void getLocalAddresses(lua_State* vm) { return(local_network_tree.getAddresses(vm)); };
+  /* Max assigned local network ID (or -1 if none) */
+  inline int32_t getMaxLocalNetworksID() { return local_network_max_id; };
+  inline const char* getLocalNetworkName(int32_t local_network_id) {
+    return ((local_network_id >= 0 && local_network_id <= local_network_max_id &&
+             local_network_names[local_network_id] != NULL)
+                ? local_network_names[local_network_id]
+                : NULL);
+  };
 
-  inline FlowChecksLoader* getFlowChecksLoader() { return(flow_checks_loader); }
-  inline HostChecksLoader* getHostChecksLoader() { return(host_checks_loader); }
-  inline u_int8_t getFlowAlertScore(FlowAlertTypeEnum alert_id) const { return flow_alerts_loader.getAlertScore(alert_id); };
-  inline ndpi_risk_enum getFlowAlertRisk(FlowAlertTypeEnum alert_id) const { return flow_alerts_loader.getAlertRisk(alert_id); };
-  inline const char * getRiskStr(ndpi_risk_enum risk_id) { return(ndpi_risk2str(risk_id)); };
-  bool luaFlowCheckInfo(lua_State *vm, std::string check_name) const;
-  bool luaHostCheckInfo(lua_State *vm, std::string check_name) const;
-  inline ndpi_risk getUnhandledRisks() const { return flow_checks_loader ? flow_checks_loader->getUnhandledRisks() : 0; };
+  u_int32_t getLocalNetworkId(const char* network_name);
+
+  void addLocalCloudAddress(char* str) {
+    cloud_local_network_tree.addAddress(str);
+  }
+
+  // void getLocalAddresses(lua_State* vm) {
+  // return(local_network_tree.getAddresses(vm)); };
+
+  inline FlowChecksLoader* getFlowChecksLoader() {
+    return (flow_checks_loader);
+  }
+  inline HostChecksLoader* getHostChecksLoader() {
+    return (host_checks_loader);
+  }
+  inline u_int8_t getFlowAlertScore(FlowAlertTypeEnum alert_id) const {
+    return flow_alerts_loader.getAlertScore(alert_id);
+  };
+  inline ndpi_risk_enum getFlowAlertRisk(FlowAlertTypeEnum alert_id) const {
+    return flow_alerts_loader.getAlertRisk(alert_id);
+  };
+  inline const char* getRiskStr(ndpi_risk_enum risk_id) {
+    return (ndpi_risk2str(risk_id));
+  };
+
+  /* Getters */
+  inline bool hasExportersUpdate() const {
+    return updates.exporters.load(std::memory_order_acquire);
+  }
+  inline bool hasSnmpUpdate() const {
+    return updates.snmp.load(std::memory_order_acquire);
+  }
+  inline bool hasSitesUpdate() const {
+    return updates.sites.load(std::memory_order_acquire);
+  }
+
+  /* Setters */
+  inline void setExportersUpdate(bool value) {
+    updates.exporters.store(value, std::memory_order_release);
+  }
+  inline void setSnmpUpdate(bool value) {
+    updates.snmp.store(value, std::memory_order_release);
+  }
+  inline void setSitesUpdate(bool value) {
+    updates.sites.store(value, std::memory_order_release);
+  }  
+  
+  /* Reset all flags at once */
+  inline void resetAllUpdates() {
+    updates.exporters.store(false, std::memory_order_release);
+    updates.snmp.store(false, std::memory_order_release);
+    updates.sites.store(false, std::memory_order_release);
+  }
+
+  bool luaFlowCheckInfo(lua_State* vm, const std::string &check_name) const;
+  bool luaHostCheckInfo(lua_State* vm, const std::string &check_name) const;
+  inline ndpi_risk getUnhandledRisks() const {
+    return flow_checks_loader ? flow_checks_loader->getUnhandledRisks() : 0;
+  };
 #ifndef HAVE_NEDGE
-  bool broadcastIPSMessage(char *msg);
-  inline void askToRefreshIPSRules()  { refresh_ips_rules = true; }
-  inline bool timeToRefreshIPSRules() { bool rc = refresh_ips_rules; refresh_ips_rules = false; return(rc); }
+  bool initPublisher();
+  bool broadcastControlMessage(char* msg);
+  bool broadcastIPSMessage(char* msg);
+  inline void askToRefreshIPSRules() { refresh_ips_rules = true; }
+  inline bool timeToRefreshIPSRules() {
+    bool rc = refresh_ips_rules;
+    refresh_ips_rules = false;
+    return (rc);
+  }
 #endif
 
+  /* This offline mode is forced by the --offline option */
+  inline bool isForcedOffline() { return forced_offline; }
+  inline void toggleForcedOffline(bool off) { forced_offline = off; }
+
+  /* Used instead to check if ntopng is offline but without the --offline option
+   */
   inline bool isOffline() { return offline; }
   inline void toggleOffline(bool off) { offline = off; }
 
@@ -598,34 +1004,100 @@ public:
   bool isnDPIReloadInProgress();
   ndpi_protocol_category_t get_ndpi_proto_category(ndpi_protocol proto);
   ndpi_protocol_category_t get_ndpi_proto_category(u_int protoid);
-  void setnDPIProtocolCategory(u_int16_t protoId, ndpi_protocol_category_t protoCategory);  
-  void nDPILoadIPCategory(char *what, ndpi_protocol_category_t id, char *list_name);
-  void nDPILoadHostnameCategory(char *what, ndpi_protocol_category_t id, char *list_name);
-  int nDPILoadMaliciousJA3Signatures(const char *file_path);
+  void setnDPIProtocolCategory(u_int16_t protoId,
+                               ndpi_protocol_category_t protoCategory);
+  bool nDPILoadIPCategory(char* what, ndpi_protocol_category_t id,
+                          char* list_name);
+  bool nDPILoadHostnameCategory(char* what, ndpi_protocol_category_t id,
+                                char* list_name);
+  int nDPISetDomainMask(const char* domain, u_int64_t domain_mask);
   void setLastInterfacenDPIReload(time_t now);
   bool needsnDPICleanup();
   void setnDPICleanupNeeded(bool needed);
-  u_int16_t getnDPIProtoByName(const char *name);
+  u_int16_t getnDPIProtoByName(const char* name);
   bool isDbCreated();
   void collectResponses(lua_State* vm);
   void collectContinuousResponses(lua_State* vm);
-  inline char *getZoneInfo() { return(zoneinfo); }
+  inline char* getZoneInfo() { return (zoneinfo); }
 
-  void luaClickHouseStats(lua_State *vm) const;
-  void speedtest(lua_State *vm);
+  void speedtest(lua_State* vm);
+#if defined(NTOPNG_PRO)
+  void initSnmpInterfaceRole();
+  void activateSnmpInterfaceRoles();
+  void snmpSetInterfaceRole(struct ndpi_in6_addr *exporter_device_ip,
+			    u_int32_t interface_id,
+                            SNMPInterfaceRole interface_role);
+  SNMPInterfaceRole snmpGetInterfaceRole(struct ndpi_in6_addr *exporter_device_ip,
+                                         u_int32_t interface_id);
+#endif
 
-#if defined(HAVE_CLICKHOUSE) && defined(HAVE_MYSQL)
-  inline u_int importClickHouseDumps(bool silence_warnings) { return(clickhouseImport ? clickhouseImport->importDumps(silence_warnings) : 0); }
-  u_int64_t getNextFlowId()                                 { return(clickhouseImport ? clickhouseImport->getNextFlowId() : 0); }
-  inline ClickHouseImport* getClickHouseImport()            { return(clickhouseImport); }
-#endif  
-  inline char* getTZname()                                  { return(myTZname);         }
+#if defined(NTOPNG_PRO) && defined(HAVE_CLICKHOUSE)
+  void setFlowId(u_int64_t id) {
+    flow_id = id;
+    flow_id_initialized = true;
+  }
+  bool isFlowIdInitialized() { return flow_id_initialized; }
+  u_int64_t getNextFlowId() { return (flow_id++); }
+#endif
+
+  inline char* getTZname() { return (myTZname); }
+  inline Mutex* get_pools_lock() { return (&pools_lock); };
+  inline u_int32_t get_current_time() { return (current_time); };
+
+  bool createRuntimeInterface(char* name, char* source, int* iface_id);
+
+  void incBlacklisHits(const std::string &listname);
+#if defined(NTOPNG_PRO) && defined(HAVE_KAFKA)
+  inline bool sendKafkaMessage(char* kafka_broker_info, char* msg,
+                               u_int msg_len) {
+    return (kafkaClient.sendMessage(kafka_broker_info, msg, msg_len));
+  }
+#endif
+  u_int64_t getNumActiveProbes() const;
+  inline BlacklistStats* getBlacklistStats() { return (&blStats); }
+  inline void resetBlacklistStats() { blStats.reset(); }
+  inline JobQueue* getJobsQueue() { return (&jobsQueue); }
+  inline PeriodicActivities* getPeriodicActivities() { return (pa); }
+
+  void incNumLuaVMs() { num_active_lua_vms++; }
+  void decNumLuaVMs() { num_active_lua_vms--; }
+  inline u_int16_t getNumActiveLuaVMs() { return (num_active_lua_vms); }
+  const char* getPersistentCustomListNameById(u_int8_t list_id);
+#ifdef HAVE_SNMP_TRAP
+  void initSNMPTrapCollector();
+  void toggleSNMPTrapCollector(bool enable);
+#endif
+  u_int16_t getNumberHostPools();
+  u_int32_t getNumberHostPoolsMembers();
+  u_int8_t getNumberProfiles();
+  bool isInLocalASN(IpAddress* ip);
+  void reloadASNConfiguration();
+
+  void trackAssetChange(const char* protocol, const char* action, Mac* mac,
+                        IpAddress* target_ip, Host* target, Flow* flow,
+                        char* note);
+
+  static const ndpi_protocol getConstNdpiUnknownProtocol();
+
+  std::string getLuaCache(std::string);
+  void setLuaCache(const std::string &, const std::string &);
+  void dumpLuaCache(lua_State* vm);
+
+  bool startPollingBGPPrefixChanges(char *url);
+  struct ndpi_in6_addr findExporterIPMgmtAddress(struct ndpi_in6_addr host_ip);
+  void mapHostIPtoExporterIPMgmtAddress(struct ndpi_in6_addr snmp_device_ip, struct ndpi_in6_addr exporter_host_ip) {
+#ifdef NTOPNG_PRO
+    snmp_ip_addr_map[snmp_device_ip] = exporter_host_ip;
+#endif
+  }
+  inline int getSeed() { return(seed); }
 };
 
-extern Ntop *ntop;
+extern Ntop* ntop;
 
 #ifdef NTOPNG_PRO
 #include "ntoppro_defines.h"
 #endif
 
 #endif /* _NTOP_CLASS_H_ */
+

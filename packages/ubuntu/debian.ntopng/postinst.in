@@ -1,7 +1,9 @@
-#!/bin/sh -e
+#!/bin/bash
 
 # Previous package version on upgrade
 PREV_VERSION=$2
+
+ACTION=$1
 
 case "$1" in
     configure)
@@ -20,15 +22,44 @@ esac
 
 umask 022
 
-if ! grep -q ntopng /etc/group; then
-    echo 'Creating ntopng group'
-    /usr/sbin/groupadd -r ntopng
+#####
+
+CONFIG_FILE=/etc/ntopng/ntopng.conf
+
+if test -f $CONFIG_FILE; then
+    CH_CONFIGURED=`grep '^-F' $CONFIG_FILE | grep -e 'clickhouse' | wc -l`
+
+    if test $CH_CONFIGURED -eq 0; then
+     CH_CLIENT="/usr/bin/clickhouse-client"
+     
+    if test -x $CH_CLIENT; then
+	OUT=`$CH_CLIENT "SHOW DATABASES" > /dev/null 2>&1`
+	STATUS="$?"
+	if test $STATUS -eq 0; then
+	    echo "-F=clickhouse" >> $CONFIG_FILE
+	    echo "ClickHouse detected and configured in $CONFIG_FILE"
+	else
+	    echo "You seem to have ClickHouse installed with a non default"
+	    echo "setup that prevents automatic ntopng configuration."
+	    echo "We invite you to configure manually /etc/ntopng/ntopng.conf"
+	    echo "# ClickHouse" >> $CONFIG_FILE
+	    echo "-F=\"clickhouse;127.0.0.1@9000,9004;ntopng;default;\"" >> $CONFIG_FILE
+	fi
+    fi
+ fi
 fi
 
-if ! /usr/bin/id -u ntopng > /dev/null 2>&1; then 
-    echo "Creating ntopng user..."
-    /usr/sbin/useradd -M -N -g ntopng -r -s /bin/false ntopng
+###
+
+if ! grep -q 'ntop:' /etc/group; then
+    echo 'Creating ntop group'
+    /usr/sbin/groupadd -r ntop
 fi
+if ! /usr/bin/id -u ntopng > /dev/null 2>&1; then
+    echo "Creating ntopng user..."
+    /usr/sbin/useradd -M -N -g ntop -r -s /bin/false ntopng
+fi
+/usr/sbin/usermod -g ntop ntopng
 
 if [ $(getent group n2disk) ] && [ $(getent passwd ntopng) ]; then
     # this is necessary to allow ntopng to extract pcaps
@@ -39,27 +70,40 @@ if [ $(getent group n2disk) ] && [ $(getent passwd ntopng) ]; then
     fi
 fi
 
+if [ $(getent group systemd-journal) ] && [ $(getent passwd ntopng) ]; then
+    # this is necessary to allow ntopng to read journalctl logs
+    if ! id -nG ntopng | grep -qw "systemd-journal"; then
+	echo "Adding user ntopng to group systemd-journal..."
+	/usr/sbin/usermod -a -G systemd-journal ntopng
+    fi
+fi
+
 TLS_DIR="/usr/share/ntopng/httpdocs/ssl"
 TLS_CERT_PATH="$TLS_DIR/ntopng-cert.pem"
 if [ ! -f "$TLS_CERT_PATH" ]; then
-    openssl req -new -x509 -sha1 -extensions v3_ca -nodes -days 365 -out $TLS_DIR/cert.pem -subj "/CN=ntopng.local"
-    cat $TLS_DIR/privkey.pem $TLS_DIR/cert.pem > $TLS_CERT_PATH
+    mkdir -p $TLS_DIR
+    openssl req -new -x509 -sha256 -extensions v3_ca -nodes -days 365 -out $TLS_DIR/cert.pem -subj "/CN=ntopng.local" -addext "subjectAltName = DNS:ntopng.local"
+    mv privkey.pem $TLS_CERT_PATH
+    cat $TLS_DIR/cert.pem >> $TLS_CERT_PATH
+    rm $TLS_DIR/cert.pem
 fi
-
 
 DATA_DIR=/var/lib/ntopng
 if [ ! -d "$DATA_DIR" ]; then
     mkdir $DATA_DIR
-    /bin/chown ntopng:ntopng $DATA_DIR
+    /bin/chown ntopng:ntop $DATA_DIR
     /bin/chmod 700 $DATA_DIR
 fi
 
-/bin/chown ntopng:ntopng /usr/bin/ntopng-config
+/bin/chown ntopng:ntop /usr/bin/ntopng-config
 /bin/chmod gou+s /usr/bin/ntopng-config
-/bin/chown -R ntopng:ntopng /etc/ntopng
+/bin/chown -R ntopng:ntop /etc/ntopng
 
 LOGROTATE_CONF=/etc/logrotate.d/ntopng
 /bin/chmod 644 $LOGROTATE_CONF
+
+LOGROTATE_RADIUS_CONF=/etc/logrotate.d/ntopng-radius
+/bin/chmod 644 $LOGROTATE_RADIUS_CONF
 
 CRON_CONF=/etc/cron.d/ntopng
 /bin/chmod 644 $CRON_CONF
@@ -67,7 +111,22 @@ CRON_CONF=/etc/cron.d/ntopng
 echo "Rebuilding ld cache..."
 /sbin/ldconfig
 
-if [ -f /.dockerenv ]; then exit 0; fi
+# Check if systemd is supported (not a container)
+CMDLINE=$(tr -d '\0' < /proc/1/cmdline)
+if [ ! -z "${CMDLINE##*system*}" ] && [ ! -z "${CMDLINE##*init*}" ]; then
+  # We're in a container
+  exit 0
+fi
+
+#
+# ONLY when we're not in a container
+# Enable nmap scan capabilities [https://secwiki.org/w/Running_nmap_as_an_unprivileged_user]
+#
+if [ -x /usr/bin/nmap ]; then
+    setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip /usr/bin/nmap
+fi
+
+echo "$(/bin/date) ntopng postinst $ACTION called" >> /var/log/ntop-systemd.log
 
 # Start service after upgrade/install
 echo "(Re)Starting @APP@..."
@@ -82,22 +141,6 @@ if hash systemctl 2>/dev/null; then
         else
 	    systemctl enable ntopng
         fi
-    else
-        # Check previous version as up to 4.1.201014
-        # service was disabled in prerm during an upgrade
-        # This check will be removed at some point
-        VERS_MAJ=$(echo $PREV_VERSION|cut -d "." -f 1)
-        VERS_MIN=$(echo $PREV_VERSION|cut -d "." -f 2|sed "s@^[^0-9]*\([0-9]\+\).*@\1@")
-        VERS_DATE=$(echo $PREV_VERSION|cut -d"." -f3|cut -d"-" -f1)
-        VERS_MAJ=$(printf "%02d" $VERS_MAJ)
-        VERS_MIN=$(printf "%02d" $VERS_MIN)
-        if [ "$VERS_MAJ$VERS_MIN$VERS_DATE" -lt "0401201015" ]; then
-            if hash deb-systemd-invoke 2>/dev/null; then
-                deb-systemd-invoke enable ntopng
-            else
-	        systemctl enable ntopng
-            fi
-        fi
     fi
 
     # Start service if enabled
@@ -111,8 +154,12 @@ elif [ -f /etc/init.d/ntopng ]; then
     if [ -z "$PREV_VERSION" ]; then
         update-rc.d ntopng defaults 93 >/dev/null
     fi
+
+    # Restart service after upgrade/install
     /etc/init.d/ntopng restart
 fi
+
+echo "$(/bin/date) ntopng postinst $ACTION done" >> /var/log/ntop-systemd.log
 
 echo ""
 echo "NOTE"

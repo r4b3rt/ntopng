@@ -1,0 +1,218 @@
+{
+	"name": "Assets Dashboard",
+	"readonly": true,
+	"components": [
+		{
+			"component" : "badge",
+			"id" : "assets_count",
+			"i18n_name" : "", "color" : "primary", "inactive_color" : "secondary",
+			"width" : 4, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"icon" : "fas fa-house-laptop",
+				"i18n_name" : "asset_details.total_assets",
+				"link" : { "url" : "/lua/pro/assets.lua", "url_params" : { } },
+				"counter_path" : "total",
+				"badge_index" : "0",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "1_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "1",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "2_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "2",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "3_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "3",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "4_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "4",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "5_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "5",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "6_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "6",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "7_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "7",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "8_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "8",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "9_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "9",
+				"counter_formatter" : "number"
+			}
+		},{
+			"component" : "badge",
+			"id" : "10_count",
+			"i18n_name" : "", "color" : "info", "inactive_color" : "secondary",
+			"width" : 2, "height" : 2,
+			"datasource_id" : "assets_overview",
+			"params" : {
+				"url" : "/lua/pro/rest/v2/get/host/assets_dashboard/overview.lua",
+				"url_params" : {},
+				"counter_path" : "total",
+				"i18n_counter_title_path" : "i18n_label",
+				"link_path" : "link",
+				"badge_index" : "10",
+				"counter_formatter" : "number"
+			}
+		},	
+		{
+			"component": "pie",
+			"id": "manufacturer_distribution",
+			"time_reference": "all_seen",
+			"metric": "devices",
+			"i18n_name": "asset_details.manufacturer_distribution",
+			"width": 4,
+			"height": 4,
+			"params": {
+				"url": "/lua/pro/rest/v2/get/host/assets_dashboard/manufacturer_distribution.lua",
+				"url_params": {},
+				"unit": "number"
+			},
+			"legend_position": "right"
+		},
+		{
+			"component": "chart",
+			"id": "devices_distribution",
+			"time_reference": "all_seen",
+			"metric": "devices",
+			"i18n_name": "asset_details.devices_distribution",
+			"width": 4,
+			"height": 4,
+			"params": {
+				"url": "/lua/pro/rest/v2/get/host/assets_dashboard/devices_distribution.lua",
+				"url_params": {},
+				"direction": "horizontal",
+				"unit": "number"
+			}
+		},
+		{
+			"component": "chart",
+			"id": "oses_distribution",
+			"time_reference": "all_seen",
+			"metric": "devices",
+			"i18n_name": "asset_details.os_distribution",
+			"width": 4,
+			"height": 4,
+			"params": {
+				"url": "/lua/pro/rest/v2/get/host/assets_dashboard/oses_distribution.lua",
+				"url_params": {},
+				"direction": "horizontal",
+				"unit": "number"
+			}
+		}
+	]
+}

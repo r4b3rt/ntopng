@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,8 +24,7 @@
 
 #include "config.h"
 
-
-#if defined (__FreeBSD) || defined(__FreeBSD__)
+#if defined(__FreeBSD) || defined(__FreeBSD__)
 #define _XOPEN_SOURCE
 #define _WITH_GETLINE
 #endif
@@ -87,16 +86,23 @@
 #include <string.h>
 #include <math.h>
 #include <sys/stat.h>
+
+#ifdef HAVE_ZMQ
+#ifdef WIN32
+#define ZMQ_STATIC
+#endif
 #include <zmq.h>
+#endif
+
 #include <assert.h>
 #include <fcntl.h>
 #ifndef WIN32
 #include <grp.h>
 #endif
-//#include <libgen.h>
+// #include <libgen.h>
 #if defined(__linux__)
-#include <linux/ethtool.h> // ethtool
-#include <linux/sockios.h> // sockios
+#include <linux/ethtool.h>  // ethtool
+#include <linux/sockios.h>  // sockios
 #include <ifaddrs.h>
 #elif defined(__FreeBSD__) || defined(__APPLE__)
 #include <net/if_dl.h>
@@ -113,7 +119,16 @@ extern "C" {
 #include <pcap/bpf.h> /* Used for bpf_filter() */
 #endif
 
+#ifndef _WIN32
+#include <regex.h> /* Syslog Rules */
+#endif
+
+#ifdef HAVE_DYNAMIC_NDPI
+#include <ndpi/ndpi_api.h>
+#else
 #include "ndpi_api.h"
+#endif
+
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
@@ -130,7 +145,11 @@ extern "C" {
 #endif
 #include "json.h"
 #include <sqlite3.h>
+
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 #include <hiredis.h>
+#endif
+
 #ifdef HAVE_LDAP
 #include <ldap.h>
 #endif
@@ -139,7 +158,7 @@ extern "C" {
 #endif
 
 #ifdef WIN32
-/* 
+/*
 See
 https://translate.google.co.uk/translate?sl=auto&tl=en&u=http%3A%2F%2Fbugsfixed.blogspot.com%2F2017%2F05%2Fvcpkg.html
 */
@@ -149,15 +168,10 @@ https://translate.google.co.uk/translate?sl=auto&tl=en&u=http%3A%2F%2Fbugsfixed.
 
 #ifdef WIN32
 #pragma comment(lib, "crypt32.lib")
-#pragma comment(lib, "wldap32.lib") 
+#pragma comment(lib, "wldap32.lib")
 #endif
 
 #include "third-party/uthash.h"
-
-#ifdef HAVE_MYSQL
-#include <mysql.h>
-#include <errmsg.h>
-#endif
 
 #ifdef HAVE_MAXMINDDB
 #include <maxminddb.h>
@@ -173,7 +187,8 @@ https://translate.google.co.uk/translate?sl=auto&tl=en&u=http%3A%2F%2Fbugsfixed.
 #include <map>
 #include <unordered_map>
 
-#if !defined(__clang__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ < 8) && !defined(WIN32)
+#if !defined(__clang__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ < 8) && \
+    !defined(WIN32)
 #include <cstdatomic>
 #else
 #include <atomic>
@@ -190,36 +205,48 @@ https://translate.google.co.uk/translate?sl=auto&tl=en&u=http%3A%2F%2Fbugsfixed.
 #include <sstream>
 #include <queue>
 #include <typeinfo>
+#include <thread>
+#include <cstring> // For std::memcmp
+#include <cstdint>    // For uint8_t, size_t
+
+extern const ndpi_protocol getConstNdpiUnknownProtocol();
 
 using namespace std;
 
 #include "mongoose.h"
+#ifdef NO_SSL_DL
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+#endif
 #include "ntop_defines.h"
 #include "Mutex.h"
 #include "RwLock.h"
 #include "Bitmask.h"
 #include "Bloom.h"
-#include "MonitoredMetric.h"
-#include "MonitoredCounter.h"
-#include "MonitoredGauge.h"
 #include "MDNS.h"
 #include "AddressTree.h"
 #include "VLANAddressTree.h"
+#include "ServerConfiguration.h"
+#include "TagsConfiguration.h"
+#include "ASNConfiguration.h"
 #include "BroadcastDomains.h"
 #include "Cardinality.h"
 #include "PeerStats.h"
 #include "IpAddress.h"
+#include "nProbeStats.h"
 #include "Ping.h"
+#include "JobQueue.h"
 #include "ContinuousPingStats.h"
 #include "ContinuousPing.h"
 #include "TrafficStats.h"
 #include "TcpPacketStats.h"
 #include "DSCPStats.h"
-#include "Bitmap.h"
+#include "UintBitmap.h"
 #if defined(NTOPNG_PRO)
 #include "BinAnalysis.h"
 #endif
 #include "ntop_typedefs.h"
+#include "ScoreCounter.h"
 #include "ScoreStats.h"
 #include "ViewScoreStats.h"
 #include "Score.h"
@@ -229,7 +256,10 @@ using namespace std;
 #include "ProtoStats.h"
 #include "FlowRiskAlerts.h"
 #include "Utils.h"
+#include "Bitmap.h"
+#include "Bitmap64.h"
 #include "Bitmap128.h"
+#include "Bitmap4096.h"
 #include "NtopGlobals.h"
 #include "Alert.h"
 #include "AlertableEntity.h"
@@ -238,32 +268,42 @@ using namespace std;
 #include "NetworkInterfaceAlertableEntity.h"
 #include "InterfaceMemberAlertableEntity.h"
 #include "BehaviouralCounter.h"
-
+#include "DESCounter.h"
 #ifdef NTOPNG_PRO
+#include "QoEStats.h"
 #include "BehaviorAnalysis.h"
 #endif
-
+#include "ThroughputStats.h"
+#include "TrafficCounter.h"
+#include "ProtoCounter.h"
+#include "CategoryCounter.h"
 #include "nDPIStats.h"
 #include "InterarrivalStats.h"
+#include "ASNStats.h"
 #include "FlowStats.h"
 #ifdef NTOPNG_PRO
 #include "CustomAppMaps.h"
 #include "CustomAppStats.h"
 #endif
-#include "ThroughputStats.h"
 #include "GenericTrafficElement.h"
+#include "BlacklistUsageStats.h"
+#include "BlacklistStats.h"
 #include "AlertCounter.h"
 #include "NetworkStats.h"
 #include "ContainerStats.h"
 #include "ParsedFlowCore.h"
 #include "ParsedeBPF.h"
 #include "ParsedFlow.h"
+#ifdef NTOPNG_PRO
+#include "SitesStats.h"
+#include "Sites.h"
+#endif
 #ifdef HAVE_EBPF
 #include "ebpf_flow.h"
 #endif
 
 #ifdef NTOPNG_PRO
-#include "Profile.h"
+#include "GenericProfile.h"
 #include "Profiles.h"
 #include "CountMinSketch.h"
 #include "AlertExclusionsInfo.h"
@@ -273,21 +313,26 @@ using namespace std;
 #include "FlowProfiles.h"
 #include "SubInterface.h"
 #include "SubInterfaces.h"
-#endif
+#endif /* HAVE_NEDGE */
 #include "CounterTrend.h"
 #include "LRUMacIP.h"
-#include "FlowInterfacesStats.h"
+#include "FlowDevicesStats.h"
 #ifdef HAVE_LDAP
 #include "LdapAuthenticator.h"
-#endif
-#endif
+#endif /* HAVE_LDAP */
+#include "OIDCAuthenticator.h"
+#endif /* NTOPNG_PRO */
 #include "HostPoolStats.h"
 #include "HostPools.h"
 #include "Fingerprint.h"
+#include "BGPPrefixListener.h"
 #include "Prefs.h"
-#include "SerializableElement.h"
 #include "DnsStats.h"
+#include "SNMPSession.h"
 #include "SNMP.h"
+#ifdef HAVE_SNMP_TRAP
+#include "SNMPTrap.h"
+#endif
 #include "NetworkDiscovery.h"
 #include "ICMPstats.h"
 #include "ICMPinfo.h"
@@ -303,13 +348,16 @@ using namespace std;
 #include "PacketDumperTuntap.h"
 #include "TimelineExtract.h"
 #include "TcpFlowStats.h"
-#include "SQLiteStoreManager.h"
-#include "StatsManager.h"
-#include "AlertStore.h"
-#include "SQLiteAlertStore.h"
+#include "CHTSPoint.h"
 #include "DB.h"
-#ifdef HAVE_MYSQL
-#include "MySQLDB.h"
+#include "FlowDB.h"
+#include "SQLiteStoreManager.h"
+#include "SQLiteDB.h"
+#include "InMemorySQLiteDB.h"
+#include "StatsManager.h"
+#if defined(HAVE_KAFKA) && defined(NTOPNG_PRO)
+#include "KafkaProducer.h"
+#include "KafkaClient.h"
 #endif
 #include "InterfaceStatsHash.h"
 #include "GenericHash.h"
@@ -319,41 +367,68 @@ using namespace std;
 #include <radcli/radcli.h>
 #endif
 
+#include "ServerPortsBitmap.h"
 #include "Condvar.h"
 #include "TimeseriesExporter.h"
 #include "InfluxDBTimeseriesExporter.h"
 #include "L4Stats.h"
 #include "AlertsQueue.h"
+#include "NtopngLuaContext.h"
 #include "LuaEngineFunctions.h"
 #include "LuaEngine.h"
 #include "SPSCQueue.h"
 #include "SyslogLuaEngine.h"
 #include "FifoQueue.h"
 #include "StringFifoQueue.h"
+#include "CHTSPointFifoQueue.h"
+#include "AlertFifoItem.h"
 #include "AlertFifoQueue.h"
 #include "FifoSerializerQueue.h"
 #include "RRDTimeseriesExporter.h"
+#include "CHTimeseriesExporter.h"
 #include "RecipientQueue.h"
 #include "Recipients.h"
 #if defined(NTOPNG_PRO)
+#include "RankTable.h"
 #include "PeriodicityStats.h"
+#include "PeriodicCacheInfo.h"
 #include "PeriodicityHash.h"
 #include "ServiceMap.h"
 #include "PeriodicityMap.h"
+#include "ACLFlow.h"
+#include "TLSProtocolInfo.h"
+#include "TLSProtocols.h"
 #endif
+#include "PortDetails.h"
+#include "HostsPorts.h"
+#include "HostDetails.h"
+#include "HostsPortsAnalysis.h"
+#include "UsedPorts.h"
 #include "ObservationPointIdTrafficStats.h"
+#include "FlowsHostInfo.h"
+#include "AggregatedFlowsStats.h"
 #include "NetworkInterface.h"
+#include "NtopngLuaContext.h"
 #ifndef HAVE_NEDGE
 #include "PcapInterface.h"
+#include "sFlowPktInterface.h"
 #endif
+#if defined(NTOPNG_PRO)
 #include "ViewInterface.h"
+#endif
 #ifdef HAVE_PF_RING
 #include "PF_RINGInterface.h"
 #endif
 #include "VirtualHost.h"
 #include "VirtualHostHash.h"
 #include "HTTPstats.h"
+
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+#include "RedisStub.h"
+#else
 #include "Redis.h"
+#endif
+
 #ifndef HAVE_NEDGE
 #include "ElasticSearch.h"
 #ifndef WIN32
@@ -361,9 +436,16 @@ using namespace std;
 #endif
 #endif
 #if defined(NTOPNG_PRO) && defined(HAVE_CLICKHOUSE)
-#include "ClickHouseImport.h"
-#include "ClickHouseFlowDB.h"
-#include "ClickHouseAlertStore.h"
+/* clickhouse-cpp */
+#include <clickhouse/client.h>
+#include <clickhouse/columns/array.h>
+#include <clickhouse/columns/numeric.h>
+#include <clickhouse/columns/string.h>
+#include <cstring> /* std::memcpy*/
+#include <iomanip> /* std::setfill */
+using namespace clickhouse;
+#include "FlowsTable.h"
+#include "ClickHouseDB.h"
 #endif
 #ifdef NTOPNG_PRO
 #include "NtopPro.h"
@@ -371,15 +453,20 @@ using namespace std;
 #include "TrafficShaper.h"
 #include "L7Policer.h"
 #include "LuaHandler.h"
+#include "Issue.h"
+#include "IssueManager.h"
 #ifdef HAVE_NEDGE
 #include "HwBypass.h"
 #include "SilicomHwBypass.h"
 #include "NetfilterInterface.h"
+#else
+#include "nTapInterface.h"
 #endif
 #endif
 #ifndef HAVE_NEDGE
 #include "ParserInterface.h"
 #include "ListeningPorts.h"
+#include "ZMQUtils.h"
 #include "ZMQParserInterface.h"
 #include "ZMQPublisher.h"
 #include "ZMQCollectorInterface.h"
@@ -387,38 +474,54 @@ using namespace std;
 #include "SyslogCollectorInterface.h"
 #include "ZCCollectorInterface.h"
 #include "DummyInterface.h"
-#include "ExportInterface.h"
+#if defined(NTOPNG_PRO) && defined(HAVE_CLICKHOUSE)
+#include "ClickHouseInterface.h"
+#endif
+#endif
+
+#if defined(HAVE_KAFKA) && defined(NTOPNG_PRO)
+#include "KafkaCollectorInterface.h"
 #endif
 
 #include "Geolocation.h"
 #include "VLAN.h"
 #include "AutonomousSystem.h"
 #include "ObservationPoint.h"
-#include "OperatingSystem.h"
 #include "Country.h"
 #include "MacStats.h"
 #include "Mac.h"
 #include "PartializableFlowTrafficStats.h"
+#if defined(NTOPNG_PRO)
 #include "ViewInterfaceFlowStats.h"
+#include "TagsMapping.h"
+#endif
 #include "FlowTrafficStats.h"
 #include "HostStats.h"
 #include "HostChecksStatus.h"
 #include "ActiveHostWalkerInfo.h"
 #include "Host.h"
+#include "DoHDoTStats.h"
 #include "LocalHostStats.h"
 #include "LocalHost.h"
 #include "RemoteHost.h"
+#ifdef NTOPNG_PRO
+#include "FlowRTP.h"
+#include "OTStats.h"
+#include "ModbusStats.h"
+#include "S7CommStats.h"
+#include "ProfinetStats.h"
+#endif
 #include "IEC104Stats.h"
 #include "Flow.h"
 #include "FlowHash.h"
 #include "VLANHash.h"
 #include "AutonomousSystemHash.h"
 #include "ObservationPointHash.h"
-#include "OperatingSystemHash.h"
 #include "CountriesHash.h"
 #include "HostHash.h"
 #include "ThreadedActivityStats.h"
 #include "ThreadedActivity.h"
+#include "QueuedThreadData.h"
 #include "ThreadPool.h"
 #include "PeriodicScript.h"
 #include "PeriodicActivities.h"
@@ -437,10 +540,19 @@ using namespace std;
 #include "FlowChecksExecutor.h"
 #include "HostChecksLoader.h"
 #include "HostChecksExecutor.h"
+#ifdef HAVE_NEDGE
+#include "PacketForwarder.h"
+#include "MulticastForwarder.h"
+#include "BroadcastForwarder.h"
+#endif
+
+#include "Radius.h"
 #include "Ntop.h"
 
 #ifdef NTOPNG_PRO
 #include "ntoppro_defines.h"
 #endif
+
+extern bool trace_new_delete;
 
 #endif /* _NTOP_H_ */

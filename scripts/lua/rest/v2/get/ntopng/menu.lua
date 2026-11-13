@@ -1,0 +1,624 @@
+--
+-- (C) 2013-26 - ntop.org
+--
+-- Returns the menu (sections/entries) for the current user and interface.
+-- Menu definition lives in menu_definition.lua and pro/scripts/lua/modules/menu_definition_pro.lua (community_sections + pro_sections).
+-- Flags come from ntopng_menu_visibility.get_flags(); each section/entry is
+-- a plain Lua table evaluated against `f` (the flags table) at definition
+-- time, exposing:
+--   hard_hidden = <lua boolean expr> (optional, structural: always dropped)
+--   hidden      = <lua boolean expr>
+--   reason      = {{badge=,reason=,suggestion=}, ...} (optional)
+-- ntopng_menu_visibility.resolve(item) is the single place that turns
+-- hidden+reason into drop-entirely vs keep-but-dimmed — see its doc comment.
+-- No flag-name indirection: write whatever Lua condition you need.
+--
+
+local dirs = ntop.getDirs()
+package.path = dirs.installdir .. "/pro/scripts/lua/enterprise/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/?.lua;" .. package.path
+package.path = dirs.installdir .. "/scripts/lua/modules/active_scan/?.lua;" .. package.path
+
+require "lua_utils"
+require "check_redis_prefs"
+
+local rest_utils      = require "rest_utils"
+local page_utils      = require "page_utils"
+local auth            = require "auth"
+local recording_utils = require "recording_utils"
+local blog_utils      = require "blog_utils"
+local menu_visibility = require "ntopng_menu_visibility"
+local demo_utils      = require "demo_utils"
+
+local ok, err = pcall(function()
+
+local requested_ifid = _GET["ifid"]
+if requested_ifid and tostring(requested_ifid) ~= tostring(interface.getId()) then
+   interface.select(tostring(requested_ifid))
+end
+
+-- Evaluate menu items visibility flags: community + pro
+local flags = menu_visibility.get_flags()
+
+local pro_visibilityibility_ok, pro_visibility = pcall(require, "ntopng_menu_visibility_pro")
+if pro_visibilityibility_ok and pro_visibility and type(pro_visibility.get_pro_flags) == "function" then
+   for k, v in pairs(pro_visibility.get_pro_flags()) do
+      flags[k] = v
+   end
+end
+
+local prefs        = ntop.getPrefs()
+local info         = ntop.getInfo(true)
+local ifid_stats   = interface.getStats()
+local current_ifid = interface.getId()
+local iface_names  = interface.getIfNames()
+local is_admin     = flags.is_admin
+local session_user = _SESSION["user"] or ""
+local is_no_login  = isNoLoginUser()
+local http_prefix  = ntop.getHttpPrefix()
+
+local is_system_interface  = flags.is_system_interface
+local is_allowed_sys_iface = flags.is_allowed_sys_iface
+local system_ifid          = getSystemInterfaceId()
+local is_nedge             = flags.is_nedge or false
+local is_pro               = flags.is_pro
+local is_windows           = flags.is_windows
+local is_oem               = flags.is_oem
+
+local infrastructure_view      = flags.infrastructure_view
+local infrastructure_instances = {}
+_, infrastructure_instances = isInfrastructureView()
+
+local lightview = flags.lightview
+
+-- dynamic URL for scripts config
+local scripts_config_url = http_prefix .. "/lua/admin/edit_configset.lua?subdir=all"
+if tonumber(system_ifid) == tonumber(current_ifid) then
+   scripts_config_url = http_prefix .. "/lua/admin/edit_configset.lua?subdir=system"
+end
+
+local protos_utils_ok, protos_utils = pcall(require, "protos_utils")
+
+local show_sankey_ok, show_sankey = pcall(function()
+   if interface.isView() then
+      for _, name in pairs(interface.getIfNames()) do
+         interface.select(name)
+         if interface.isZMQInterface() and interface.isViewed() then
+            return true
+         end
+      end
+      return false
+   end
+   return interface.isZMQInterface() == true
+end)
+interface.select(tostring(current_ifid))
+if not show_sankey_ok then show_sankey = false end
+
+local checks_flags_ok, checks_flags = pcall(function()
+   local checks = require "checks"
+   local configset = checks.getConfigset()
+   local config = configset and configset["config"]
+   local flow_config = config and config["flow"]
+   local interface_config = config and config["interface"]
+
+   local function flow_check_enabled(key)
+      return flow_config and flow_config[key] and flow_config[key]["all"] and flow_config[key]["all"]["enabled"]
+   end
+
+   local network_config_enabled = flow_check_enabled("unexpected_dns") or flow_check_enabled("unexpected_ntp") or
+      flow_check_enabled("unexpected_smtp") or flow_check_enabled("unexpected_gateway") or
+      flow_check_enabled("unexpected_dhcp")
+
+   local acl_violation_enabled = flow_check_enabled("access_control_list") or
+      (interface_config and interface_config["acl_violation_arp"] and
+       interface_config["acl_violation_arp"]["min"] and interface_config["acl_violation_arp"]["min"]["enabled"])
+
+   return {
+      network_configuration_enabled = network_config_enabled == true,
+      network_policy_enabled        = flow_check_enabled("host_policy") == true,
+      acl_violation_enabled         = acl_violation_enabled == true,
+   }
+end)
+if not checks_flags_ok then
+   checks_flags = { network_configuration_enabled = false, network_policy_enabled = false, acl_violation_enabled = false }
+end
+
+-- Assets page: journal of the assets enabled (license, assets inventory and preference)
+local is_assets_journal_enabled = false
+
+if ntop.isEnterpriseL and ntop.isEnterpriseL() then
+   package.path = dirs.installdir .. "/pro/scripts/lua/modules/?.lua;" .. package.path
+   is_assets_journal_enabled = require("assets_journal").isEnabled()
+end
+
+local dynamic_urls = {
+   scripts_config_url = scripts_config_url,
+}
+
+local function resolve_url(entry)
+   if entry.url_dynamic then
+      return dynamic_urls[entry.url_dynamic] or ""
+   end
+   if entry.url then
+      if entry.is_external then return entry.url end
+      return http_prefix .. entry.url
+   end
+   return nil
+end
+
+-- ---------------------------------------------------------------
+-- Load section definitions and pro menu definition
+-- compact(): definitions are literal tables holding conditional elements
+-- (`cond and {...} or nil`), which leaves nil holes that would make ipairs()
+-- stop early and silently swallow every following section/entry.
+local compact = menu_visibility.compact
+
+local community_sections = compact(require("menu_definition")(flags))
+
+-- A failure while BUILDING the pro definition must not take the whole menu
+-- down with it
+local pro_sections = {}
+local pro_raw_ok, pro_def = pcall(require, "menu_definition_pro")
+if pro_raw_ok and type(pro_def) == "function" then
+   local pro_build_ok, pro_built = pcall(pro_def, flags)
+   if pro_build_ok then
+      pro_sections = compact(pro_built)
+   else
+      traceError(TRACE_ERROR, TRACE_CONSOLE,
+         string.format("menu_definition_pro failed, pro menu entries will be missing: %s", tostring(pro_built)))
+   end
+end
+
+local get_dynamic_entries = (pro_visibilityibility_ok and pro_visibility and type(pro_visibility.get_dynamic_entries) == "function")
+   and pro_visibility.get_dynamic_entries
+   or function() return {} end
+
+local section_map   = {}   -- key -> section (table with mutable entries array)
+local section_order = {}   -- ordered list of keys
+
+for _, section in ipairs(community_sections) do
+   section_map[section.key]         = section
+   section_map[section.key].entries = compact(section.entries)
+   section_order[#section_order + 1] = section.key
+end
+
+-- Merge pro sections:
+--   existing key  -> append entries (or insert right after the entry named by
+--                    e.after / right before the one named by e.before, when
+--                    the pro entry sets it)
+--   new key       -> insert right after the section named by ps.after (or append)
+for _, ps in ipairs(pro_sections) do
+   if section_map[ps.key] then
+      local target = section_map[ps.key].entries
+      for _, e in ipairs(compact(ps.entries)) do
+         if e.after then
+            local insert_at = #target + 1
+            for i, existing in ipairs(target) do
+               if existing.key == e.after then insert_at = i + 1; break end
+            end
+            table.insert(target, insert_at, e)
+         elseif e.before then
+            local insert_at = #target + 1
+            for i, existing in ipairs(target) do
+               if existing.key == e.before then insert_at = i; break end
+            end
+            table.insert(target, insert_at, e)
+         else
+            target[#target + 1] = e
+         end
+      end
+   else
+      section_map[ps.key]         = ps
+      section_map[ps.key].entries = compact(ps.entries)
+      if ps.after then
+         local insert_at = #section_order + 1
+         for i, k in ipairs(section_order) do
+            if k == ps.after then insert_at = i + 1; break end
+         end
+         table.insert(section_order, insert_at, ps.key)
+      else
+         section_order[#section_order + 1] = ps.key
+      end
+   end
+end
+
+-- ---------------------------------------------------------------
+-- Build translated menu. Each section/entry carries ONE `hidden` condition
+-- (+ optional `reason`) — menu_visibility.resolve() decides whether that
+-- means "drop entirely" or "keep, but dimmed with a tooltip". See
+-- menu_definition.lua / menu_definition_pro.lua and resolve()'s doc comment.
+local result = {}
+
+local function translate(key_i18n)
+   if not key_i18n then return nil end
+   local v = i18n(key_i18n)
+   return (type(v) == "string") and v or key_i18n
+end
+
+-- Tooltip reasons for an entry that a disabled section drags down with it:
+-- the section's own blockers come first (they are the more fundamental ones,
+-- e.g. "requires administrator privileges"), then the entry's own, if any.
+local function merge_reasons(section_reasons, entry_reasons)
+   local out = {}
+   for _, r in ipairs(section_reasons or {}) do out[#out + 1] = r end
+   for _, r in ipairs(entry_reasons or {}) do out[#out + 1] = r end
+   return (#out > 0) and out or nil
+end
+
+for _, sec_key in ipairs(section_order) do
+   local section = section_map[sec_key]
+   local sec_drop, sec_disabled = menu_visibility.resolve(section)
+
+   if not sec_drop then
+
+   local entries = nil
+   -- A disabled section with an "ungated" entry still enabled stays reachable
+   -- (e.g. Settings > Users for the non administrators: their own profile)
+   local section_reachable = false
+   if section.entries ~= nil then
+      entries = {}
+      for _, entry in ipairs(section.entries) do
+         local entry_drop, entry_disabled = menu_visibility.resolve(entry)
+         if not entry_drop then
+            local is_divider = (entry.key == "divider") or (entry.is_divider == true)
+
+            -- A disabled section gates everything below it: its entries lead to
+            -- pages of a section the user cannot reach, so they must come back
+            -- disabled too. Except the "ungated" entries, whose page enforces
+            -- its own permissions (menu_definition.lua)
+            local disabled = entry_disabled or (sec_disabled and not is_divider and not entry.ungated)
+
+            if sec_disabled and entry.ungated and not entry_disabled then
+               section_reachable = true
+            end
+
+            entries[#entries + 1] = {
+               key              = entry.key,
+               label            = translate(entry.i18n),
+               icon             = entry.icon or nil,
+               url              = resolve_url(entry),
+               is_external      = (entry.is_external == true),
+               is_divider       = is_divider,
+               experimental     = (entry.experimental == true) or nil,
+               disabled         = disabled,
+               disabled_reasons = disabled and merge_reasons(
+                  sec_disabled and section.reason or nil,
+                  entry_disabled and entry.reason or nil) or nil,
+            }
+         end
+      end
+
+      -- Append dynamic entries (scripts_menu, nedge, appliance) — pro only.
+      -- Already emitted in final shape, so the section gate is applied here.
+      local dynamic = compact(get_dynamic_entries(sec_key, flags, page_utils, http_prefix))
+      for _, de in ipairs(dynamic) do
+         if sec_disabled and not de.is_divider then
+            de.disabled         = true
+            de.disabled_reasons = merge_reasons(section.reason, de.disabled_reasons)
+         end
+         entries[#entries + 1] = de
+      end
+   end
+
+   -- Skip sections with no content at all (nothing to show, even disabled)
+   local has_content = (section.url ~= nil) or (entries ~= nil and #entries > 0)
+   if has_content then
+      result[#result + 1] = {
+         key              = sec_key,
+         label            = translate(section.i18n),
+         icon             = section.icon or "",
+         url              = section.url and (http_prefix .. section.url) or nil,
+         entries          = entries,
+         disabled         = sec_disabled and not section_reachable,
+         disabled_reasons = (sec_disabled and not section_reachable) and section.reason or nil,
+      }
+   end
+
+   end -- sec_drop
+end
+
+-- ---------------------------------------------------------------
+-- Build interface list for topbar dropdown
+local ifnames     = {}
+local ifHdescr    = {}
+local ifCustom    = {}
+local views       = {}
+local dynamic     = {}
+local recording   = {}
+local pcapdump    = {}
+local packetifs   = {}
+local zmqifs      = {}
+local drops       = {}
+local action_urls = {}
+local viewed_by   = {}
+
+for v, k in pairs(iface_names) do
+   interface.select(k)
+   local s       = interface.getStats()
+   local is_pcap = interface.isPcapDumpInterface()
+   local is_sub  = interface.isSubInterface()
+   local is_pkt  = interface.isPacketInterface()
+   local is_zmq2 = interface.isZMQInterface()
+
+   ifnames[tostring(s.id)]     = k
+   action_urls[tostring(s.id)] = page_utils.switch_interface_form_action_url(current_ifid, s.id, s.type)
+
+   if is_pcap  then pcapdump[tostring(s.id)]  = true end
+   if s.isView then views[tostring(s.id)]     = true end
+   if is_sub   then dynamic[tostring(s.id)]   = true end
+   if recording_utils.isEnabled(s.id) then recording[tostring(s.id)] = true end
+   if is_pkt   then packetifs[tostring(s.id)] = true end
+   if is_zmq2  then zmqifs[tostring(s.id)]    = true end
+   if s.stats_since_reset.drops * 100 > s.stats_since_reset.packets then
+      drops[tostring(s.id)] = true
+   end
+   local parent_view_id = interface.viewedBy()
+   if parent_view_id then viewed_by[tostring(s.id)] = tostring(parent_view_id) end
+   ifCustom[tostring(s.id)] = s.customIftype
+
+   local descr = getHumanReadableInterfaceName(v)
+   if is_windows and string.contains(descr, "{") then
+      descr = s.description
+   elseif ntop.isEnterpriseM and ntop.isEnterpriseM() and is_sub and s.dynamic_interface_exporter_ip then
+      local snmp_utils      = require "snmp_utils"
+      local snmp_cached_dev = require "snmp_cached_dev"
+      local cached_device   = snmp_cached_dev:create(s.dynamic_interface_exporter_ip)
+      local snmp_name, snmp_if_name
+      if cached_device then
+         if cached_device.system and cached_device.system.name then
+            snmp_name = cached_device.system.name
+            if s.dynamic_interface_inifidx then
+               if cached_device.interfaces and cached_device.interfaces[tostring(s.dynamic_interface_inifidx)] then
+                  snmp_if_name = snmp_utils.get_snmp_interface_label(
+                     cached_device.interfaces[tostring(s.dynamic_interface_inifidx)], true)
+               else
+                  snmp_if_name = s.dynamic_interface_inifidx
+               end
+            end
+         end
+      end
+      if snmp_name then
+         local fmt = snmp_if_name and string.format("%s [%s]", snmp_name, snmp_if_name) or string.format("%s", snmp_name)
+         if descr ~= s.description then
+            descr = string.format("%s (%s)", descr, fmt)
+         else
+            descr = fmt
+         end
+      end
+   else
+      if descr ~= s.description and not views[tostring(s.id)] and not pcapdump[tostring(s.id)] then
+         if descr == shortenCollapse(s.description) then
+            descr = s.description
+         end
+      end
+   end
+   ifHdescr[tostring(s.id)] = descr
+end
+
+-- Collect observation points for the current interface
+local observation_points = nil
+local current_observation_point_id = nil
+do
+   local obs_info = interface.getObsPointsInfo()
+   if obs_info and obs_info["ObsPoints"] and table.len(obs_info["ObsPoints"]) > 0 then
+      observation_points = {}
+      for _, v in pairsByField(obs_info["ObsPoints"], "obs_point", asc) do
+         observation_points[#observation_points + 1] = {
+            obs_point = v["obs_point"],
+            alias     = getObsPointAlias(v["obs_point"], true),
+         }
+      end
+
+      -- Currently selected observation point
+      current_observation_point_id = ntop.getUserObservationPointId()
+   end
+end
+
+-- Add the system interface explicitly (not returned by getIfNames())
+if is_allowed_sys_iface then
+   local sys_id = tostring(system_ifid)
+   if not ifnames[sys_id] then
+      interface.select(system_ifid)
+      local ss = interface.getStats()
+      ifnames[sys_id]     = ss.name or "@SystemInterface"
+      ifHdescr[sys_id]    = i18n("system") or "System"
+      action_urls[sys_id] = ntop.getHttpPrefix() .. "/lua/system_stats.lua?ifid=" .. sys_id
+      interface.select(current_ifid)
+   end
+end
+
+interface.select(current_ifid)
+
+-- Blog notifications
+local blog_posts = {}
+local new_posts_counter = 0
+if not is_oem then
+   local blog_username = session_user
+   if is_no_login then blog_username = "no_login" end
+   local posts_raw, npc = blog_utils.readPostsFromRedis(blog_username)
+   new_posts_counter = npc or 0
+   for _, p in pairs(posts_raw or {}) do
+      local user_has_read = p.users_read and p.users_read[blog_username] == true
+      local title = p.title or ""
+      if #title > 42 then title = title:sub(1, 42) .. "..." end
+      blog_posts[#blog_posts + 1] = {
+         id         = p.id,
+         title      = title,
+         url        = p.link,
+         short_desc = p.shortDesc,
+         epoch      = p.epoch,
+         is_read    = user_has_read,
+      }
+   end
+end
+
+-- License badge
+local license_badge = nil
+if info["pro.systemid"] and info["pro.systemid"] ~= "" then
+   if info["pro.release"] then
+      if info["pro.license_ends_at"] then
+         local rest_secs = tonumber(info["pro.license_ends_at"]) - os.time()
+         local days_left = math.ceil(rest_secs / 86400)
+         if days_left <= 30 then
+            license_badge = {
+               type      = "license_expires",
+               label     = i18n("about.licence_expires_in", { time = secondsToTime(rest_secs) }),
+               url       = ntop.getHttpPrefix() .. "/lua/license.lua",
+               days_left = days_left,
+            }
+         end
+      end
+   elseif not info["pro.forced_community"] then
+      license_badge = {
+         type  = "upgrade",
+         label = i18n("about.upgrade_to_professional"),
+         url   = "https://shop.ntop.org?utm_source=ntopng",
+      }
+   end
+end
+
+-- User menu data
+local theme_selector   = ntop.getPref("ntopng.user." .. session_user .. ".theme")
+local theme_label      = i18n("toggle_dark_theme")
+if theme_selector == "dark" then theme_label = i18n("toggle_white_theme") end
+local date_format_pref = ntop.getPref("ntopng.user." .. session_user .. ".date_format")
+
+local logo_path = nil
+if (is_pro or is_nedge) and ntop.exists(dirs.installdir .. "/httpdocs/img/custom_logo.png") then
+   logo_path = http_prefix .. "/img/custom_logo.png"
+end
+
+-- Infrastructure instances as array
+local infra_arr = {}
+for k, v in pairs(infrastructure_instances or {}) do
+   infra_arr[#infra_arr + 1] = { id = k, info = v }
+end
+
+-- Append demo tour if needed
+local has_pending_demo_tours = false
+if not is_no_login and not isEmptyString(session_user) then
+   for _, d in ipairs(demo_utils.get_status_for_user(session_user)) do
+      if d.should_show then
+         has_pending_demo_tours = true
+         break
+      end
+   end
+end
+
+rest_utils.answer(rest_utils.consts.success.ok, {
+   -- sidebar
+   sections    = result,
+   logo_path   = logo_path,
+   http_prefix = http_prefix,
+
+   -- topbar: interface dropdown
+   ifnames      = ifnames,
+   ifHdescr     = ifHdescr,
+   ifCustom     = ifCustom,
+   views        = views,
+   dynamic      = dynamic,
+   recording    = recording,
+   pcapdump     = pcapdump,
+   packetifs    = packetifs,
+   zmqifs       = zmqifs,
+   drops        = drops,
+   action_urls  = action_urls,
+   viewed_by    = viewed_by,
+   current_ifid        = tostring(current_ifid),
+   system_ifid         = tostring(system_ifid),
+   observation_points  = observation_points,
+   current_observation_point_id = current_observation_point_id,
+   is_system_interface = is_system_interface,
+   infrastructure_instances = infra_arr,
+   infrastructure_view = infrastructure_view,
+   lightview = lightview,
+
+   -- topbar: user menu
+   username         = session_user,
+   is_admin         = is_admin,
+   pro_forced_community = (flags.pro_forced_community == true),
+   is_no_login_user = is_no_login,
+   is_local_user    = (_SESSION["localuser"] ~= nil),
+   is_nedge         = is_nedge,
+   is_nedge_enterprise = (ntop.isnEdgeEnterprise and ntop.isnEdgeEnterprise()) or false,
+   is_windows       = is_windows,
+   is_package       = (ntop.isPackage() == true),
+   has_updates_support = (hasSoftwareUpdatesSupport() == true),
+   theme_label      = theme_label,
+   theme            = theme_selector or "light",
+   date_format      = date_format_pref or "middle_endian",
+
+   -- topbar: blog
+   blog_posts        = blog_posts,
+   new_posts_counter = new_posts_counter,
+   is_oem            = is_oem,
+
+   -- topbar: license badge
+   license_badge = license_badge,
+
+   -- product info
+   product        = info.product or "",
+   version        = info.version or "",
+   version_full   = getNtopngRelease(info) or "",
+   copyright      = info.copyright or "",
+   uptime_epoch   = ntop.getUptime(),
+   tzname         = info.zoneinfo or info.tzname or "",
+   server_epoch   = os.time(),
+
+   -- shared flags: fields several pages independently re-fetch/re-derive.
+   -- Read these from ntopng_utility.get_menu_flags() (http_src side) instead
+   -- of adding a page-specific REST call for them.
+   ifname         = ifid_stats.description or "",
+   has_clickhouse = interfaceHasClickHouseSupport(),
+   device_protocols_policing_enabled = (ntop.getPref("ntopng.prefs.device_protocols_policing") == "1"),
+   are_ts_enabled = (areInterfaceTimeseriesEnabled and areInterfaceTimeseriesEnabled(current_ifid)) or false,
+   network_configuration_enabled = checks_flags.network_configuration_enabled,
+   network_policy_enabled        = checks_flags.network_policy_enabled,
+   acl_violation_enabled         = checks_flags.acl_violation_enabled,
+   has_protos_file = (protos_utils_ok and protos_utils.hasProtosFile()) or false,
+   is_pro = is_pro or false,
+   is_enterprise = (ntop.isEnterprise and ntop.isEnterprise()) or false,
+   is_enterprise_m = (ntop.isEnterpriseM and ntop.isEnterpriseM()) or false,
+   is_enterprise_l = (ntop.isEnterpriseL and ntop.isEnterpriseL()) or false,
+   is_enterprise_xl = (ntop.isEnterpriseXL and ntop.isEnterpriseXL()) or false,
+   -- pool_stats.lua: add/edit/delete/export of the pools (pools_rest_utils)
+   can_manage_pools = auth.has_capability(auth.capabilities.pools),
+   -- Global search: list the preferences found, switched on/off in place (on by default)
+   search_preferences = auth.has_capability(auth.capabilities.preferences) and
+      (ntop.getPref("ntopng.prefs.search_preferences") ~= "0"),
+   are_host_pools_ts_enabled = (areHostPoolsTimeseriesEnabled and areHostPoolsTimeseriesEnabled(current_ifid)) or false,
+   has_vlans = interface.hasVLANs(),
+   are_host_ts_enabled = (areHostTimeseriesEnabled and areHostTimeseriesEnabled()) or false,
+   are_as_ts_enabled = (areASTimeseriesEnabled and areASTimeseriesEnabled(current_ifid)) or false,
+   are_country_ts_enabled = (areCountryTimeseriesEnabled and areCountryTimeseriesEnabled(current_ifid)) or false,
+   are_vlan_ts_enabled = (areVlanTimeseriesEnabled and areVlanTimeseriesEnabled(current_ifid)) or false,
+   are_system_ts_enabled = (areSystemTimeseriesEnabled and areSystemTimeseriesEnabled()) or false,
+   -- Health internals (page-internals.vue): timeseries driver (rrd, influxdb, clickhouse), as ts_utils.getDriverName
+   ts_driver = (ntop.getPref("ntopng.prefs.timeseries_driver") ~= "" and ntop.getPref("ntopng.prefs.timeseries_driver")) or "rrd",
+   -- Flow exporters pages: timeseries of the exporters interfaces
+   are_flowdev_ts_enabled = (areFlowdevTimeseriesEnabled and areFlowdevTimeseriesEnabled()) or false,
+   -- Observation points page: timeseries of the observation points
+   are_obs_points_ts_enabled = (ntop.getPref("ntopng.prefs.observation_points_rrd_creation") == "1"),
+   -- network_details.lua: Traffic Report view (Enterprise M, RRD driver)
+   has_traffic_report = (hasTrafficReport and hasTrafficReport()) or false,
+   -- Assets page: Wazuh API configured (same keys as wazuh_utils.has_wazuh_support, without loading it)
+   has_wazuh_api = (ntop.isEnterpriseM and ntop.isEnterpriseM()
+      and not isEmptyString(ntop.getCache("ntopng.prefs.wazuh.wazuh_url"))
+      and not isEmptyString(ntop.getCache("ntopng.prefs.wazuh.wazuh_username"))
+      and not isEmptyString(ntop.getCache("ntopng.prefs.wazuh.wazuh_password"))) or false,
+   -- Assets page: Journal tab (see assets_journal.isEnabled)
+   is_assets_journal_enabled = is_assets_journal_enabled,
+   -- page-active-monitoring.vue, page-infrastructure-monitoring.vue
+   is_am_active = (prefs.active_monitoring == true),
+   are_alerts_enabled = areAlertsEnabled(),
+   is_asn_mode_enabled = (isASNModeEnabled and isASNModeEnabled()) or false,
+   show_sankey = show_sankey,
+   has_pending_demo_tours = has_pending_demo_tours,
+   has_geoip = not flags.no_geoip,
+})
+
+end) -- pcall
+
+if not ok then
+   rest_utils.answer(rest_utils.consts.err.internal_error, { error = tostring(err) })
+end

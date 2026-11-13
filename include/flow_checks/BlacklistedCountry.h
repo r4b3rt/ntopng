@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,20 +28,23 @@ class BlacklistedCountry : public FlowCheck {
  private:
   std::set<std::string> blacklisted_countries;
 
-  bool hasBlacklistedCountry(Host *h) const;
+  bool hasBlacklistedCountry(char* country) const;
 
  public:
-  BlacklistedCountry() : FlowCheck(ntopng_edition_community,
-				      false /* All interfaces */, false /* Don't exclude for nEdge */, false /* NOT only for nEdge */,
-				      true /* has_protocol_detected */, false /* has_periodic_update */, false /* has_flow_end */) {};
+  BlacklistedCountry()
+      : FlowCheck(ntopng_edition_community, false /* All interfaces */,
+                  false /* Don't exclude for nEdge */,
+                  false /* NOT only for nEdge */,
+                  true /* has_protocol_detected */,
+                  false /* has_periodic_update */, false /* has_flow_end */) {};
   ~BlacklistedCountry() {};
 
-  bool loadConfiguration(json_object *config);
+  bool loadConfiguration(json_object* config);
 
-  void protocolDetected(Flow *f);
-  FlowAlert *buildAlert(Flow *f);
+  void protocolDetected(Flow* f);
+  FlowAlert* buildAlert(Flow* f);
 
-  std::string getName() const { return(std::string("country_check")); }
+  std::string getName() const { return (std::string("country_check")); }
 };
 
 #endif /* _BLACKLISTED_COUNTRY_H_ */

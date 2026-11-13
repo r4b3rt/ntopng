@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local dirs = ntop.getDirs()
@@ -18,8 +18,6 @@ local checks_var = {
    system_config = nil,
    available_modules = nil,
    configset = nil,
-   do_benchmark = false,
-   do_print_benchmark = false
 }
 
 local granularity = "day"

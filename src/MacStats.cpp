@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-26 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,30 +23,36 @@
 
 /* *************************************** */
 
-MacStats::MacStats(NetworkInterface *_iface) {
+MacStats::MacStats(NetworkInterface* _iface) {
+  if (trace_new_delete)
+    ntop->getTrace()->traceEvent(TRACE_NORMAL, "[new] %s", __FILE__);
+
   iface = _iface;
-  arp_stats.sent.requests.reset(), arp_stats.sent.replies.reset(),
-    arp_stats.rcvd.requests.reset(), arp_stats.rcvd.replies.reset();
+  arp_stats.sent.requests = 0, arp_stats.sent.replies = 0,
+  arp_stats.rcvd.requests = 0, arp_stats.rcvd.replies = 0;
 
   memset(&dhcp_stats, 0, sizeof(dhcp_stats));
-  
-  /* NOTE: ndpiStats: allocated dynamically and deleted by ~GenericTrafficElement */
+
+  /* NOTE: ndpiStats: allocated dynamically and deleted by
+   * ~GenericTrafficElement */
   ndpiStats = NULL;
 }
 
 /* *************************************** */
 
 void MacStats::lua(lua_State* vm, bool show_details) {
-  if(show_details) {
-    lua_push_uint64_table_entry(vm, "arp_requests.sent", arp_stats.sent.requests.get());
-    lua_push_uint64_table_entry(vm, "arp_requests.rcvd", arp_stats.rcvd.requests.get());
-    lua_push_uint64_table_entry(vm, "arp_replies.sent", arp_stats.sent.replies.get());
-    lua_push_uint64_table_entry(vm, "arp_replies.rcvd", arp_stats.rcvd.replies.get());
+  if (show_details) {
+    lua_push_uint64_table_entry(vm, "arp_requests.sent",
+                                arp_stats.sent.requests);
+    lua_push_uint64_table_entry(vm, "arp_requests.rcvd",
+                                arp_stats.rcvd.requests);
+    lua_push_uint64_table_entry(vm, "arp_replies.sent", arp_stats.sent.replies);
+    lua_push_uint64_table_entry(vm, "arp_replies.rcvd", arp_stats.rcvd.replies);
 
     lua_push_uint32_table_entry(vm, "dhcp.sent", dhcp_stats.num_req_sent);
     lua_push_uint32_table_entry(vm, "dhcp.rcvd", dhcp_stats.num_rep_rcvd);
-    
-    if(ndpiStats) ndpiStats->lua(iface, vm, true);
+
+    if (ndpiStats) ndpiStats->lua(iface, vm, true);
   }
 
   ((GenericTrafficElement*)this)->lua(vm, true);

@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 local checks = require("checks")
@@ -28,11 +28,6 @@ local script = {
    gui = {
       i18n_title        = "flow_checks.unexpected_smtp_title",
       i18n_description  = "flow_checks.unexpected_smtp_description",
-
-      input_builder     = "items_list",
-      item_list_type    = "server",
-      input_title       = "flow_checks.allowed_servers_title",
-      input_description = "flow_checks.allowed_server_names_description",
    }
 }
 

@@ -1,8 +1,8 @@
-![ntop][ntopng_logo] ![ntop][ntop_logo]
 # ntopng 
 
-[![Build Status](https://travis-ci.org/ntop/ntopng.png?branch=dev)](https://travis-ci.org/ntop/ntopng)
-[![Total Alerts](https://img.shields.io/lgtm/alerts/g/ntop/ntopng.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/ntop/ntopng/alerts)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/ntop/ntopng/build.yml?branch=dev&logo=github)](https://github.com/ntop/ntopng/actions?query=workflow%3ABuild)
+[![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/ntopng.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:ntopng)
+[![Gurubase](https://img.shields.io/badge/Gurubase-Ask%20ntopng%20Guru-006BFF)](https://gurubase.io/g/ntopng)
 
 ### Introduction
 
@@ -13,16 +13,17 @@ While you can read more about ntopng on the ntop web site (http://www.ntop.org),
 If instead of source code you prefer to use a pre-built package, please go to http://packages.ntop.org
 
 We build binary packages for the following platforms:
-* Ubuntu Linux Server x64
-* CentOS/RedHat Linux x64
+* Debian/Ubuntu LTS x64
+* CentOS/RedHat/RockyLinux/AlmaLinux x64
 * Windows x64
-* RaspberryPI/BeagleBoard ARM (based on Ubuntu Linux)
+* RaspberryPI/Debian ARM
+* FreeBSD/OPNsense/pfSense
 
 Enjoy.
 
 ### Documentation
 
-If you want to learn more about ntopng please visit the [User's Guide](https://www.ntop.org/guides/ntopng/) and the [API Documentation](https://www.ntop.org/guides/ntopng/api/index.html).
+If you want to learn more about ntopng please visit the [User's Guide](https://www.ntop.org/guides/ntopng/) and the [API Documentation](https://www.ntop.org/guides/ntopng/api/index.html) or watch our [latest webinar](https://www.youtube.com/watch?v=dtLrax-_ZNs).
 
 ### Details
 For more information about ntopng, please visit [http://ntop.org](https://www.ntop.org/products/traffic-analysis/ntop/)

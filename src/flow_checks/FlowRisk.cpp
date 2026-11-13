@@ -1,6 +1,6 @@
 /*
  *
- * (C) 2013-22 - ntop.org
+ * (C) 2013-24 - ntop.org
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,17 +24,75 @@
 
 /* ***************************************************** */
 
-void FlowRisk::protocolDetected(Flow *f) {
-  if(f->hasRisk(handledRisk())) {
-    u_int16_t cli_score, srv_score;
-    ndpi_risk risk_bitmap = 0;
+/* NOTE: keep in sync with ParserInterface::processFlow() */
+bool FlowRisk::ignoreRisk(Flow* f, ndpi_risk_enum r) {
+  switch (r) {
+    case NDPI_TLS_SELFSIGNED_CERTIFICATE: {
+      ndpi_risk_params params[] = {
+          {NDPI_PARAM_ISSUER_DN, f->getTLSCertificateIssuerDN()}};
 
-    NDPI_SET_BIT(risk_bitmap, handledRisk());
+      if (ndpi_check_flow_risk_exceptions(f->getInterface()->get_ndpi_struct(),
+                                          1, params))
+        return (true);
+    } break;
 
-    ndpi_risk2score(risk_bitmap, &cli_score, &srv_score);
+    case NDPI_SUSPICIOUS_DGA_DOMAIN: {
+      ndpi_risk_params params[] = {{NDPI_PARAM_HOSTNAME, f->getDGADomain()}};
 
-    f->triggerAlertAsync(getAlertType(), cli_score, srv_score);
+      if (ndpi_check_flow_risk_exceptions(f->getInterface()->get_ndpi_struct(),
+                                          1, params))
+        return (true);
+    } break;
+
+    default:
+      break;
   }
+
+  return (false);
+}
+
+/* ***************************************************** */
+
+void FlowRisk::checkRisk(Flow* f) {
+  ndpi_risk_enum r = handledRisk();
+
+  if (f->hasRisk(r)) {
+    u_int16_t c_score, s_score;
+    ndpi_risk risk_bitmap;
+
+    /* Check exceptions for ZMQ-delivered flows */
+    if (f->getInterface()->getIfType() == interface_type_ZMQ) {
+      if (ignoreRisk(f, r)) {
+        f->clearRisks();
+        return;
+      }
+    }
+
+    risk_bitmap = 0;
+    NDPI_SET_BIT(risk_bitmap, r);
+
+    ndpi_risk2score(risk_bitmap, &c_score, &s_score);
+
+    FlowAlert* alert = buildAlert(f);
+    alert->setCliSrvScores(c_score, s_score);
+    f->triggerAlert(alert);
+  }
+}
+
+/* ***************************************************** */
+
+void FlowRisk::protocolDetected(Flow* f) {
+  /* Handle risks that should be checked as soon as l7 protocol is detected */
+  /* Note: controlled by check_on_flow_end parameter of FlowRisk() constructor */
+  checkRisk(f);
+}
+
+/* ***************************************************** */
+
+void FlowRisk::flowEnd(Flow* f) {
+  /* Handle risks that should be checked at flow end (e.g. unidirectional flow) */
+  /* Note: controlled by check_on_flow_end parameter of FlowRisk() constructor */
+  checkRisk(f);
 }
 
 /* ***************************************************** */

@@ -1,14 +1,16 @@
 --
--- (C) 2018-22 - ntop.org
+-- (C) 2018-26 - ntop.org
 --
+
+-- #################################
 
 local ts_utils = {}
 
-local ts_common = require "ts_common"
+local ts_common = require("ts_common")
 
 ts_utils.metrics = ts_common.metrics
 ts_utils.aggregation = ts_common.aggregation
-ts_utils.schema = require "ts_schema"
+ts_utils.schema = require("ts_schema")
 ts_utils.getLastError = ts_common.getLastError
 ts_utils.getLastErrorMessage = ts_common.getLastErrorMessage
 ts_utils.custom_schemas = {}
@@ -18,8 +20,9 @@ ts_utils.custom_schemas = {}
 -- See also CONST_INFLUXDB_FLUSH_TIME
 ts_utils.MAX_EXPORT_TIME = 60
 
-require "lua_trace"
-require "ntop_utils"
+require("lua_trace")
+require("ntop_utils")
+require("string_utils")
 
 local dirs = ntop.getDirs()
 package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/drivers/?.lua;" .. package.path
@@ -30,762 +33,997 @@ package.path = dirs.installdir .. "/scripts/lua/modules/timeseries/custom/?.lua;
 
 local loaded_schemas = {}
 
---! @brief Define a new timeseries schema.
---! @param name the schema identifier.
---! @return the newly created schema.
+-- ! @brief Define a new timeseries schema.
+-- ! @param name the schema identifier.
+-- ! @return the newly created schema.
 function ts_utils.newSchema(name, options)
-   local schema = ts_utils.schema:new(name, options)
+	local schema = ts_utils.schema:new(name, options)
 
-   if loaded_schemas[name] ~= nil then
-      traceError(TRACE_WARNING, TRACE_CONSOLE, "Schema already defined: " .. name)
-      return loaded_schemas[name]
-   end
+	if loaded_schemas[name] ~= nil then
+		traceError(TRACE_WARNING, TRACE_CONSOLE, "Schema already defined: " .. name)
+		return loaded_schemas[name]
+	end
 
-   loaded_schemas[name] = schema
+	loaded_schemas[name] = schema
 
-   return schema
+	return schema
+end
+
+-- ##############################################
+function ts_utils.verifySchema(options)
+	-- In some cases, some timeseries needs to be changed to others, for example
+	--      flowdev_port:traffic -> flowdev_port:traffic_min
+	-- this function handles these cases
+	local suffix = "_min"
+	local schema = options.schema
+	if endswith(schema, "flowdev_port:traffic") then
+		-- Could be needed to change it to minute, check the preferences
+		if (ntop.isEnterpriseM and ntop.isEnterpriseM()) and (highExporterTimeseriesResolution()) then
+			options.schema = "flowdev_port:traffic" .. suffix
+		end
+	end
 end
 
 -- ##############################################
 
---! @brief Find schema by name.
---! @param name the schema identifier.
---! @return a schema object on success, nil on error.
+-- ! @brief Find schema by name.
+-- ! @param name the schema identifier.
+-- ! @return a schema object on success, nil on error.
 function ts_utils.getSchema(name)
-   local schema = loaded_schemas[name]
+	local schema = loaded_schemas[name]
 
-   if schema then
-      -- insertion_step: this corresponds to the interval of data writes
-      -- step: used for visualization
-      schema.options.insertion_step = schema.options.step
-   end
+	if schema and hasHighResolutionTs() then
+		if (schema.options.step == 300) and (schema.options.is_system_schema ~= true) then
+			schema.options.step = 60
+		end
+	end
 
-   if schema and hasHighResolutionTs() then
-      if((schema.options.step == 300) and (schema.options.is_system_schema ~= true)) then
-	 schema.options.insertion_step = 60
-	 schema.options.step = 60
-      end
-   end
+	if schema and (name == "iface:traffic") and ntop.isnEdge and ntop.isnEdge() then
+		schema.options.step = 4
+	end
 
-   if schema and (name == "iface:traffic") and ntop.isnEdge() then
-      schema.options.step = 4
-   end
+	if schema then
+		if not interface.isPacketInterface() then
+			-- For non-packet interfaces it is necessary to adjust the
+			-- step used when READING to make sure no timeseries will
+			-- be read at a resolution higher than the interface.getStatsUpdateFreq.
+			-- The rationale is that if a ZMQ sends you flows with a timeout of 2 minutes
+			-- it is pointless to look at a resolution lower than these 2 minutes.
+			-- For packet interfaces the story is different. In this case ntopng sees
+			-- the traffic on a packet-by-packet basis so we can leave the step untouched
+			-- and go at the highest po
+			local update_freq = interface.getStatsUpdateFreq()
 
-   if schema then
-      if not interface.isPacketInterface() then
-	 -- For non-packet interfaces it is necessary to adjust the
-	 -- step used when READING to make sure no timeseries will
-	 -- be read at a resolution higher than the interface.getStatsUpdateFreq.
-	 -- The rationale is that if a ZMQ sends you flows with a timeout of 2 minutes
-	 -- it is pointless to look at a resolution lower than these 2 minutes.
-	 -- For packet interfaces the story is different. In this case ntopng sees
-	 -- the traffic on a packet-by-packet basis so we can leave the step untouched
-	 -- and go at the highest po
-	 local update_freq = interface.getStatsUpdateFreq()
+			if update_freq then
+         	if schema.options.step < update_freq then
+					schema.options.step = update_freq
+				end
+			end
+		end
+	end
 
-	 if update_freq then
-	    if schema.options.step < update_freq then
-	       schema.options.step = update_freq
-	    end
-	 end
-      end
-   end
+	if schema then
+		-- insertion_step: this corresponds to the interval of data writes
+		-- step: used for visualization
+		schema.options.insertion_step = schema.options.step
+	end
 
-   return schema
+	return schema
 end
 
 function ts_utils.loadSchemas()
-   local script_manager = require("script_manager")
+	local script_manager = require("script_manager")
 
-   -- This should include all the available schemas
-   require("ts_second")
-   require("ts_minute")
-   require("ts_5min")
-   require("ts_5sec")
-   require("ts_hour")
+	-- This should include all the available schemas
+	require("ts_second")
+	require("ts_minute")
+	require("ts_5min")
+	require("ts_5sec")
+	require("ts_hour")
 
-   -- Possibly load more timeseries schemas
-   script_manager.loadSchemas()
+	-- HR schemas require ClickHouse and an Enterprise M (or better) license.
+	if ntop.isClickHouseEnabled() and ntop.isEnterpriseM and ntop.isEnterpriseM() then
+		require("ts_hr")
+	end
 
-   if(ntop.exists(dirs.installdir .. "/scripts/lua/modules/timeseries/custom/ts_minute_custom.lua")) then
-      require("ts_minute_custom")
-   end
+	-- Possibly load more timeseries schemas
+	script_manager.loadSchemas()
 
-   if(ntop.exists(dirs.installdir .. "/scripts/lua/modules/timeseries/custom/ts_5min_custom.lua")) then
-      require("ts_5min_custom")
-   end
+	if ntop.exists(dirs.installdir .. "/scripts/lua/modules/timeseries/custom/ts_minute_custom.lua") then
+		require("ts_minute_custom")
+	end
+
+	if ntop.exists(dirs.installdir .. "/scripts/lua/modules/timeseries/custom/ts_5min_custom.lua") then
+		require("ts_5min_custom")
+	end
 end
 
 function ts_utils.getLoadedSchemas()
-   return loaded_schemas
+	return loaded_schemas
 end
 
 -- ##############################################
 
+local DRIVER_CACHE_TTL = 5 -- sec
 local cached_active_drivers = nil
+local cached_active_drivers_name = nil
+local cached_active_drivers_time = nil
 
---! @brief Return a list of active timeseries drivers.
---! @return list of driver objects.
+-- ! @brief Return a list of active timeseries drivers.
+-- ! @return list of driver objects.
 function ts_utils.listActiveDrivers()
-   if cached_active_drivers ~= nil then
-      return cached_active_drivers
-   end
+	local now = os.time()
 
-   local driver = ts_utils.getDriverName()
-   local active_drivers = {}
+	if
+		cached_active_drivers ~= nil
+		and cached_active_drivers_time ~= nil
+		and (now - cached_active_drivers_time) < DRIVER_CACHE_TTL
+	then
+		return cached_active_drivers
+	end
 
-   if driver == "rrd" then
-      local dirs = ntop.getDirs()
-      local rrd_driver = require("rrd"):new({base_path = (dirs.workingdir .. "/rrd_new")})
-      active_drivers[#active_drivers + 1] = rrd_driver
-   elseif driver == "prometheus" then
-      local prometheus_driver = require("prometheus"):new({})
-      active_drivers[#active_drivers + 1] = prometheus_driver
-   elseif driver == "influxdb" then
-      local auth_enabled = (ntop.getPref("ntopng.prefs.influx_auth_enabled") == "1")
+	local driver = ts_utils.getDriverName()
 
-      local influxdb_driver = require("influxdb"):new({
-	    url = ntop.getPref("ntopng.prefs.ts_post_data_url"),
-	    db = ntop.getPref("ntopng.prefs.influx_dbname"),
-	    username = ternary(auth_enabled, ntop.getPref("ntopng.prefs.influx_username"), nil),
-	    password = ternary(auth_enabled, ntop.getPref("ntopng.prefs.influx_password"), nil),
-						     })
-      active_drivers[#active_drivers + 1] = influxdb_driver
-   end
+	if cached_active_drivers ~= nil and cached_active_drivers_name == driver then
+		cached_active_drivers_time = now
+		return cached_active_drivers
+	end
 
-   -- cache for future calls
-   cached_active_drivers = active_drivers
+	local active_drivers = {}
 
-   return active_drivers
+	if driver == "influxdb" then
+		local auth_enabled = (ntop.getPref("ntopng.prefs.influx_auth_enabled") == "1")
+
+		local influxdb_driver = require("influxdb"):new({
+			url = ntop.getPref("ntopng.prefs.ts_post_data_url"),
+			db = ntop.getPref("ntopng.prefs.influx_dbname"),
+			username = ternary(auth_enabled, ntop.getPref("ntopng.prefs.influx_username"), nil),
+			password = ternary(auth_enabled, ntop.getPref("ntopng.prefs.influx_password"), nil),
+		})
+		active_drivers[#active_drivers + 1] = influxdb_driver
+	elseif driver == "clickhouse" then
+		local prefs = ntop.getPrefs()
+		local ch_driver = require("clickhousets"):new({
+			db = prefs.clickhouse_dbname or "ntopng",
+		})
+		if ch_driver then
+			active_drivers[#active_drivers + 1] = ch_driver
+		else
+			-- Prefs.cpp already logs at startup when it forces the driver to RRD due to CH not available,
+			-- here we warn when ClickHouse is available but the driver fails to initialize.
+			if not prefs.ch_ts_driver_forced_to_rrd then
+				traceError(TRACE_WARNING, TRACE_CONSOLE, "[TS] ClickHouse not available, falling back to RRD")
+			end
+		end
+	end
+
+	if driver == "rrd" or #active_drivers == 0 then
+		local dirs = ntop.getDirs()
+		local rrd_driver = require("rrd"):new({
+			base_path = (dirs.workingdir .. "/rrd_new"),
+		})
+		active_drivers[#active_drivers + 1] = rrd_driver
+	end
+
+	-- cache for future calls
+	cached_active_drivers = active_drivers
+	cached_active_drivers_name = driver
+	cached_active_drivers_time = now
+
+	return active_drivers
 end
 
 -- ##############################################
 
 -- Get the driver to use to query data
 function ts_utils.getQueryDriver()
-   local drivers = ts_utils.listActiveDrivers()
+	local drivers = ts_utils.listActiveDrivers()
+	return drivers[1]
+end
 
-   -- NOTE: prefer the InfluxDB driver if available, RRD as fallback
-   local driver = drivers[2] or drivers[1]
+-- ##############################################
 
-   return driver
+local cached_hr_driver = nil
+local cached_hr_driver_enabled = nil
+local cached_hr_driver_time = nil
+
+-- Return the ClickHouse HR driver instance.
+function ts_utils.getHRDriver()
+	local now = os.time()
+
+	if cached_hr_driver_time ~= nil and (now - cached_hr_driver_time) < DRIVER_CACHE_TTL then
+		return cached_hr_driver
+	end
+
+	local enabled = ntop.isClickHouseEnabled()
+
+	if cached_hr_driver_enabled ~= enabled then
+		cached_hr_driver = nil
+
+		if enabled then
+			local prefs = ntop.getPrefs()
+			cached_hr_driver = require("clickhousehr"):new({
+				db = prefs.clickhouse_dbname or "ntopng",
+			})
+		end
+
+		cached_hr_driver_enabled = enabled
+	end
+
+	cached_hr_driver_time = now
+
+	return cached_hr_driver
+end
+
+-- Return the right query driver for a given schema.
+-- (schemas with data_source = "flows" will use the HR driver,
+-- all others use the standard driver).
+function ts_utils.getQueryDriverForSchema(schema)
+	if schema and schema.options and schema.options.data_source == "flows" then
+		return ts_utils.getHRDriver()
+	end
+	return ts_utils.getQueryDriver()
 end
 
 -- ##############################################
 
 function ts_utils.getDriverName()
-   local driver = ntop.getPref("ntopng.prefs.timeseries_driver")
+	local driver = ntop.getPref("ntopng.prefs.timeseries_driver")
 
-   if isEmptyString(driver) then
-      driver = "rrd"
-   end
+	if isEmptyString(driver) then
+		driver = "rrd"
+	end
 
-   return driver
+	return driver
+end
+
+-- ##############################################
+
+-- ! @brief Return the driver name to display
+function ts_utils.getDriverDisplayName()
+	local driver = ts_utils.getQueryDriver()
+	if driver then
+		return driver:get_name()
+	end
+	return ts_utils.getDriverName()
 end
 
 -- ##############################################
 
 local function isUserAccessAllowed(tags)
-   if tags.ifid and not ntop.isnEdge() and not ntop.isAllowedInterface(tonumber(tags.ifid)) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. _SESSION["user"] .. " is not allowed to access interface " .. tags.ifid)
-      return false
-   end
+	local user = _SESSION and _SESSION["user"] or ""
 
-   -- Note: tags.host can contain a MAC address for local broadcast domain hosts
-   local host = tags.host_ip or tags.host
-   if host and not ntop.isAllowedNetwork(host) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. _SESSION["user"] .. " is not allowed to access host " .. host)
-      return false
-   end
+	if user == "admin" then
+		return true
+	end
 
-   if tags.subnet and not ntop.isAllowedNetwork(tags.subnet) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. _SESSION["user"] .. " is not allowed to access subnet " .. tags.subnet)
-      return false
-   end
+	if tags.ifid and not (ntop.isnEdge and ntop.isnEdge()) and not ntop.isAllowedInterface(tonumber(tags.ifid)) then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. user .. " is not allowed to access interface " .. tags.ifid)
+		return false
+	end
 
-   return true
+	-- Note: tags.host can contain a MAC address for local broadcast domain hosts
+	local host = tags.host_ip or tags.host
+	if host and not ntop.isAllowedNetwork(host) then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. user .. " is not allowed to access host " .. host)
+		return false
+	end
+
+	if tags.subnet and not ntop.isAllowedNetwork(tags.subnet) then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "User: " .. user .. " is not allowed to access subnet " .. tags.subnet)
+		return false
+	end
+
+	return true
 end
 
 -- ##############################################
 
---! @brief Append a new data point to the specified timeseries.
---! @param schema_name the schema identifier.
---! @param tags_and_metrics a table with tag->value and metric->value mappings.
---! @param timestamp the timestamp associated with the data point.
---! @return true on success, false on error.
+-- ! @brief Append a new data point to the specified timeseries.
+-- ! @param schema_name the schema identifier.
+-- ! @param tags_and_metrics a table with tag->value and metric->value mappings.
+-- ! @param timestamp the timestamp associated with the data point.
+-- ! @return true on success, false on error.
 function ts_utils.append(schema_name, tags_and_metrics, timestamp)
-   timestamp = timestamp or os.time()
-   local schema = ts_utils.getSchema(schema_name)
+	timestamp = timestamp or os.time()
+	local schema = ts_utils.getSchema(schema_name)
 
-   if not schema then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return false
-   end
+	if not schema then
+		tprint(debug.traceback())
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return false
+	end
 
-   local tags, data = schema:verifyTagsAndMetrics(tags_and_metrics)
+	local tags, data = schema:verifyTagsAndMetrics(tags_and_metrics)
 
-   if not tags then
-      return false
-   end
+	if not tags then
+		return false
+	end
 
-   if not schema.options.is_critical_ts and ntop.isDeadlineApproaching() then
-      -- Do not write timeseries if the deadline is approaching.
-      -- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Deadline approaching... [".. schema.name .."]["..formatEpoch(ntop.getDeadline()).."]")
-      return false
-   else
-      -- require "lua_utils"
-      -- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Deadline OK ... [".. schema.name .."]["..formatEpoch(ntop.getDeadline()).."]")
-   end
+	-- HR schemas have no Lua write path: data is written by the C++ flow-dump pipeline.
+	if schema.options.data_source == "flows" then
+		return true
+	end
 
-   local rv = true
+	if not schema.options.is_critical_ts and ntop.isDeadlineApproaching() then
+		-- Do not write timeseries if the deadline is approaching.
+		-- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Deadline approaching... [".. schema.name .."]["..formatEpoch(ntop.getDeadline()).."]")
+		return false
+	else
+		-- require "lua_utils"
+		-- traceError(TRACE_NORMAL, TRACE_CONSOLE, "Deadline OK ... [".. schema.name .."]["..formatEpoch(ntop.getDeadline()).."]")
+	end
 
-   --traceError(TRACE_NORMAL, TRACE_CONSOLE, "TS.UPDATE [".. schema.name .."] " .. table.tconcat(tags_and_metrics, "=", ","))
+	local rv = true
 
-   ts_common.clearLastError()
+	-- traceError(TRACE_NORMAL, TRACE_CONSOLE, "TS.UPDATE [".. schema.name .."] " .. table.tconcat(tags_and_metrics, "=", ","))
 
-   for _, driver in pairs(ts_utils.listActiveDrivers()) do
-      rv = driver:append(schema, timestamp, tags, data) and rv
-   end
+	ts_common.clearLastError()
 
-   return rv
+	for _, driver in pairs(ts_utils.listActiveDrivers()) do
+		rv = driver:append(schema, timestamp, tags, data) and rv
+	end
+
+	return rv
 end
 
 -- ##############################################
 
 -- Get some default options to use in queries.
 function ts_utils.getQueryOptions(overrides)
-   return table.merge({
-	 max_num_points = 80,    -- maximum number of points per data serie
-	 fill_value = 0,         -- e.g. 0/0 for nan
-	 min_value = 0,          -- minimum value of a data point
-	 max_value = math.huge,  -- maximum value for a data point
-	 top = 8,                -- topk number of items
-	 calculate_stats = true, -- calculate stats if possible
-	 initial_point = false,   -- add an extra initial point, not accounted in statistics but useful for drawing graphs
-	 with_series = false,    -- in topk query, if true, also get top items series data
-	 no_timeout = true,      -- do not abort queries automatically by default
-	 fill_series = false,    -- if true, filling missing points is required
-		      }, overrides or {})
+	return table.merge({
+		min_num_points = 0, -- maximum number of points per data serie
+		max_num_points = 80, -- maximum number of points per data serie
+		fill_value = 0 / 0, -- e.g. 0/0 for nan
+		min_value = 0, -- minimum value of a data point
+		max_value = math.huge, -- maximum value for a data point
+		top = 8, -- top number of items
+		unlimited_top = false, -- when true, topk returns every item with data, ignoring "top"
+		calculate_stats = true, -- calculate stats if possible
+		initial_point = false, -- add an extra initial point, not accounted in statistics but useful for drawing graphs
+		no_timeout = true, -- do not abort queries automatically by default
+		fill_series = false, -- if true, filling missing points is required
+		keep_nan = false,
+	}, overrides or {})
 end
 
 -- ##############################################
 
---! @brief Perform a query to extract timeseries data.
---! @param schema_name the schema identifier.
---! @param tags a list of filter tags. All the tags for the given schema must be specified.
---! @param tstart lower time for the query.
---! @param tend upper time for the query.
---! @param options (optional) query options.
---! @return query result on success, nil on error.
+-- ! @brief Perform a query to extract timeseries data.
+-- ! @param schema_name the schema identifier.
+-- ! @param tags a list of filter tags. All the tags for the given schema must be specified.
+-- ! @param tstart lower time for the query.
+-- ! @param tend upper time for the query.
+-- ! @param options (optional) query options.
+-- ! @return query result on success, nil on error.
 function ts_utils.query(schema_name, tags, tstart, tend, options)
-   if not isUserAccessAllowed(tags) then
-      return nil
-   end
+	if not isUserAccessAllowed(tags) then
+		return nil
+	end
 
-   local query_options = ts_utils.getQueryOptions(options)
-   local schema = ts_utils.getSchema(schema_name)
+	local query_options = ts_utils.getQueryOptions(options)
+	local schema = ts_utils.getSchema(schema_name)
 
-   if not schema then
-      -- traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if not schema then
+		-- traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
 
-   local actual_tags = schema:verifyTags(tags)
+	local actual_tags = schema:verifyTags(tags)
 
-   if not actual_tags then
-      return nil
-   end
+	if not actual_tags then
+		return nil
+	end
 
-   local driver = ts_utils.getQueryDriver()
+	local driver = ts_utils.getQueryDriverForSchema(schema)
 
-   if not driver then
-      return nil
-   end
+	if not driver then
+		return nil
+	end
 
-   ts_common.clearLastError()
+	ts_common.clearLastError()
 
-   local rv = driver:query(schema, tstart, tend, actual_tags, query_options)
+	local rv = driver:query(schema, tstart, tend, actual_tags, query_options)
 
-   if rv == nil then
-      return nil
-   end
+	if rv == nil then
+		return nil
+	end
 
-   -- Add tags information for consistency with queryTopk
-   for _, serie in pairs(rv.series) do
-      serie.tags = actual_tags
-   end
+	rv["end"] = tend
 
-   return rv
+	-- Add tags information for consistency with timeseries_top
+	for _, serie in pairs(rv.series) do
+		serie.tags = actual_tags
+	end
+
+	return rv
 end
 
 -- ##############################################
 
-local function host_rev(a, b)
-   return rev(a.value, b.value)
+function ts_utils.timeseries_query(options)
+	if not isUserAccessAllowed(options.tags) then
+		return nil
+	end
+
+	options = ts_utils.getQueryOptions(options)
+	ts_utils.verifySchema(options)
+	options.schema_info = ts_utils.getSchema(options.schema)
+
+	if not options.schema_info then
+		-- traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
+
+	local actual_tags = options.schema_info:verifyTags(options.tags)
+
+	if not actual_tags then
+		return nil
+	end
+
+	local driver = ts_utils.getQueryDriverForSchema(options.schema_info)
+
+	if not driver then
+		return nil
+	end
+
+	ts_common.clearLastError()
+
+	local rv = driver:timeseries_query(options)
+
+	if rv == nil then
+		return nil
+	end
+
+	return rv
 end
 
-local function getLocalTopTalkers(schema_id, tags, tstart, tend, options)
-   package.path = dirs.installdir .. "/scripts/lua/pro/modules/?.lua;" .. package.path
-   local top_utils = require "top_utils"
-   local num_minutes = math.floor((tend - tstart) / 60)
-   local top_talkers = top_utils.getAggregatedTop(getInterfaceName(ifId), tend, num_minutes)
+-- ##############################################
 
-   local direction
-   local select_col
+local function get_top_talkers(schema_id, tags, tstart, tend, options)
+	package.path = dirs.installdir .. "/scripts/lua/pro/modules/?.lua;" .. package.path
+	local top_utils = require("top_utils")
+	-- Only the first options.top records per VLAN/direction can be selected below,
+	-- so do not enrich the others
+	local top_talkers = top_utils.getAggregatedTop(tags.ifid, tend, tstart, tonumber(options.top))
+	local top_series = {}
+	local top_hosts = {}
+	local direction = nil
+	local select_col = nil
 
-   if schema_id == "local_senders" then
-      direction = "senders"
-      select_col = "sent"
-   else
-      direction = "receivers"
-      select_col = "rcvd"
-   end
-   local tophosts = {}
+	if schema_id == "local_senders" then
+		direction = "senders"
+		select_col = "sent"
+	else
+		direction = "receivers"
+		select_col = "rcvd"
+	end
 
-   for idx1, vlan in pairs(top_talkers.vlan or {}) do
-      for idx2, host in pairs(vlan.hosts[1][direction] or {}) do
-	    -- need to recalculate total value
-	    local host_tags = {ifid=tags.ifid, host=host.address}
-	    local host_partials = ts_utils.queryTotal("host:traffic", tstart, tend, host_tags)
-	    local host_value = tonumber(host.value)
+	for _, vlan in pairs(top_talkers.vlan or {}) do
+		local hosts = vlan.hosts and vlan.hosts[1] or {}
 
-	    if not table.empty(host_partials) then
-	       host_value = ternary(direction == "senders", host_partials["bytes_sent"], host_partials["bytes_rcvd"])
-	    else
-	       host_partials = nil
-	    end
+		for _, host_info in pairs(hosts[direction] or {}) do
+			-- Do not calculate by using timeseries, otherwise only local hosts will be used.
+			-- Simply used the ones available in the sqllite db
+			top_series[host_info.address] = host_info
+			top_hosts[host_info.address] = host_info.value
+		end
+	end
 
-	    if((host_value ~= nil) and (host_value > 0)) then
-	       tophosts[host.address] = {
-		  value = host_value,
-		  tags = host_tags,
-		  partials = host_partials,
-		  meta = {
-		     url = host.url,
-		     label = host.label,
-		     ipaddr = host.ipaddr, -- optional
-		     visual_addr = host.visual_addr, -- optional
-		  }
-	       }
-	     end
-      end
-   end
+	local res = {}
+	for host, _ in pairsByValues(top_hosts, rev) do
+		local host_info = top_series[host]
+		host_info.is_available = false
+		local in_memory_info = interface.getHostMinInfo(host)
+		if in_memory_info then
+			host_info.is_localhost = in_memory_info.localhost
+			host_info.label = hostinfo2label(in_memory_info, true)
+			host_info.is_available = true
+		end
+		res[#res + 1] = host_info
 
-   local res = {}
-   for _, host in pairsByValues(tophosts, host_rev) do
-      res[#res + 1] = host
+		if #res >= options.top then
+			break
+		end
+	end
 
-      if #res >= options.top then
-	 break
-      end
-   end
-
-   return {
-      topk = res,
-      schema = ts_utils.getSchema("host:traffic"),
-      statistics = stats,
-   }
+	return {
+		metadata = {
+			epoch_begin = options.epoch_begin,
+			epoch_end = options.epoch_end,
+			schema = options.schema,
+			query = options.tags,
+		},
+		series = res,
+	}
 end
 
 -- A bunch of pre-computed top items functions
--- Must return in the same format as driver:topk
+-- Must return in the same format as driver:timeseries_top
 local function getPrecomputedTops(schema_id, tags, tstart, tend, options)
-   if (schema_id == "local_senders") or (schema_id == "local_receivers") then
-      return getLocalTopTalkers(schema_id, tags, tstart, tend, options)
-   end
+	if (schema_id == "local_senders") or (schema_id == "local_receivers") then
+		return get_top_talkers(schema_id, tags, tstart, tend, options)
+	end
 
-   return nil
+	return nil
 end
 
 -- ##############################################
 
---! @brief Perform a topk query.
---! @param schema_name the schema identifier.
---! @param tags a list of filter tags. All the tags for the given schema must be specified.
---! @param tstart lower time bound for the query.
---! @param tend upper time bound for the query.
---! @param options (optional) query options.
---! @return query result on success, nil on error.
-function ts_utils.queryTopk(schema_name, tags, tstart, tend, options)
-   local query_options = ts_utils.getQueryOptions(options)
-   local top_items = nil
-   local schema = nil
+-- ! @brief Perform a top query.
+-- ! @param options contains all the info available of the timeseries
+--                  from the schema to the timeframe, options, ecc.
+function ts_utils.timeseries_query_top(options)
+	options = ts_utils.getQueryOptions(options)
+	local top_items = nil
+	local schema = nil
 
-   if not isUserAccessAllowed(tags) then
-      return nil
-   end
+	if not isUserAccessAllowed(options.tags) then
+		return nil
+	end
 
-   local driver = ts_utils.getQueryDriver()
+	ts_common.clearLastError()
 
-   if not driver then
-      return nil
-   end
+	-- Check if some tops are already pre-computed
+	local pre_computed =
+		getPrecomputedTops(options.schema, options.tags, options.epoch_begin, options.epoch_end, options)
 
-   ts_common.clearLastError()
+	if pre_computed then
+		-- Use precomputed top items
+		top_items = pre_computed
+		schema = pre_computed.schema
+	else
+		options.schema_info = ts_utils.getSchema(options.schema)
 
-   local pre_computed = getPrecomputedTops(schema_name, tags, tstart, tend, query_options)
+		if not options.schema_info then
+			traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. options.schema)
+			return nil
+		end
 
-   if pre_computed then
-      -- Use precomputed top items
-      top_items = pre_computed
-      schema = pre_computed.schema
-   else
-      schema = ts_utils.getSchema(schema_name)
+		local driver = ts_utils.getQueryDriverForSchema(options.schema_info)
 
-      if not schema then
-	 traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-	 return nil
-      end
+		if not driver then
+			return nil
+		end
 
-      local top_tags = {}
+		local top_tags = {}
 
-      for _, tag in ipairs(schema._tags) do
-	 if not tags[tag] then
-	    top_tags[#top_tags + 1] = tag
-	 end
-      end
+		for _, tag in ipairs(options.schema_info._tags) do
+			if not options.tags[tag] then
+				top_tags[#top_tags + 1] = tag
+			end
+		end
 
-      if table.empty(top_tags) then
-	 -- no top tags, just a plain query
-	 return ts_utils.query(schema_name, tags, tstart, tend, query_options)
-      end
+		-- options.rrdfile means that a single query is requested
+		if table.empty(top_tags) then
+			-- no top tags, just a plain query
+			return ts_utils.timeseries_query(options)
+		end
 
-      -- Find the top items
-      top_items = driver:topk(schema, tags, tstart, tend, query_options, top_tags)
-   end
+		-- Find the top items
+		local topk_heuristic = ntop.getPref("ntopng.prefs.topk_heuristic_precision")
+		if topk_heuristic ~= "disabled" then
+			top_items = driver:timeseries_top(options, top_tags)
+		end
+	end
 
-   if table.empty(top_items) then
-      return nil
-   end
-
-   if options.with_series then
-      top_items.series = {}
-
-      -- Query the top items data
-      local options = table.merge(query_options, {calculate_stats = false, fill_series = true})
-      local count = 0
-      local step = nil
-      local raw_step = nil
-      local start = 0
-
-      for _, top in ipairs(top_items.topk) do
-	 local top_res = driver:query(schema, tstart, tend, top.tags, options)
-
-	 if not top_res then
-	    --traceError(TRACE_WARNING, TRACE_CONSOLE, "Topk series query on '" .. schema.name .. "' with filter '".. table.tconcat(top.tags, "=", ",") .."' returned nil")
-	    goto continue
-	 end
-
-	 if #top_res.series > 1 then
-	    -- Unify multiple series into one (e.g. for Top Protocols)
-	    local aggregated = {}
-
-	    for i=1,top_res.count do
-	       aggregated[i] = 0
-	    end
-
-	    for _, serie in pairs(top_res.series) do
-	       for i, v in pairs(serie.data) do
-		  aggregated[i] = aggregated[i] + v
-	       end
-	    end
-
-	    top_res.series = {{label="bytes", data=aggregated}}
-	 end
-
-	 for _, serie in pairs(top_res.series) do
-	    count = math.max(#serie.data, count)
-	 end
-
-	 start = top_res.start
-	 if step then
-	    step = math.min(step, top_res.step)
-	 else
-	    step = top_res.step
-	 end
-	 if raw_step then
-	    raw_step = math.min(raw_step, top_res.raw_step)
-	 else
-	    raw_step = top_res.raw_step
-	 end
-
-	 for _, serie in ipairs(top_res.series) do
-	    serie.tags = top.tags
-	    top_items.series[#top_items.series + 1] = serie
-	 end
-
-	 ::continue::
-      end
-
-      -- Possibly fix series inconsistencies due to RRA steps
-      for _, serie in pairs(top_items.series or {}) do
-	 if count > #serie.data then
-	    traceError(TRACE_INFO, TRACE_CONSOLE, "Upsampling " .. table.tconcat(serie.tags, "=", ",") .. " from " .. #serie.data .. " to " .. count)
-	    serie.data = ts_common.upsampleSerie(serie.data, count)
-	 end
-      end
-      for key, serie in pairs(top_items.additional_series or {}) do
-	 if count > #serie then
-	    traceError(TRACE_INFO, TRACE_CONSOLE, "Upsampling " .. key .. " from " .. #serie .. " to " .. count)
-	    top_items.additional_series[key] = ts_common.upsampleSerie(serie, count)
-	 end
-      end
-
-      top_items.count = count
-      top_items.step = step
-      top_items.raw_step = raw_step
-      top_items.start = start
-   else
-      top_items.additional_series = nil
-   end
-
-   return top_items
+	return top_items
 end
 
 -- ##############################################
 
 local function getWildcardTags(schema, tags_filter)
-   tags_filter = tags_filter or {}
+	tags_filter = tags_filter or {}
 
-   local wildcard_tags = {}
-   local filter_tags = {}
+	local wildcard_tags = {}
+	local filter_tags = {}
 
-   for tag in pairs(schema.tags) do
-      if not tags_filter[tag] then
-	 wildcard_tags[#wildcard_tags + 1] = tag
-      end
-   end
+	for tag in pairs(schema.tags) do
+		if not tags_filter[tag] then
+			wildcard_tags[#wildcard_tags + 1] = tag
+		end
+	end
 
-   -- only pass schema own tags
-   for tag, val in pairs(tags_filter) do
-      if schema.tags[tag] then
-	 filter_tags[tag] = val
-      end
-   end
+	-- only pass schema own tags
+	for tag, val in pairs(tags_filter) do
+		if schema.tags[tag] then
+			filter_tags[tag] = val
+		end
+	end
 
-   return filter_tags, wildcard_tags
+	return filter_tags, wildcard_tags
 end
 
 -- ##############################################
 
---! @brief List all available timeseries for the specified schema, tags and time.
---! @param schema_name the schema identifier.
---! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
---! @param start_time time filter. Only timeseries updated after start_time will be returned.
---! @return a (possibly empty) list of tags values for the matching timeseries on success, nil on error.
-function ts_utils.listSeries(schema_name, tags_filter, start_time)
-   local schema = ts_utils.getSchema(schema_name)
-   local driver = ts_utils.getQueryDriver()
+-- ! @brief List all available timeseries for the specified schema, tags and time.
+-- ! @param schema_name the schema identifier.
+-- ! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
+-- ! @param start_time time filter. Only timeseries updated after start_time will be returned.
+-- ! @param end_time time filter. Only timeseries updated before end_time will be returned.
+-- ! @return a (possibly empty) list of tags values for the matching timeseries on success, nil on error.
+function ts_utils.listSeries(schema_name, tags_filter, start_time, end_time, not_print_error)
+	local schema = ts_utils.getSchema(schema_name)
 
-   if(not schema) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if not schema then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
 
-   if(not driver) then
-      return nil
-   end
+	local driver = ts_utils.getQueryDriverForSchema(schema)
 
-   local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
+	if not driver then
+		return nil
+	end
 
-   return driver:listSeries(schema, filter_tags, wildcard_tags, start_time)
+	local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
+
+	return driver:listSeries(schema, filter_tags, wildcard_tags, start_time, end_time, not_print_error)
 end
 
 -- ##############################################
 
 local pending_listseries_batch = {}
 
---! @brief Add a listSeries request to the current batch.
---! @param schema_name the schema identifier.
---! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
---! @param start_time time filter. Only timeseries updated after start_time will be returned.
---! @return nil on error, otherwise a number is returned, indicating the item id into the batch
---! @note Call ts_utils.getBatchedListSeriesResult() to get the batch responses
+-- ! @brief Add a listSeries request to the current batch.
+-- ! @param schema_name the schema identifier.
+-- ! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
+-- ! @param start_time time filter. Only timeseries updated after start_time will be returned.
+-- ! @return nil on error, otherwise a number is returned, indicating the item id into the batch
+-- ! @note Call ts_utils.getBatchedListSeriesResult() to get the batch responses
 function ts_utils.batchListSeries(schema_name, tags_filter, start_time)
-   local schema = ts_utils.getSchema(schema_name)
+	local schema = ts_utils.getSchema(schema_name)
 
-   if(not schema) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if not schema then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
 
-   local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
+	local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
 
-   pending_listseries_batch[#pending_listseries_batch + 1] = {
-      schema = schema,
-      start_time = start_time,
-      tags = tags_filter,
-      filter_tags = filter_tags,
-      wildcard_tags = wildcard_tags
-   }
+	pending_listseries_batch[#pending_listseries_batch + 1] = {
+		schema = schema,
+		start_time = start_time,
+		tags = tags_filter,
+		filter_tags = filter_tags,
+		wildcard_tags = wildcard_tags,
+	}
 
-   -- return id in batch
-   return #pending_listseries_batch
+	-- return id in batch
+	return #pending_listseries_batch
 end
 
 -- ##############################################
 
---! @brief Completes the current batched requests and returns the results.
---! @return nil on error, otherwise a table item_id -> result is returned. See ts_utils.listSeries() for details.
+-- ! @brief Completes the current batched requests and returns the results.
+-- ! @return nil on error, otherwise a table item_id -> result is returned. See ts_utils.listSeries() for details.
 function ts_utils.getBatchedListSeriesResult()
-   local driver = ts_utils.getQueryDriver()
-   local result
+	local result
 
-   if not driver then
-      return nil
-   end
+	ts_common.clearLastError()
 
-   ts_common.clearLastError()
+	-- Dispatch each batch item to the right driver (HR schemas go to the HR
+	-- driver; everything else uses the standard query driver).
+	result = {}
+	for key, item in pairs(pending_listseries_batch) do
+		local item_driver = ts_utils.getQueryDriverForSchema(item.schema)
+		if item_driver then
+			result[key] = item_driver:listSeries(
+				item.schema,
+				item.filter_tags,
+				item.wildcard_tags,
+				item.start_time,
+				item.end_time or nil
+			)
+		end
+	end
 
-   if(driver.listSeriesBatched == nil) then
-      -- Do not batch, just call listSeries
-      result = {}
+	pending_listseries_batch = {}
 
-      for key, item in pairs(pending_listseries_batch) do
-	 result[key] = driver:listSeries(item.schema, item.filter_tags, item.wildcard_tags, item.start_time)
-      end
-   else
-      result = driver:listSeriesBatched(pending_listseries_batch)
-   end
-
-   pending_listseries_batch = {}
-
-   return result
+	return result
 end
 
 -- ##############################################
 
---! @brief Verify timeseries existance.
---! @param schema_name the schema identifier.
---! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
---! @return true if the specified series exist, false otherwise.
+-- ! @brief Verify timeseries existance.
+-- ! @param schema_name the schema identifier.
+-- ! @param tags_filter a list of filter tags. Tags which are not specified are considered wildcard.
+-- ! @return true if the specified series exist, false otherwise.
 function ts_utils.exists(schema_name, tags_filter)
-   local driver = ts_utils.getQueryDriver()
+	local schema = ts_utils.getSchema(schema_name)
 
-   if not driver then
-      return nil
-   end
+	if not schema then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
 
-   if(driver.exists == nil) then
-      -- No "exists" implementation found, use listSeries fallback
-      return not table.empty(ts_utils.listSeries(schema_name, tags_filter, 0))
-   end
+	local driver = ts_utils.getQueryDriverForSchema(schema)
 
-   local schema = ts_utils.getSchema(schema_name)
+	if not driver then
+		return nil
+	end
 
-   if(not schema) then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if driver.exists == nil then
+		-- No "exists" implementation found, use listSeries fallback
+		return not table.empty(ts_utils.listSeries(schema_name, tags_filter, 0))
+	end
 
-   local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
-   return driver:exists(schema, filter_tags, wildcard_tags)
+	local filter_tags, wildcard_tags = getWildcardTags(schema, tags_filter)
+	return driver:exists(schema, filter_tags, wildcard_tags)
 end
 
 -- ##############################################
 
---! @brief Delete timeseries data.
---! @param schema_prefix a prefix for the schemas.
---! @param tags a list of filter tags.
---! @return true if operation was successful, false otherwise.
---! @note E.g. "iface" schema_prefix matches any schema starting with "iface:". Empty prefix is allowed and matches all the schemas.
+-- ! @brief Delete timeseries data.
+-- ! @param schema_prefix a prefix for the schemas.
+-- ! @param tags a list of filter tags.
+-- ! @return true if operation was successful, false otherwise.
+-- ! @note E.g. "iface" schema_prefix matches any schema starting with "iface:". Empty prefix is allowed and matches all the schemas.
 function ts_utils.delete(schema_prefix, tags)
-   if not isAdministrator() then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Not Admin")
-      return false
-   end
+	if not isAdministrator() then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Not Admin")
+		return false
+	end
 
-   if not isUserAccessAllowed(tags) then
-      return false
-   end
+	if not isUserAccessAllowed(tags) then
+		return false
+	end
 
-   if string.find(schema_prefix, ":") ~= nil then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Full schema labels not supported, use schema prefixes instead.")
-      return false
-   end
+	if string.find(schema_prefix, ":") ~= nil then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Full schema labels not supported, use schema prefixes instead.")
+		return false
+	end
 
-   local rv = true
+	local rv = true
 
-   ts_common.clearLastError()
+	ts_common.clearLastError()
 
-   for _, driver in pairs(ts_utils.listActiveDrivers()) do
-      rv = driver:delete(schema_prefix, tags) and rv
-   end
+	for _, driver in pairs(ts_utils.listActiveDrivers()) do
+		rv = driver:delete(schema_prefix, tags) and rv
+	end
 
-   return rv
+	return rv
 end
 
 -- ##############################################
 
---! @brief Delete old data.
---! @param ifid: the interface ID to process
---! @return true if operation was successful, false otherwise.
+-- ! @brief Delete old data.
+-- ! @param ifid: the interface ID to process
+-- ! @return true if operation was successful, false otherwise.
 function ts_utils.deleteOldData(ifid)
-   if not isAdministrator() then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Not Admin")
-      return false
-   end
+	if not isAdministrator() then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Not Admin")
+		return false
+	end
 
-   ts_common.clearLastError()
+	ts_common.clearLastError()
 
-   for _, driver in pairs(ts_utils.listActiveDrivers()) do
-      rv = driver:deleteOldData(ifid) and rv
-   end
+	for _, driver in pairs(ts_utils.listActiveDrivers()) do
+		rv = driver:deleteOldData(ifid) and rv
+	end
 
-   return rv
+	return rv
 end
 
 -- ##############################################
 
 function ts_utils.queryTotal(schema_name, tstart, tend, tags, options)
-   if not isUserAccessAllowed(tags) then
-      return nil
-   end
+	if not isUserAccessAllowed(tags) then
+		return nil
+	end
 
-   local schema = ts_utils.getSchema(schema_name)
+	local schema = ts_utils.getSchema(schema_name)
 
-   if not schema then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if not schema then
+		if print_error then
+			traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		end
+		return nil
+	end
 
-   local driver = ts_utils.getQueryDriver()
+	local driver = ts_utils.getQueryDriverForSchema(schema)
 
-   if not driver or not driver.queryTotal then
-      return nil
-   end
+	if not driver or not driver.queryTotal then
+		return nil
+	end
 
-   local query_options = ts_utils.getQueryOptions(options)
+	local query_options = ts_utils.getQueryOptions(options)
 
-   ts_common.clearLastError()
+	ts_common.clearLastError()
 
-   return driver:queryTotal(schema, tstart, tend, tags, query_options)
+	return driver:queryTotal(schema, tstart, tend, tags, query_options)
+end
+
+-- ##############################################
+
+-- ! @brief Compute the total value of all the series matching the given tags,
+-- ! grouped by one or more tags.
+-- ! @param schema_name the schema identifier.
+-- ! @param tstart lower time for the query.
+-- ! @param tend upper time for the query.
+-- ! @param tags_filter a list of filter tags. The grouping tags, if present, are ignored.
+-- ! @param group_tags the schema tag to group by (e.g. "protocol"), or a list of tags.
+-- ! @param options (optional) query options.
+-- ! @return a (possibly empty) array of {tags=<full tag set>, value=<total>} sorted by
+-- ! value descending, nil on error.
+-- ! @note This is the cheap replacement for a ts_utils.listSeries() enumeration followed
+-- ! by one ts_utils.queryTotal() per series: drivers implementing topk() answer it with a
+-- ! single grouped query. Series with no data in the time range are never returned.
+function ts_utils.queryTotalByTag(schema_name, tstart, tend, tags_filter, group_tags, options)
+	tags_filter = tags_filter or {}
+
+	if type(group_tags) == "string" then
+		group_tags = { group_tags }
+	end
+
+	if not isUserAccessAllowed(tags_filter) then
+		return nil
+	end
+
+	local schema = ts_utils.getSchema(schema_name)
+
+	if not schema then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
+
+	local is_group_tag = {}
+
+	for _, tag in ipairs(group_tags) do
+		if not schema.tags[tag] then
+			traceError(TRACE_ERROR, TRACE_CONSOLE, "Tag '" .. tag .. "' is not a tag of schema " .. schema_name)
+			return nil
+		end
+
+		is_group_tag[tag] = true
+	end
+
+	local driver = ts_utils.getQueryDriverForSchema(schema)
+
+	if not driver then
+		return nil
+	end
+
+	-- Only keep the schema own tags: the grouping tags are wildcards here
+	local partial_filter = {}
+
+	for tag, val in pairs(tags_filter) do
+		if not is_group_tag[tag] then
+			partial_filter[tag] = val
+		end
+	end
+
+	local filter_tags, wildcard_tags = getWildcardTags(schema, partial_filter)
+
+	if #wildcard_tags ~= #group_tags then
+		-- All the schema tags but the grouping ones must be specified, as a single
+		-- group is expected per grouping tags combination
+		traceError(
+			TRACE_ERROR,
+			TRACE_CONSOLE,
+			"Missing tags in a " .. schema_name .. " query grouped by '" .. table.concat(group_tags, ", ") .. "'"
+		)
+		return nil
+	end
+
+	local query_options = ts_utils.getQueryOptions(options)
+
+	ts_common.clearLastError()
+
+	local res = {}
+
+	if driver.timeseries_top then
+		local top_options = table.merge(query_options, {
+			schema = schema_name,
+			schema_info = schema,
+			tags = filter_tags,
+			epoch_begin = tstart,
+			epoch_end = tend,
+			-- Every series with data is needed here, not just the top ones, and only
+			-- its total: no per item data query
+			unlimited_top = true,
+			totals_only = true,
+			initial_point = false,
+		})
+		-- nil when there is no data (or on error, already logged by the driver)
+		local top_res = driver:timeseries_top(top_options, wildcard_tags)
+
+		-- Items are sorted by value descending
+		for _, item in ipairs((top_res and top_res.series) or {}) do
+			if item.tags and (item.value or 0) > 0 then
+				res[#res + 1] = { tags = item.tags, value = item.value }
+			end
+		end
+
+		return res
+	end
+
+	-- Fallback for the drivers not implementing timeseries_top: enumerate the series
+	-- and total them one by one
+	local series = driver:listSeries(schema, filter_tags, wildcard_tags, tstart, tend) or {}
+
+	for _, serie_tags in pairs(series) do
+		local totals = ts_utils.queryTotal(schema_name, tstart, tend, serie_tags, query_options)
+		local tot = 0
+
+		for _, value in pairs(totals or {}) do
+			tot = tot + (tonumber(value) or 0)
+		end
+
+		if tot > 0 then
+			res[#res + 1] = { tags = serie_tags, value = tot }
+		end
+	end
+
+	table.sort(res, function(a, b)
+		return a.value > b.value
+	end)
+
+	return res
+end
+
+-- ##############################################
+
+function ts_utils.queryLastValues(schema_name, tstart, tend, tags, options)
+	if not isUserAccessAllowed(tags) then
+		return nil
+	end
+
+	local options = ts_utils.getQueryOptions(options)
+
+	options.tags = tags
+	options.epoch_begin = tstart
+	options.epoch_end = tend
+	options.schema_info = ts_utils.getSchema(schema_name)
+
+	if not options.schema_info then
+		if print_error then
+			traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		end
+		return nil
+	end
+
+	local actual_tags = options.schema_info:verifyTags(options.tags)
+
+	if not actual_tags then
+		return nil
+	end
+
+	local driver = ts_utils.getQueryDriverForSchema(options.schema_info)
+
+	if not driver or not driver.queryLastValues then
+		return nil
+	end
+
+	ts_common.clearLastError()
+
+	return driver:queryLastValues(options)
 end
 
 -- ##############################################
 
 function ts_utils.queryMean(schema_name, tstart, tend, tags, options)
-   if not isUserAccessAllowed(tags) then
-      return nil
-   end
+	if not isUserAccessAllowed(tags) then
+		return nil
+	end
 
-   local schema = ts_utils.getSchema(schema_name)
+	local schema = ts_utils.getSchema(schema_name)
 
-   if not schema then
-      traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
-      return nil
-   end
+	if not schema then
+		traceError(TRACE_ERROR, TRACE_CONSOLE, "Schema not found: " .. schema_name)
+		return nil
+	end
 
-   local query_options = ts_utils.getQueryOptions(options)
+	local query_options = ts_utils.getQueryOptions(options)
 
-   local rv = ts_utils.queryTotal(schema_name, tstart, tend, tags, query_options)
-   local intervals = math.floor((tend - tstart) / schema.options.step)
+	local rv = ts_utils.queryTotal(schema_name, tstart, tend, tags, query_options)
+	local intervals = math.floor((tend - tstart) / schema.options.step)
 
-   for i, total in pairs(rv or {}) do
-      rv[i] = total / intervals
-   end
+	for i, total in pairs(rv or {}) do
+		rv[i] = total / intervals
+	end
 
-   return rv
+	return rv
 end
 
 -- ##############################################
@@ -793,124 +1031,169 @@ end
 local SETUP_OK_KEY = "ntopng.cache.ts_setup_ok"
 
 function ts_utils.setupAgain()
-   -- will run the setup again
-   ntop.delCache(SETUP_OK_KEY)
+	-- will run the setup again
+	ntop.delCache(SETUP_OK_KEY)
 end
 
 -- ##############################################
 
-function ts_utils.setup()
-   local setup_ok = ntop.getPref(SETUP_OK_KEY)
-
-   if(ntop.getCache(SETUP_OK_KEY) ~= "1") then
-      if ts_utils.getQueryDriver():setup(ts_utils) then
-	 -- success, update version
-	 ntop.setCache(SETUP_OK_KEY, "1")
-	 return true
-      end
-
-      return false
-   end
-
-   return true
+function ts_utils.runFirstSetup()
+	-- will run the setup again
+	ts_utils.setup(true)
 end
 
 -- ##############################################
 
---! @brief Get a list of existing schemas which have possibly changed format
---! @return a table with a list of possibly changed schemas
---! @note This function should be updated whenever an existng schema is changed
+function ts_utils.setup(first_setup)
+	local setup_ok = ntop.getPref(SETUP_OK_KEY)
+
+	if ntop.getCache(SETUP_OK_KEY) ~= "1" then
+		if ts_utils.getQueryDriver():setup(ts_utils, first_setup) then
+			-- success, update version
+			ntop.setCache(SETUP_OK_KEY, "1")
+			return true
+		end
+
+		return false
+	end
+
+	return true
+end
+
+-- ##############################################
+
+-- ! @brief Get a list of existing schemas which have possibly changed format
+-- ! @return a table with a list of possibly changed schemas
+-- ! @note This function should be updated whenever an existng schema is changed
 function ts_utils.getPossiblyChangedSchemas()
-   return {
-      -- Interface timeseries
-      "iface:alerted_flows",
-      "iface:score",
-      "iface:score_behavior",
-      "iface:score_anomalies",
-      "iface:traffic_anomalies",
-      "iface:traffic_rx_behavior_v2",
-      "iface:traffic_tx_behavior_v2",
-      "iface:engaged_alerts",
-      "iface:local_hosts",
-
-      "subnet:score_anomalies",
-      "subnet:traffic_tx_behavior_v2",
-      "subnet:traffic_rx_behavior_v2",
-      "subnet:traffic_anomalies",
-      "subnet:score_behavior",
-
-      "asn:score_anomalies",
-      "asn:score_behavior",
-      "asn:traffic_anomalies",
-      "asn:traffic_rx_behavior_v2",
-      "asn:traffic_tx_behavior_v2",
-
-      -- Host timeseries
-      "host:contacts", -- split in "as_client" and "as_server"
-      "host:score", -- split in "cli_score" and "srv_score"
-      "host:contacts_behaviour",
-      "host:cli_active_flows_behaviour",
-      "host:srv_active_flows_behaviour",
-      "host:cli_score_behaviour",
-      "host:srv_score_behaviour",
-      "host:cli_active_flows_anomalies",
-      "host:srv_active_flows_anomalies",
-      "host:cli_score_anomalies",
-      "host:srv_score_anomalies",
-      "host:ndpi_categories", --split in "bytes_sent" and "bytes_rcvd"
-
-      -- Added missing ifid tag
-      "influxdb:storage_size",
-      "influxdb:exported_points",
-      "influxdb:exports",
-      "influxdb:rtt",
-      "system:cpu_load",
-      "process:resident_memory",
-      "redis:keys",
-      "redis:memory",
-      "periodic_script:timeseries_writes",
-      "mac:arp_rqst_sent_rcvd_rpls",
-
-      -- Active Monitoring
-      "am_host:http_stats_min",
-      "am_host:https_stats_min",
-      "am_host:val_min",
-      "am_host:http_stats_5mins",
-      "am_host:https_stats_5mins",
-      "am_host:val_5mins",
-      "am_host:http_stats_hour",
-      "am_host:https_stats_hour",
-      "am_host:val_hour"
-   }
+	return { -- Interface timeseries
+		"iface:alerted_flows",
+		"iface:score",
+		"iface:score_behavior_v2",
+		"iface:score_anomalies_v2",
+		"iface:ts_queue_length",
+		"iface:traffic_anomalies_v2",
+		"iface:deduplicated_flows",
+		"iface:role_traffic_v3",
+		"iface:traffic_rx_behavior_v5",
+		"iface:traffic_tx_behavior_v5",
+		"iface:engaged_alerts",
+		"iface:local_hosts",
+		"subnet:score_anomalies",
+		"subnet:intranet_traffic",
+		"subnet:intranet_traffic_min",
+		"host:contacts", -- split in "as_client" and "as_server"
+		"flowdev_port:usage",
+		"snmp_if:usage",
+		"host:score", -- split in "cli_score" and "srv_score"
+		"host:contacts_behaviour",
+		"host:cli_active_flows_behaviour",
+		"host:srv_active_flows_behaviour",
+		"host:cli_score_behaviour",
+		"host:srv_score_behaviour",
+		"host:cli_active_flows_anomalies",
+		"host:srv_active_flows_anomalies",
+		"host:cli_score_anomalies",
+		"host:srv_score_anomalies",
+		"host:ndpi_categories", -- split in "bytes_sent" and "bytes_rcvd"
+		"host:tcp_rx_stats",
+		"host:udp_sent_unicast",
+		"host:dns_qry_rcvd_rsp_sent",
+		"host:dns_qry_sent_rsp_rcvd",
+		"host:tcp_tx_stats",
+		"iface:hosts_anomalies", -- Added missing ifid tag
+		"influxdb:storage_size",
+		"influxdb:exported_points",
+		"influxdb:exports",
+		"influxdb:rtt",
+		"system:cpu_load",
+		"process:resident_memory",
+		"redis:keys",
+		"redis:memory",
+		"redis:reads_writes_v2",
+		"periodic_script:timeseries_writes",
+		"mac:arp_rqst_sent_rcvd_rpls", -- Active Monitoring
+		"am_host:http_stats_min",
+		"am_host:https_stats_min",
+		"am_host:val_min",
+		"am_host:http_stats_5mins",
+		"am_host:https_stats_5mins",
+		"am_host:val_5mins",
+		"am_host:http_stats_hour",
+		"am_host:https_stats_hour",
+		"am_host:val_hour",
+		"snmp_if:cbqos",
+		"snmp_device:poll_duration",
+		"flowdev:ndpi",
+		"flowdev:ndpi_min",
+	}
 end
 
 -- ##############################################
 
 function ts_utils.get_memory_size_query(influxdb, schema, tstart, tend, time_step)
-   --[[
+	--[[
       See comments in function driver:getMemoryUsage() to understand
       why it is necessary to subtract the HeapReleased from Sys.
    --]]
-   local q = 'SELECT MEAN(Sys) - MEAN(HeapReleased) as mem_bytes' ..
-      ' FROM "_internal".."runtime"' ..
-      " WHERE time >= " .. tstart .. "000000000 AND time <= " .. tend .. "000000000" ..
-      " GROUP BY TIME(".. time_step .."s)"
+	if not ntop.isInfluxDBInternalAvailable() then
+		return nil
+	end
+	local q = "SELECT MEAN(Sys) - MEAN(HeapReleased) as mem_bytes"
+		.. ' FROM "'
+		.. ntop.getInfluxDBInternalDBName()
+		.. '".."runtime"'
+		.. " WHERE time >= "
+		.. tstart
+		.. "000000000 AND time <= "
+		.. tend
+		.. "000000000"
+		.. " GROUP BY TIME("
+		.. time_step
+		.. "s)"
 
-   return(q)
+	return q
 end
 
 -- ##############################################
 
 function ts_utils.get_write_success_query(influxdb, schema, tstart, tend, time_step)
-   local q = 'SELECT SUM(writePointsOk) as points' ..
-      ' FROM (SELECT '..
-      ' (DERIVATIVE(MEAN(writePointsOk)) / '.. time_step ..') as writePointsOk' ..
-      ' FROM "monitor"."shard" WHERE "database"=\''.. influxdb.db ..'\'' ..
-      " AND time >= " .. tstart .. "000000000 AND time <= " .. tend .. "000000000" ..
-      " GROUP BY id)" ..
-      " GROUP BY TIME(".. time_step .."s)"
+	local q = "SELECT SUM(writePointsOk) as points"
+		.. " FROM (SELECT "
+		.. " (DERIVATIVE(MEAN(writePointsOk)) / "
+		.. time_step
+		.. ") as writePointsOk"
+		.. ' FROM "monitor"."shard" WHERE "database"=\''
+		.. influxdb.db
+		.. "'"
+		.. " AND time >= "
+		.. tstart
+		.. "000000000 AND time <= "
+		.. tend
+		.. "000000000"
+		.. " GROUP BY id)"
+		.. " GROUP BY TIME("
+		.. time_step
+		.. "s)"
 
-   return(q)
+	return q
+end
+
+-- ##############################################
+
+-- This function return a table of options used by timeseries
+function ts_utils.get_stats_options(basic_options)
+	return {
+		calculate_stats = true,
+		top = 30, -- this is higher to calculate the totals
+		tags = basic_options.tags,
+		schema = basic_options.ts_schema,
+		epoch_begin = basic_options.epoch_begin,
+		epoch_end = basic_options.epoch_end,
+		initial_point = false,
+		with_series = true,
+		keep_nan = false,
+	}
 end
 
 -- ##############################################

@@ -1,5 +1,5 @@
 --
--- (C) 2013-22 - ntop.org
+-- (C) 2013-26 - ntop.org
 --
 
 local prefs = ntop.getPrefs()
@@ -53,7 +53,7 @@ else
     else
 
     local tar_file = "ntopng_conf_backup.tar.gz"
-    if ntop.isnEdge() then
+    if ntop.isnEdge and ntop.isnEdge() then
        tar_file = "nedge_conf_backup.tar.gz"
     end
 

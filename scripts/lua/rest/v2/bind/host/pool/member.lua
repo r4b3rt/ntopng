@@ -9,5 +9,4 @@ package.path = dirs.installdir .. "/scripts/lua/modules/pools/?.lua;" .. package
 local host_pools = require "host_pools"
 local pools_rest_utils = require "pools_rest_utils"
 
-pools_rest_utils.bind_member(host_pools)
-
+pools_rest_utils.edit_member()

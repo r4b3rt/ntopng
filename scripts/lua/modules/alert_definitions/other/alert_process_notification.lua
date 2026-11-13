@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -19,6 +19,7 @@ local alert_process_notification = classes.class(alert)
 
 alert_process_notification.meta = {
   alert_key = other_alert_keys.alert_process_notification,
+  issue = false, -- Informational: does not open issues (see issues/issue_manager.lua)
   i18n_title = "alerts_dashboard.process",
   icon = "fas fa-fw fa-truck",
   entities = {
@@ -51,8 +52,10 @@ function alert_process_notification.format(ifid, alert, alert_type_params)
     return string.format("%s %s", i18n("alert_messages.ntopng_stop"), alert_type_params.msg_details)
   elseif alert_type_params.event_type == "update" then
     return string.format("%s %s", i18n("alert_messages.ntopng_update"), alert_type_params.msg_details)
+  elseif alert_type_params.event_type == "failure" then
+    return string.format("%s %s", i18n("alert_messages.ntopng_died"), alert_type_params.msg_details)
   elseif alert_type_params.event_type == "anomalous_termination" then
-     return string.format("%s %s", i18n("alert_messages.ntopng_anomalous_termination", {url="https://www.ntop.org/support/need-help-2/need-help/"}), alert_type_params.msg_details)
+     return string.format("%s %s", i18n("alert_messages.ntopng_anomalous_termination", {url="https://www.ntop.org/support/need-help-2/need-help/?utm_source=ntopng"}), alert_type_params.msg_details)
   end
 
   return "Unknown Process Event: " .. (alert_type_params.event_type or "")

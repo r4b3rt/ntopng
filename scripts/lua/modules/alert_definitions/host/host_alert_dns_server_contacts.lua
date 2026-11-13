@@ -1,5 +1,5 @@
 --
--- (C) 2019-22 - ntop.org
+-- (C) 2019-26 - ntop.org
 --
 
 -- ##############################################
@@ -12,6 +12,8 @@ local json = require("dkjson")
 local classes = require "classes"
 -- Make sure to import the Superclass!
 local alert = require "alert"
+-- Import Mitre Att&ck utils
+local mitre = require "mitre_utils"
 
 -- ##############################################
 
@@ -21,9 +23,18 @@ local host_alert_dns_server_contacts = classes.class(alert)
 
 host_alert_dns_server_contacts.meta = {
   alert_key = host_alert_keys.host_alert_dns_server_contacts,
-  i18n_title = "alerts_dashboard.host_alert_dns_server_contacts",
+  i18n_title = "alerts_thresholds_config.dns_traffic",
   icon = "fas fa-fw fa-life-ring",
   has_victim = true,
+
+   -- Mitre Att&ck Matrix values
+  mitre_values = {
+    mitre_tactic = mitre.tactic.c_and_c,
+    mitre_technique = mitre.technique.app_layer_proto,
+    mitre_sub_technique = mitre.sub_technique.dns,
+    mitre_id = "T1071.004"
+  },
+
 }
 
 -- ##############################################
